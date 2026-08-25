@@ -1,0 +1,63 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+**/build/
+coverage/
+*.tsbuildinfo
+*.tgz
+*.apk
+*.aab
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.npmrc
+config.json
+config.yaml
+local.properties
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+
+# Runtime data, databases and generated files
+.midscene-app/
+.midscene-generated/
+midscene_run/
+scripts-output/
+output/
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+*.pid
+
+# Test and tool output
+playwright-report/
+test-results/
+blob-report/
+.nyc_output/
+.cache/
+.tmp/
+tmp/
+
+# Local reference projects and internal documents
+demo/
+docs/
+testmini/
+icon/
+
+# Local editor and agent metadata
+.agents/
+.codegraph/
+.vscode/
+.idea/
+skills-lock.json
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db

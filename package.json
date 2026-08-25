@@ -1,0 +1,59 @@
+{
+  "name": "android-midscene-automation",
+  "version": "0.1.21",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oooooooko/android-midscene-automation.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oooooooko/android-midscene-automation/issues"
+  },
+  "homepage": "https://github.com/oooooooko/android-midscene-automation#readme",
+  "type": "module",
+  "bin": {
+    "android-midscene-automation": "./bin/android-midscene-automation.js"
+  },
+  "files": [
+    "bin",
+    "index.html",
+    "remote-agent",
+    "server",
+    "src",
+    "tsconfig*.json",
+    "vite.config.ts",
+    "README.md",
+    "USAGE.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "prepack": "node scripts/sync-readme-docs.mjs",
+    "remote-agent": "tsx remote-agent/index.ts",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "pw:install": "playwright install chromium",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@midscene/android": "1.10.12",
+    "@midscene/web": "1.10.12",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "element-plus": "^2.11.1",
+    "openai": "^5.12.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.4",
+    "vue": "^3.5.18",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.1",
+    "@types/node": "^24.0.13",
+    "@types/word-extractor": "^1.0.6",
+    "@vue/tsconfig": "^0.7.0",
+    "vue-tsc": "^3.0.3"
+  }
+}

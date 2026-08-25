@@ -1,0 +1,4 @@
+allowBuilds:
+  '@ffmpeg-installer/darwin-arm64': false
+  esbuild: true
+  sharp: true
