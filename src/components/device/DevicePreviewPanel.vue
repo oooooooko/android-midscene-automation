@@ -195,7 +195,10 @@ function handlePointerCancel(event: PointerEvent) {
 
     <div
       class="device-preview"
-      :class="{ 'device-preview--image': imageUrl && !frameUrl }"
+      :class="{
+        'device-preview--image': imageUrl && !frameUrl,
+        'device-preview--empty': !hasPreview,
+      }"
     >
       <div
         v-if="hasPreview"

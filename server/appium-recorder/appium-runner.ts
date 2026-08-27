@@ -122,6 +122,27 @@ export function launchAppOnDevice(deviceId: string, packageName: string) {
   });
 }
 
+export function clearAppDataOnDevice(deviceId: string, packageName: string) {
+  if (!packageName) return Promise.reject(new Error('清理 App 缓存缺少包名'));
+  return new Promise<void>((resolve, reject) => {
+    execFile(getAdbCommand(), [
+      '-s',
+      deviceId,
+      'shell',
+      'pm',
+      'clear',
+      packageName,
+    ], { maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const output = `${stdout || ''}\n${stderr || ''}`.trim();
+      if (error || !/^success$/im.test(output)) {
+        reject(new Error(output || error?.message || `ADB 清理 ${packageName} 失败`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function adbSwipe(deviceId: string, step: Required<AppiumRecordedStepRecord>['swipe']) {
   return new Promise<void>((resolve, reject) => {
     execFile(getAdbCommand(), [
@@ -500,6 +521,12 @@ async function runStep(sessionId: string, deviceId: string, step: AppiumRecorded
     return `ADB 已启动 ${packageName}`;
   }
 
+  if (step.type === 'clearAppData') {
+    const packageName = step.value || '';
+    await clearAppDataOnDevice(deviceId, packageName);
+    return `ADB 已清除 ${packageName} 的应用数据与缓存`;
+  }
+
   if (step.type === 'screenshot') {
     await saveScreenshot(sessionId);
     return;
@@ -710,9 +737,19 @@ async function appendStepDiagnostics(lines: string[], deviceId: string, step: Ap
 }
 
 type ReplayStepOptions = {
-  skipLaunchApp?: boolean;
+  skipAppInitialization?: boolean;
   scriptName?: string;
 };
+
+function shouldSkipLinkedScriptInitStep(options: ReplayStepOptions, step: AppiumRecordedStepRecord) {
+  return Boolean(options.skipAppInitialization && (step.type === 'launchApp' || step.type === 'clearAppData'));
+}
+
+function linkedScriptInitSkipReason(step: AppiumRecordedStepRecord) {
+  return step.type === 'clearAppData'
+    ? '连接脚本不重复清理 App'
+    : '连接脚本不重复启动 App';
+}
 
 async function replayLinkedScript(
   sessionId: string,
@@ -754,7 +791,7 @@ async function replayLinkedScript(
   lines.push(`连接脚本开始：${linkedScript.name}`);
   const nextStack = [...stack, linkedScript.id];
   await replayScriptSteps(sessionId, deviceId, linkedScript.steps, lines, nextStack, {
-    skipLaunchApp: true,
+    skipAppInitialization: true,
     scriptName: linkedScript.name,
   });
   lines.push(`连接脚本完成：${linkedScript.name}`);
@@ -770,8 +807,8 @@ async function replayLinearSteps(
 ) {
   for (const [index, step] of steps.entries()) {
     throwIfReplayStopped();
-    if (options.skipLaunchApp && step.type === 'launchApp') {
-      lines.push(`[节点 ${index + 1}] 跳过：${step.label}（连接脚本不重复启动 App）`);
+    if (shouldSkipLinkedScriptInitStep(options, step)) {
+      lines.push(`[节点 ${index + 1}] 跳过：${step.label}（${linkedScriptInitSkipReason(step)}）`);
       continue;
     }
     lines.push(`[节点 ${index + 1}] 开始：${step.label}`);
@@ -841,8 +878,8 @@ async function replayFlowSteps(
     if (guard > maxVisits) throw new Error('流程图可能存在循环，已终止回放');
 
     const step = steps[index];
-    if (options.skipLaunchApp && step.type === 'launchApp') {
-      lines.push(`[节点 ${index + 1}] 跳过：${step.label}（连接脚本不重复启动 App）`);
+    if (shouldSkipLinkedScriptInitStep(options, step)) {
+      lines.push(`[节点 ${index + 1}] 跳过：${step.label}（${linkedScriptInitSkipReason(step)}）`);
       index = nextIndexAfterStep(index, step);
       continue;
     }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { CopyDocument, Delete, Edit, Link, Timer } from '@element-plus/icons-vue';
+import { CopyDocument, Delete, Edit, Timer } from '@element-plus/icons-vue';
 import type { AppiumRecordedStep } from '../types';
 import { buildConditionLayouts, FLOW_BRANCH_GAP, FLOW_NODE_WIDTH } from '../flow-layout';
 import FlowStepEditor from './FlowStepEditor.vue';
@@ -21,6 +21,7 @@ type InsertAction =
   | 'swipe'
   | 'pinch'
   | 'launchApp'
+  | 'clearAppData'
   | 'popupCondition'
   | 'tapIfExists'
   | 'inputIfExists'
@@ -43,6 +44,7 @@ const props = defineProps<{
   copyMode?: boolean;
   selectedCopyIndexes?: number[];
   disabled?: boolean;
+  removeDisabled?: boolean;
   allowedLockedActions?: InsertAction[];
   clipboardCount?: number;
 }>();
@@ -53,8 +55,6 @@ const emit = defineEmits<{
   remove: [index: number];
   paste: [index: number, branch: BranchName];
   insertBranchAction: [index: number, branch: BranchName, action: InsertAction];
-  connectNext: [index: number, branch: BranchName];
-  disconnectNext: [index: number, branch: BranchName];
   editInput: [index: number];
   updateStep: [index: number, step: AppiumRecordedStep];
 }>();
@@ -124,7 +124,7 @@ function typeLabel(step: AppiumRecordedStep) {
     clearIfExists: '存在则清空', backIfExists: '存在则返回', clearInput: '清空',
     waitFor: '等待出现', waitDisappear: '等待消失', assertExists: '断言存在',
     assertText: '断言文本', key: '按键', waitActivity: '等待 Activity', delay: '延时',
-    coordinateTap: '坐标点击', swipe: '滑动', launchApp: '启动 APP', longPress: '长按',
+    coordinateTap: '坐标点击', swipe: '滑动', launchApp: '启动 APP', clearAppData: '清理 APP 缓存', longPress: '长按',
     pinch: '双指缩放', runScript: '连接脚本', screenshot: '截图',
   };
   return labels[step.type] || step.type;
@@ -152,7 +152,12 @@ function branchItems(branch: BranchName) {
 
 function branchConnectionTargetId(branch: BranchName) {
   const items = branchItems(branch);
-  if (items.length) return items[items.length - 1]?.step.flow?.successTargetId || '';
+  if (items.length) {
+    const lastItem = items[items.length - 1];
+    return defaultKind(lastItem.step) === 'condition'
+      ? ''
+      : lastItem.step.flow?.successTargetId || '';
+  }
   const targetId = branch === 'yes' ? props.condition.flow?.yesTargetId : props.condition.flow?.noTargetId;
   const target = props.steps.find((step) => step.id === targetId);
   return target && !target.flow?.parentConditionId ? target.id : '';
@@ -193,18 +198,19 @@ function insert(branch: BranchName, command: string | number | object) {
   else emit('insertBranchAction', props.conditionIndex, branch, command as InsertAction);
 }
 
-function toggleConnection(branch: BranchName) {
-  if (branchConnectionTargetId(branch)) emit('disconnectNext', props.conditionIndex, branch);
-  else emit('connectNext', props.conditionIndex, branch);
-}
-
 function updateStep(payload: { index: number; step: AppiumRecordedStep }) {
   emit('updateStep', payload.index, payload.step);
 }
 
-function branchPath(branch: BranchName) {
-  const targetAxis = branch === 'yes' ? layout.value.yesAxis : layout.value.noAxis;
-  return `M50 0 C50 16 ${targetAxis} 16 ${targetAxis} 31 L${targetAxis} 48`;
+function branchSplitPath() {
+  const yesMiddle = (50 + layout.value.yesAxis) / 2;
+  const noMiddle = (50 + layout.value.noAxis) / 2;
+  return [
+    `M${layout.value.yesAxis} 48 L${layout.value.yesAxis} 31`,
+    `C${layout.value.yesAxis} 16 ${yesMiddle} 0 50 0`,
+    `C${noMiddle} 0 ${layout.value.noAxis} 16 ${layout.value.noAxis} 31`,
+    `L${layout.value.noAxis} 48`,
+  ].join(' ');
 }
 </script>
 
@@ -219,13 +225,14 @@ function branchPath(branch: BranchName) {
       }"
     >
       <svg class="appium-flow-branch-lines" viewBox="0 0 100 48" preserveAspectRatio="none" aria-hidden="true">
-        <path :d="branchPath('yes')" />
-        <path :d="branchPath('no')" />
+        <path :d="branchSplitPath()" />
       </svg>
       <div
         v-for="branch in (['yes', 'no'] as const)"
         :key="branch"
         class="appium-flow-branch"
+        :data-flow-condition-id="condition.id"
+        :data-flow-branch="branch"
         :class="[`appium-flow-branch--${branch}`, { 'appium-flow-branch--connected': branchConnectionTargetId(branch) }]"
       >
         <svg class="appium-flow-line appium-flow-branch__line" viewBox="0 0 10 100" preserveAspectRatio="none" aria-hidden="true">
@@ -282,7 +289,7 @@ function branchPath(branch: BranchName) {
                   text
                   size="small"
                   :icon="Delete"
-                  :disabled="disabled"
+                  :disabled="removeDisabled"
                   title="删除节点"
                   @click="$emit('remove', item.index)"
                 />
@@ -304,6 +311,7 @@ function branchPath(branch: BranchName) {
               :copy-mode="copyMode"
               :selected-copy-indexes="selectedCopyIndexes"
               :disabled="disabled"
+              :remove-disabled="removeDisabled"
               :allowed-locked-actions="allowedLockedActions"
               :clipboard-count="clipboardCount"
               @node-click="$emit('nodeClick', $event)"
@@ -311,8 +319,6 @@ function branchPath(branch: BranchName) {
               @remove="$emit('remove', $event)"
               @paste="(index, childBranch) => $emit('paste', index, childBranch)"
               @insert-branch-action="(index, childBranch, action) => $emit('insertBranchAction', index, childBranch, action)"
-              @connect-next="(index, childBranch) => $emit('connectNext', index, childBranch)"
-              @disconnect-next="(index, childBranch) => $emit('disconnectNext', index, childBranch)"
               @edit-input="$emit('editInput', $event)"
               @update-step="(index, step) => $emit('updateStep', index, step)"
             />
@@ -355,17 +361,6 @@ function branchPath(branch: BranchName) {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <el-button
-            v-if="branchConnectionTargetId(branch)"
-            size="small"
-            class="appium-flow-branch__connect"
-            :icon="Link"
-            :disabled="disabled"
-            title="取消当前分支与后续流程的连接"
-            @click.stop="toggleConnection(branch)"
-          >
-            取消连接
-          </el-button>
         </div>
       </div>
     </div>

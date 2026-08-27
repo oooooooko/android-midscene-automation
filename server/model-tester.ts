@@ -30,6 +30,18 @@ type ModelTestResult = {
   usage?: ModelUsage;
 };
 
+function normalizeBaseUrl(value: string) {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function normalizeModelName(value: string) {
+  return value.trim().replace(/[‐‑‒–—―]/g, '-');
+}
+
+function visibleContent(value: string) {
+  return value.replace(/<think>[\s\S]*?<\/think>/g, '').trim() || value.trim();
+}
+
 function execCodex(args: string[]) {
   return new Promise<string>((resolve, reject) => {
     execFile('codex', args, { timeout: 10_000 }, (error, stdout, stderr) => {
@@ -63,23 +75,27 @@ async function testCodexConnection(input: ModelInput): Promise<ModelTestResult> 
 }
 
 export async function testModelConnection(input: ModelInput): Promise<ModelTestResult> {
-  if (input.provider === 'codex' || input.baseUrl === 'codex://app-server') {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  const modelName = normalizeModelName(input.name);
+
+  if (input.provider === 'codex' || baseUrl === 'codex://app-server') {
     return testCodexConnection(input);
   }
 
-  if (!input.baseUrl || !input.apiKey || !input.name) {
+  if (!baseUrl || !input.apiKey.trim() || !modelName) {
     throw new Error('模型配置不完整');
   }
 
   const startedAt = Date.now();
   const client = new OpenAI({
-    apiKey: input.apiKey,
-    baseURL: input.baseUrl,
+    apiKey: input.apiKey.trim(),
+    baseURL: baseUrl,
   });
 
   const result = await client.chat.completions.create({
-    model: input.name,
+    model: modelName,
     temperature: 0,
+    max_completion_tokens: 128,
     messages: [
       {
         role: 'user',
@@ -88,7 +104,7 @@ export async function testModelConnection(input: ModelInput): Promise<ModelTestR
     ],
   });
 
-  const content = result.choices[0]?.message?.content?.trim() || '';
+  const content = visibleContent(result.choices[0]?.message?.content || '');
   const usage: ModelUsage = {
     promptTokens: result.usage?.prompt_tokens,
     completionTokens: result.usage?.completion_tokens,

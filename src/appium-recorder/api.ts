@@ -38,6 +38,10 @@ export function launchAppiumDeviceApp(input: { deviceId: string; packageName: st
   return postJson<{ success: boolean }>(`${APP_BASE}/api/appium-recorder/launch-app`, input);
 }
 
+export function clearAppiumDeviceAppData(input: { deviceId: string; packageName: string }) {
+  return postJson<{ success: boolean }>(`${APP_BASE}/api/appium-recorder/clear-app-data`, input);
+}
+
 export async function getAppiumScripts() {
   const response = await fetch(`${APP_BASE}/api/appium-recorder/scripts`);
   return readJson<{ scripts: AppiumRecordedScript[] }>(response);

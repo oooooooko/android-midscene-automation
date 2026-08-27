@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, shallowRef, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Check, CircleClose, CopyDocument, Delete, Document, Download, Refresh, Upload, VideoPlay } from '@element-plus/icons-vue';
+import { Check, CircleClose, CopyDocument, Delete, Document, Download, Refresh, Upload, VideoPlay, View } from '@element-plus/icons-vue';
 import type { AndroidDevice, AppPreset, DeviceAction } from '../types';
 import DevicePreviewPanel from '../components/device/DevicePreviewPanel.vue';
 import {
   appiumScriptDownloadUrl,
+  clearAppiumDeviceAppData,
   deleteAppiumScript,
   getAppiumScripts,
   getAppiumTree,
@@ -17,6 +18,7 @@ import {
   tapAppiumDevice,
 } from './api';
 import ComponentTree from './components/ComponentTree.vue';
+import FlowCanvas from './components/FlowCanvas.vue';
 import NodeDetail from './components/NodeDetail.vue';
 import RecordedSteps from './components/RecordedSteps.vue';
 import {
@@ -24,6 +26,8 @@ import {
   pasteFlowClipboard,
   type FlowClipboard,
 } from './flow-copy';
+import { labelFlowStep } from './flow-labels';
+import type { FlowActionGroup, InsertAction } from './flow-graph';
 import { findSmallestNodeAtPoint, flattenNodes, parseWindowHierarchy } from './tree';
 import type { AppiumNode, AppiumRecordedScript, AppiumRecordedStep } from './types';
 
@@ -55,6 +59,7 @@ type RecorderAction =
   | 'clearInput'
   | 'coordinateTap'
   | 'launchApp'
+  | 'clearAppData'
   | 'waitDisappear'
   | 'assertText'
   | 'longPress'
@@ -84,11 +89,14 @@ const insertableRecorderActions: RecorderAction[] = [
   'clearInput',
   'coordinateTap',
   'launchApp',
+  'clearAppData',
   'waitDisappear',
   'assertText',
   'longPress',
   'pinch',
 ];
+const readonlyFlowActionGroups: FlowActionGroup[] = [];
+const readonlyFlowSelectedIndexes: number[] = [];
 
 const props = defineProps<{
   active: boolean;
@@ -132,6 +140,9 @@ const linkedScriptTargetId = shallowRef('');
 const linkedScriptInsertIndex = shallowRef<number | undefined>();
 const linkedScriptBranchTarget = shallowRef<BranchTarget | null>(null);
 const linkedScriptExpectedActivity = shallowRef('');
+const linkedScriptPreviewVisible = shallowRef(false);
+const linkedScriptPreviewScriptId = shallowRef('');
+const linkedScriptPreviewResetToken = shallowRef(0);
 const loadingTree = shallowRef(false);
 const saving = shallowRef(false);
 const importingScript = shallowRef(false);
@@ -143,6 +154,7 @@ const activeReplayDeviceId = shallowRef('');
 const recordingTap = shallowRef(false);
 const resolvingNavigation = shallowRef(false);
 const launchingApp = shallowRef(false);
+const executingAppStepId = shallowRef('');
 const pendingNavigation = shallowRef<{
   beforeActivity: string;
   afterActivity: string;
@@ -182,6 +194,10 @@ markDraftSaved();
 
 const selectedScript = computed(() => scripts.value.find((script) => script.id === selectedScriptId.value) || null);
 const linkableScripts = computed(() => scripts.value.filter((script) => script.id !== selectedScriptId.value));
+const linkedScriptTarget = computed(() => scripts.value.find((script) => script.id === linkedScriptTargetId.value) || null);
+const linkedScriptPreviewScript = computed(() => (
+  scripts.value.find((script) => script.id === linkedScriptPreviewScriptId.value) || null
+));
 const compatibleLinkableScripts = computed(() => linkableScripts.value.filter((script) => (
   script.appPackage === form.appPackage
   && (
@@ -640,7 +656,7 @@ async function refreshTree() {
 
 async function executeFlowStep(index: number) {
   const step = steps.value[index];
-  if (!step || step.type !== 'launchApp') return;
+  if (!step || (step.type !== 'launchApp' && step.type !== 'clearAppData')) return;
   if (launchingApp.value) return;
   if (!selectedDeviceId.value) {
     ElMessage.warning('请选择设备');
@@ -648,29 +664,48 @@ async function executeFlowStep(index: number) {
   }
   const packageName = step.value?.trim() || form.appPackage;
   if (!packageName || !props.appPresets.some((app) => app.packageName === packageName)) {
-    ElMessage.warning('启动节点没有匹配的预设 App');
+    ElMessage.warning('当前节点没有匹配的预设 App');
     return;
   }
 
+  if (step.type === 'clearAppData') {
+    const confirmed = await ElMessageBox.confirm(
+      'Android 将清除该 App 的全部数据和缓存，登录状态与本地设置也会被重置。',
+      '确认清理 App 缓存',
+      {
+        confirmButtonText: '确认清理',
+        cancelButtonText: '取消',
+        type: 'warning',
+        center: true,
+      },
+    ).catch(() => false);
+    if (!confirmed) return;
+  }
+
   launchingApp.value = true;
+  executingAppStepId.value = step.id;
   try {
-    await launchAppiumDeviceApp({
-      deviceId: selectedDeviceId.value,
-      packageName,
-    });
+    if (step.type === 'clearAppData') {
+      await clearAppiumDeviceAppData({ deviceId: selectedDeviceId.value, packageName });
+    } else {
+      await launchAppiumDeviceApp({ deviceId: selectedDeviceId.value, packageName });
+    }
     props.refreshDevicePreview();
     await wait(800);
     await loadTreeSnapshot(true, true);
     props.refreshDevicePreview();
-    if (scriptActivityMismatch.value) {
+    if (step.type === 'clearAppData') {
+      ElMessage.success('App 数据与缓存已清理');
+    } else if (scriptActivityMismatch.value) {
       ElMessage.warning(`App 已启动，当前页面仍为 ${currentActivity.value || '-'}`);
     } else {
       ElMessage.success('已进入脚本绑定页面，编辑锁定已解除');
     }
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '启动 App 失败');
+    ElMessage.error(error instanceof Error ? error.message : 'App 操作失败');
   } finally {
     launchingApp.value = false;
+    executingAppStepId.value = '';
   }
 }
 
@@ -867,6 +902,40 @@ function closeLinkedScriptDialog() {
   linkedScriptExpectedActivity.value = '';
 }
 
+function openLinkedScriptPreview(scriptId = linkedScriptTargetId.value) {
+  const script = scripts.value.find((item) => item.id === scriptId);
+  if (!script) {
+    ElMessage.warning('请选择要预览的脚本');
+    return;
+  }
+  linkedScriptPreviewScriptId.value = script.id;
+  linkedScriptPreviewResetToken.value += 1;
+  linkedScriptPreviewVisible.value = true;
+}
+
+function previewLinkedScriptStep(index: number) {
+  openLinkedScriptPreview(steps.value[index]?.value || '');
+}
+
+function loadPreviewScriptForEditing() {
+  if (!linkedScriptPreviewScript.value) return;
+  linkedScriptPreviewVisible.value = false;
+  linkedScriptDialogVisible.value = false;
+  loadScript(linkedScriptPreviewScript.value);
+}
+
+function isReadonlyFlowActionDisabled(_action: InsertAction) {
+  return true;
+}
+
+function isReadonlyFlowAppExecutionDisabled(_action: 'launchApp' | 'clearAppData') {
+  return true;
+}
+
+function isReadonlyFlowCopySelected(_index: number) {
+  return false;
+}
+
 async function addAction(
   action: RecorderAction,
   index?: number,
@@ -878,8 +947,12 @@ async function addAction(
     ElMessage.warning('启动 APP 节点只能添加一个');
     return;
   }
-  if (action === 'launchApp' && index !== -1) {
-    ElMessage.warning('启动 APP 只能从开始节点添加');
+  if (action === 'clearAppData' && steps.value.some((step) => step.type === 'clearAppData')) {
+    ElMessage.warning('清理 App 缓存节点只能添加一个');
+    return;
+  }
+  if ((action === 'launchApp' || action === 'clearAppData') && index !== -1) {
+    ElMessage.warning(`${action === 'launchApp' ? '启动 APP' : '清理 App 缓存'}只能从开始节点添加`);
     return;
   }
   if (action === 'runScript') {
@@ -947,10 +1020,19 @@ async function addAction(
     }, index);
   }
   if (action === 'launchApp') {
+    const clearStepIndex = steps.value.findIndex((step) => step.type === 'clearAppData');
     return insertStep({
       id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'launchApp',
       label: `启动 APP ${form.appPackage}`,
+      value: form.appPackage,
+    }, clearStepIndex >= 0 ? clearStepIndex : index);
+  }
+  if (action === 'clearAppData') {
+    return insertStep({
+      id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      type: 'clearAppData',
+      label: `清理 APP 缓存（含数据）${form.appPackage}`,
       value: form.appPackage,
     }, index);
   }
@@ -1056,62 +1138,6 @@ async function addBranchAction(index: number, branch: BranchName, action: Record
   }
 }
 
-function connectBranchToNext(index: number, branch: BranchName) {
-  if (recordingLocked.value) return;
-  const condition = steps.value[index];
-  if (!condition) return;
-  const nextMainStep = steps.value.slice(index + 1).find((step) => !step.flow?.parentConditionId);
-  if (!nextMainStep) {
-    ElMessage.warning('当前判断节点后没有可连接的主流程节点');
-    return;
-  }
-
-  const branchSteps = steps.value.filter((step) => (
-    step.flow?.parentConditionId === condition.id
-    && step.flow.parentBranch === branch
-  ));
-  if (!branchSteps.length) {
-    updateBranchTarget(condition.id, branch, nextMainStep.id);
-  } else {
-    const firstBranchStep = branchSteps[0];
-    const lastBranchStep = branchSteps[branchSteps.length - 1];
-    updateBranchTarget(condition.id, branch, firstBranchStep.id);
-    steps.value = steps.value.map((step) => (
-      step.id === lastBranchStep.id
-        ? {
-            ...step,
-            flow: { ...(step.flow || {}), successTargetId: nextMainStep.id },
-          }
-        : step
-    ));
-  }
-  ElMessage.success(`${branch === 'yes' ? '是' : '否'}分支已连接到「${nextMainStep.label}」`);
-}
-
-function disconnectBranchFromNext(index: number, branch: BranchName) {
-  if (recordingLocked.value) return;
-  const condition = steps.value[index];
-  if (!condition) return;
-  const branchSteps = steps.value.filter((step) => (
-    step.flow?.parentConditionId === condition.id
-    && step.flow.parentBranch === branch
-  ));
-  if (!branchSteps.length) {
-    updateBranchTarget(condition.id, branch, '');
-  } else {
-    const lastBranchStep = branchSteps[branchSteps.length - 1];
-    steps.value = steps.value.map((step) => (
-      step.id === lastBranchStep.id
-        ? {
-            ...step,
-            flow: { ...(step.flow || {}), successTargetId: '' },
-          }
-        : step
-    ));
-  }
-  ElMessage.success(`${branch === 'yes' ? '是' : '否'}分支已取消连接`);
-}
-
 async function saveOnActivityChange() {
   const pending = pendingNavigation.value;
   if (!pending || resolvingNavigation.value) return;
@@ -1142,7 +1168,7 @@ async function saveOnActivityChange() {
 }
 
 function removeStep(index: number) {
-  if (recordingLocked.value) return;
+  if (recordingBusy.value) return;
   const removed = steps.value[index];
   if (!removed) return;
   const nextBranchStep = removed.flow?.parentConditionId && removed.flow.parentBranch
@@ -1183,8 +1209,8 @@ function updateStep(index: number, step: AppiumRecordedStep) {
 
 async function editInputStep(index: number) {
   const step = steps.value[index];
-  if (!step || (step.type !== 'input' && step.type !== 'inputIfExists') || recordingLocked.value) return;
-  const input = await ElMessageBox.prompt('请输入新的录制文本', '修改输入内容', {
+  if (!step || (step.type !== 'input' && step.type !== 'inputIfExists') || recordingBusy.value) return;
+  const input = await ElMessageBox.prompt('', '修改输入内容', {
     inputValue: step.value || '',
     confirmButtonText: '保存',
     cancelButtonText: '取消',
@@ -1392,7 +1418,9 @@ watch(() => form.appPackage, (packageName) => {
   steps.value = steps.value.map((step) => (
     step.type === 'launchApp'
       ? { ...step, label: `启动 APP ${packageName}`, value: packageName }
-      : step
+      : step.type === 'clearAppData'
+        ? { ...step, label: `清理 APP 缓存（含数据）${packageName}`, value: packageName }
+        : step
   ));
 });
 
@@ -1538,17 +1566,17 @@ watch(
                   :steps="steps"
                   :clipboard-count="flowClipboardCount"
                   :disabled="recordingLocked"
+                  :remove-disabled="recordingBusy"
                   :allowed-locked-actions="scriptActivityMismatch && !recordingBusy ? insertableRecorderActions : []"
-                  :launching-step-id="launchingApp ? steps.find((step) => step.type === 'launchApp')?.id : ''"
+                  :launching-step-id="executingAppStepId"
                   @remove="removeStep"
                   @copy="copyFlowNodes"
                   @paste="pasteFlowNodes"
                   @add-delay="addDelayStep"
                   @insert-action="(index, action) => addAction(action, index)"
                   @insert-branch-action="addBranchAction"
-                  @connect-next="connectBranchToNext"
-                  @disconnect-next="disconnectBranchFromNext"
                   @edit-input="editInputStep"
+                  @preview-linked-script="previewLinkedScriptStep"
                   @execute-step="executeFlowStep"
                   @update-step="updateStep"
                 />
@@ -1648,24 +1676,84 @@ watch(
           <code class="appium-linked-script-activity">{{ linkedScriptExpectedActivity || '-' }}</code>
         </el-form-item>
         <el-form-item :label="linkedScriptBranchTarget ? '选择同一 App 的脚本（回放时等待入口 Activity）' : '选择入口 Activity 匹配的脚本'">
-          <el-select
-            v-model="linkedScriptTargetId"
-            filterable
-            placeholder="选择要连接的脚本"
-            class="appium-linked-script-select"
-          >
-            <el-option
-              v-for="script in compatibleLinkableScripts"
-              :key="script.id"
-              :label="`${script.name} · ${script.appActivity || '未绑定 Activity'} · ${script.steps.length} 步`"
-              :value="script.id"
-            />
-          </el-select>
+          <div class="appium-linked-script-picker">
+            <el-select
+              v-model="linkedScriptTargetId"
+              filterable
+              placeholder="选择要连接的脚本"
+              class="appium-linked-script-select"
+            >
+              <el-option
+                v-for="script in compatibleLinkableScripts"
+                :key="script.id"
+                :label="`${script.name} · ${script.appActivity || '未绑定 Activity'} · ${script.steps.length} 步`"
+                :value="script.id"
+              />
+            </el-select>
+            <el-button
+              :icon="View"
+              :disabled="!linkedScriptTarget"
+              @click="openLinkedScriptPreview()"
+            >
+              预览
+            </el-button>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="closeLinkedScriptDialog">取消</el-button>
         <el-button type="primary" @click="addLinkedScriptStep">添加连接</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="linkedScriptPreviewVisible"
+      :title="linkedScriptPreviewScript ? `预览脚本：${linkedScriptPreviewScript.name}` : '预览脚本'"
+      width="86vw"
+      top="6vh"
+      class="appium-linked-script-preview-dialog"
+      :z-index="4000"
+      append-to-body
+    >
+      <template v-if="linkedScriptPreviewScript">
+        <div class="appium-linked-script-preview-meta">
+          <strong>{{ linkedScriptPreviewScript.name }}</strong>
+          <span>
+            {{ linkedScriptPreviewScript.appPackage || '-' }}
+            · {{ linkedScriptPreviewScript.appActivity || '未绑定 Activity' }}
+            · {{ linkedScriptPreviewScript.steps.length }} 步
+          </span>
+        </div>
+        <FlowCanvas
+          id="appium-linked-script-preview"
+          class="appium-linked-script-preview-canvas"
+          readonly
+          disabled
+          remove-disabled
+          :steps="linkedScriptPreviewScript.steps"
+          :expanded-step-index="null"
+          :copy-mode="false"
+          :selected-copy-indexes="readonlyFlowSelectedIndexes"
+          :reset-view-token="linkedScriptPreviewResetToken"
+          :start-action-groups="readonlyFlowActionGroups"
+          :main-action-groups="readonlyFlowActionGroups"
+          :can-open-insert-menu="false"
+          :is-start-action-disabled="isReadonlyFlowActionDisabled"
+          :is-insert-action-disabled="isReadonlyFlowActionDisabled"
+          :is-app-execution-disabled="isReadonlyFlowAppExecutionDisabled"
+          :label-step="labelFlowStep"
+          :is-copy-selected="isReadonlyFlowCopySelected"
+        />
+      </template>
+      <template #footer>
+        <el-button @click="linkedScriptPreviewVisible = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :disabled="!linkedScriptPreviewScript"
+          @click="loadPreviewScriptForEditing"
+        >
+          加载后修改
+        </el-button>
       </template>
     </el-dialog>
 

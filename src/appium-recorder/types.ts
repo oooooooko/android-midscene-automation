@@ -60,6 +60,7 @@ export type AppiumRecordedStep = {
     | 'swipe'
     | 'screenshot'
     | 'launchApp'
+    | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
     | 'longPress'

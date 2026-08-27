@@ -1391,7 +1391,10 @@ onUnmounted(() => {
 
       <main
         class="page-body"
-        :class="{ 'page-body--fixed': activeMenu === 'generator' && activeGeneratorMode === 'ai' }"
+        :class="{
+          'page-body--fixed': activeMenu === 'generator' && activeGeneratorMode === 'ai',
+          'page-body--appium': activeMenu === 'appium',
+        }"
       >
         <el-alert v-if="activeMenu !== 'appium' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
           <template #title>{{ errorMessage }}</template>

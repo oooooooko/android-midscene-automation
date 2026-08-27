@@ -1,0 +1,619 @@
+:root {
+  --ui-primary: #fed73b;
+  --ui-primary-hover: #ffe166;
+  --ui-primary-active: #e5b900;
+  --ui-success: #52c41a;
+  --ui-warning: #faad14;
+  --ui-danger: #ff4d4f;
+  --ui-text: #1f2937;
+  --ui-text-secondary: #6b7280;
+  --ui-text-muted: #9ca3af;
+  --ui-border: #ededed;
+  --ui-border-strong: #dedede;
+  --ui-bg: #f5f5f5;
+  --ui-bg-soft: #fafafa;
+  --ui-surface: #fff;
+  --ui-radius: 8px;
+  --ui-radius-control: 6px;
+  --ui-shadow-popover: 0 8px 24px rgba(15, 23, 42, 0.1);
+
+  --el-color-primary: var(--ui-primary);
+  --el-color-primary-light-3: #ffe575;
+  --el-color-primary-light-5: #ffeb9d;
+  --el-color-primary-light-7: #fff2c4;
+  --el-color-primary-light-8: #fff6d8;
+  --el-color-primary-light-9: #fffaeb;
+  --el-color-primary-dark-2: var(--ui-primary-active);
+  --el-color-success: var(--ui-success);
+  --el-color-warning: var(--ui-warning);
+  --el-color-danger: var(--ui-danger);
+  --el-text-color-primary: var(--ui-text);
+  --el-text-color-regular: #4b5563;
+  --el-text-color-secondary: var(--ui-text-secondary);
+  --el-text-color-placeholder: var(--ui-text-muted);
+  --el-border-color: var(--ui-border-strong);
+  --el-border-color-light: var(--ui-border);
+  --el-border-color-lighter: #edf0f3;
+  --el-fill-color-light: #f6f8fb;
+  --el-fill-color-lighter: #fafbfc;
+  --el-bg-color-page: var(--ui-bg);
+  --el-border-radius-base: var(--ui-radius-control);
+  --el-border-radius-small: 4px;
+  --el-box-shadow-light: var(--ui-shadow-popover);
+  color: var(--ui-text);
+}
+
+body {
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  letter-spacing: 0;
+}
+
+::selection {
+  background: #fff0a8;
+  color: #342a00;
+}
+
+.layout {
+  grid-template-columns: 216px minmax(0, 1fr);
+  background: var(--ui-bg);
+}
+
+.layout-sidebar {
+  border-right: 1px solid var(--ui-border);
+  background: #fff;
+}
+
+.layout-sidebar__top {
+  height: 64px;
+  border-bottom-color: var(--ui-border);
+}
+
+.layout-sidebar__logo {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--ui-radius);
+  background: var(--ui-primary);
+  box-shadow: none;
+  color: #1f1f1f;
+  font-size: 14px;
+}
+
+.layout-menu.el-menu {
+  --el-menu-bg-color: #fff;
+  --el-menu-text-color: #4b5563;
+  --el-menu-hover-bg-color: #fafafa;
+  --el-menu-active-color: #1f2937;
+  padding: 10px 8px;
+}
+
+.layout-menu .el-menu-item,
+.layout-menu .el-sub-menu__title {
+  height: 44px;
+  margin: 2px 0;
+  border-radius: 6px;
+  line-height: 44px;
+}
+
+.layout-menu .el-menu-item.is-active {
+  background: #fff9df;
+  box-shadow: 3px 0 0 var(--ui-primary) inset;
+  font-weight: 600;
+}
+
+.layout-menu .el-sub-menu .el-menu-item {
+  min-width: 0;
+  padding-left: 48px !important;
+}
+
+.layout-main {
+  grid-template-rows: 64px minmax(0, 1fr);
+}
+
+.layout-header {
+  height: 64px;
+  padding: 0 24px;
+  border-bottom-color: var(--ui-border);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.layout-header__title {
+  color: var(--ui-text);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.layout-header__actions {
+  align-items: center;
+  gap: 8px;
+}
+
+.page-body {
+  padding: 20px 24px 24px;
+  scrollbar-gutter: stable;
+}
+
+.page-body:not(.page-body--appium) > .generator-page,
+.page-body:not(.page-body--appium) > .config-page,
+.page-body:not(.page-body--appium) > .automation-layout {
+  width: 100%;
+  margin: 0;
+}
+
+.page-alert,
+.page-section {
+  margin-bottom: 16px;
+}
+
+.el-card {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+}
+
+.el-card__header {
+  min-height: 54px;
+  padding: 15px 18px;
+  border-bottom-color: var(--ui-border);
+  color: var(--ui-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.el-card__body {
+  padding: 18px;
+}
+
+.el-button {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.el-button:not(.is-circle) {
+  min-height: 32px;
+  padding-right: 14px;
+  padding-left: 14px;
+}
+
+.el-button--primary:not(.is-disabled) {
+  --el-button-text-color: #1f1f1f;
+  --el-button-hover-text-color: #1f1f1f;
+  --el-button-active-text-color: #1f1f1f;
+  box-shadow: none;
+}
+
+.layout-header .el-button--primary.is-disabled,
+.generator-page .el-button--primary.is-disabled,
+.appium-header-actions .el-button--primary.is-disabled {
+  --el-button-disabled-text-color: #9ca3af;
+  --el-button-disabled-bg-color: #f3f4f6;
+  --el-button-disabled-border-color: #e5e7eb;
+}
+
+.el-button--danger:not(.is-disabled) {
+  box-shadow: 0 2px 5px rgba(255, 77, 79, 0.12);
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner,
+.el-input-number .el-input__wrapper {
+  border-radius: var(--ui-radius-control);
+  box-shadow: 0 0 0 1px var(--ui-border-strong) inset;
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px #e8c32f inset;
+}
+
+.el-form-item__label {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.el-dialog {
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+
+.el-dialog__header {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.el-dialog__title {
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.el-dialog__body {
+  padding: 20px;
+}
+
+.el-dialog__footer {
+  padding: 12px 20px 18px;
+}
+
+.el-message-box {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+
+.el-tabs__item {
+  color: var(--ui-text-secondary);
+  font-weight: 500;
+}
+
+.el-tabs__item.is-active {
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.el-alert {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: var(--ui-radius-control);
+}
+
+.el-tag {
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.el-empty__description p {
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+
+.el-select-dropdown,
+.el-dropdown__popper,
+.el-picker__popper,
+.el-popover.el-popper,
+.el-tooltip__popper {
+  border-radius: var(--ui-radius-control);
+  box-shadow: var(--ui-shadow-popover);
+}
+
+.subnav {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: #eef1f5;
+}
+
+.subnav__item {
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.subnav__item:hover {
+  color: var(--ui-text);
+}
+
+.subnav__item--active {
+  border: 0;
+  background: var(--ui-surface);
+  color: #1f2937;
+  box-shadow:
+    0 1px 4px rgba(15, 23, 42, 0.08),
+    0 2px 0 var(--ui-primary);
+}
+
+.page-grid,
+.config-grid,
+.generator-page--ai {
+  gap: 16px;
+}
+
+.panel-header {
+  min-width: 0;
+}
+
+.panel-header > span,
+.panel-header__title {
+  color: var(--ui-text);
+  font-weight: 650;
+}
+
+.panel-header__actions {
+  align-items: center;
+}
+
+.config-model-grid {
+  gap: 20px;
+}
+
+.config-model-grid > section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-bg-soft);
+}
+
+.model-usage-chart {
+  border-top-color: var(--ui-border);
+}
+
+.model-usage-chart__svg {
+  border-color: var(--ui-border);
+  background: #fbfcfe;
+}
+
+.model-usage-chart__record {
+  border: 1px solid transparent;
+  background: var(--ui-bg-soft);
+}
+
+.model-usage-chart__record:not(.model-usage-chart__record--head):hover {
+  border-color: #f2d768;
+  background: #fffdf2;
+}
+
+.model-usage-chart__record--head {
+  background: #eef1f5;
+  color: #374151;
+}
+
+.app-preset-row,
+.script-row,
+.step-item {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-control);
+}
+
+.app-preset-row:hover,
+.script-row:hover {
+  border-color: #efd467;
+  background: #fffdf4;
+}
+
+.method-guide {
+  border-color: #f0dc8a;
+  background: #fffbed;
+}
+
+.method-guide__summary {
+  color: #594b12;
+}
+
+.step-item {
+  background: var(--ui-bg-soft);
+}
+
+.code-block,
+.terminal-block,
+.generator-code-editor .el-textarea__inner,
+.code-dialog__editor .el-textarea__inner {
+  background: #111827;
+}
+
+.automation-layout,
+.automation-stage {
+  gap: 16px;
+}
+
+.script-row--active {
+  border-color: #e7c63f;
+  background: #fff9df;
+}
+
+.execution-output {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface);
+}
+
+.execution-log__output {
+  border-radius: var(--ui-radius-control);
+  background: #111827;
+}
+
+.device-preview {
+  border-radius: var(--ui-radius-control);
+  background: #0f172a;
+}
+
+.device-preview--empty {
+  border: 1px dashed var(--ui-border-strong);
+  background: #fafafa;
+}
+
+.device-action-button {
+  border-radius: var(--ui-radius-control);
+}
+
+.device-action-button:hover {
+  background: #fff8d6;
+}
+
+.appium-header-actions {
+  top: 0;
+  right: 24px;
+  height: 64px;
+  gap: 8px;
+}
+
+.appium-recorder-page {
+  gap: 16px;
+}
+
+.appium-recorder-layout {
+  gap: 16px;
+}
+
+.appium-workbench-tabs > .el-tabs__header {
+  padding: 0 18px;
+  background: #fbfcfe;
+}
+
+.appium-workbench {
+  gap: 18px;
+  padding: 18px;
+}
+
+.appium-workbench__section h3 {
+  color: var(--ui-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.appium-tree .el-tree-node__content {
+  min-height: 30px;
+  border-radius: 4px;
+}
+
+.appium-tree .el-tree-node__content:hover {
+  background: #fffbed;
+}
+
+.appium-tree .el-tree-node.is-current > .el-tree-node__content {
+  background: #fff6cf;
+  color: #6b5700;
+}
+
+.appium-current-activity {
+  border-top-color: var(--ui-border);
+  background: #fbfcfe;
+}
+
+.appium-current-activity > span {
+  color: var(--ui-text-secondary);
+  font-weight: 500;
+}
+
+.appium-side-form {
+  gap: 10px;
+}
+
+.appium-script-list__item {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface);
+}
+
+.appium-script-list__item:hover {
+  border-color: #efd467;
+  background: #fffdf4;
+}
+
+.appium-script-list__item--active {
+  border-color: #e7c63f;
+  background: #fff9df;
+}
+
+.appium-replay-fab .el-button {
+  box-shadow: 0 8px 24px rgba(181, 145, 0, 0.24);
+}
+
+.appium-replay-output--dialog {
+  border-radius: var(--ui-radius-control);
+  background: #111827;
+}
+
+/* Keep the Appium flow editor on its original Element Plus theme. */
+.appium-recorded-steps-panel,
+.appium-flow-dialog,
+.appium-action-dropdown {
+  --el-color-primary: #409eff;
+  --el-color-primary-light-3: #79bbff;
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-8: #d9ecff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #337ecc;
+  --el-color-success: #67c23a;
+  --el-color-warning: #e6a23c;
+  --el-color-danger: #f56c6c;
+  --el-text-color-primary: #303133;
+  --el-text-color-regular: #606266;
+  --el-text-color-secondary: #909399;
+  --el-text-color-placeholder: #a8abb2;
+  --el-border-color: #dcdfe6;
+  --el-border-color-light: #e4e7ed;
+  --el-border-color-lighter: #ebeef5;
+  --el-fill-color-light: #f5f7fa;
+  --el-fill-color-lighter: #fafafa;
+  --el-border-radius-base: 4px;
+  --el-border-radius-small: 2px;
+  color: #303133;
+}
+
+.appium-flow-dialog.el-dialog {
+  overflow: visible;
+  padding: 16px;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: var(--el-box-shadow);
+}
+
+.appium-flow-dialog .el-dialog__header {
+  padding: 0 0 16px;
+  border-bottom: 0;
+}
+
+.appium-flow-dialog .el-dialog__title {
+  font-size: var(--el-dialog-title-font-size);
+  font-weight: 400;
+}
+
+.appium-flow-dialog .el-dialog__body {
+  padding: 8px 0 0;
+}
+
+.appium-flow-dialog .el-dialog__footer {
+  padding: 16px 0 0;
+}
+
+.appium-recorded-steps-panel .el-button,
+.appium-flow-dialog .el-button {
+  --el-button-disabled-text-color: #a8abb2;
+  font-weight: 400;
+}
+
+.appium-recorded-steps-panel .el-form-item__label,
+.appium-flow-dialog .el-form-item__label {
+  color: #606266;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.appium-recorded-steps-panel .el-button:not(.is-circle),
+.appium-flow-dialog .el-button:not(.is-circle) {
+  min-height: var(--el-component-size, 32px);
+  padding-right: 15px;
+  padding-left: 15px;
+}
+
+.appium-recorded-steps-panel .el-button--primary:not(.is-disabled),
+.appium-flow-dialog .el-button--primary:not(.is-disabled) {
+  --el-button-text-color: #fff;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-text-color: #fff;
+  box-shadow: none;
+}
+
+@media (max-width: 1440px) {
+  .layout {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .page-body {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+}

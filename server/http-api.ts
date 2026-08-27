@@ -95,9 +95,13 @@ function writeNdjson(res: ServerResponse, event: RunGeneratedScriptEvent | { typ
   res.write(`${JSON.stringify(event)}\n`);
 }
 
-function npxCommand() {
-  return process.platform === 'win32' ? 'npx.cmd' : 'npx';
-}
+const START_ANDROID_PLAYGROUND_WITHOUT_BROWSER = [
+  "import { androidPlaygroundPlatform, ScrcpyServer } from '@midscene/android-playground';",
+  "import { launchPreparedPlaygroundPlatform } from '@midscene/playground';",
+  'const scrcpyServer = new ScrcpyServer();',
+  'const prepared = await androidPlaygroundPlatform.prepare({ scrcpyServer });',
+  'await launchPreparedPlaygroundPlatform(prepared);',
+].join('\n');
 
 type AndroidDevice = {
   id: string;
@@ -513,7 +517,7 @@ export function createApiMiddleware() {
       };
     }
 
-    playgroundProcess = spawn(npxCommand(), ['--yes', '@midscene/android-playground'], {
+    playgroundProcess = spawn(process.execPath, ['--input-type=module', '--eval', START_ANDROID_PLAYGROUND_WITHOUT_BROWSER], {
       cwd: appPath(),
       env: {
         ...process.env,

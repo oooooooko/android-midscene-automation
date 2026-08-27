@@ -10,11 +10,15 @@ const viteRoot = path.dirname(require.resolve('vite/package.json'));
 const viteBin = path.join(viteRoot, 'bin', 'vite.js');
 const args = process.argv.slice(2);
 const userRoot = process.cwd();
+const githubUrl = 'https://github.com/oooooooko/android-midscene-automation';
 
 if (!args.includes('--host')) {
   args.unshift('127.0.0.1');
   args.unshift('--host');
 }
+
+console.log(`\nGitHub 源码 / 二次修改：${githubUrl}`);
+console.log(`问题反馈 / 功能建议：${githubUrl}/issues\n`);
 
 const child = spawn(process.execPath, [viteBin, ...args], {
   cwd: packageRoot,

@@ -704,6 +704,7 @@ select {
 .appium-flow-content {
   --appium-flow-line-width: 3px;
   --appium-flow-line-color: #dbe5f1;
+  position: relative;
   display: grid;
   gap: 8px;
   align-content: start;
@@ -828,6 +829,10 @@ select {
   bottom: -8px;
   height: calc(100% - 32px);
   transform: translateX(-50%);
+}
+
+.appium-flow-item--condition > .appium-flow-item__line {
+  display: none;
 }
 
 .appium-flow-node {
@@ -992,7 +997,7 @@ select {
 }
 
 .appium-flow-branch-lines path,
-.appium-flow-merge path {
+.appium-flow-connection-layer path {
   fill: none;
   stroke: var(--appium-flow-line-color);
   stroke-width: var(--appium-flow-line-width);
@@ -1115,10 +1120,10 @@ select {
   position: relative;
   z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-self: center;
+  align-items: center;
   justify-content: center;
+  justify-self: center;
+  width: 100%;
 }
 
 .appium-flow-branch:has(
@@ -1132,12 +1137,6 @@ select {
   .appium-flow-branch-step-group:last-child > .appium-flow-nested-condition
 ) > .appium-flow-branch__actions > .el-dropdown {
   display: none;
-}
-
-.appium-flow-branch__connect {
-  height: 24px;
-  padding: 0 8px;
-  font-size: 12px;
 }
 
 .appium-flow-branch--yes .appium-flow-branch__label {
@@ -1156,43 +1155,22 @@ select {
   background: transparent;
 }
 
-.appium-flow-branch--connected .appium-flow-branch__line {
-  bottom: -1px;
-  height: calc(100% - 17px);
-}
-
-.appium-flow-branch--connected {
-  align-self: stretch;
-}
-
-.appium-flow-merge {
-  order: 3;
+.appium-flow-connection-space {
+  order: 4;
   position: relative;
-  z-index: 0;
-  justify-self: stretch;
   height: 36px;
   margin: -6px 0 0;
   pointer-events: none;
 }
 
-.appium-flow-merge svg {
+.appium-flow-connection-layer {
   position: absolute;
-  inset: 0 0 -8px;
+  inset: 0;
+  z-index: 0;
   width: 100%;
-  height: calc(100% + 8px);
+  height: 100%;
   overflow: visible;
-}
-
-.appium-flow-merge path {
-  stroke: var(--appium-flow-line-color);
-}
-
-.appium-flow-merge__yes {
-  stroke: var(--appium-flow-line-color);
-}
-
-.appium-flow-merge__no {
-  stroke: var(--appium-flow-line-color);
+  pointer-events: none;
 }
 
 .appium-flow-branch--yes .appium-flow-branch-step:not(.appium-flow-node--selected) {
@@ -1264,6 +1242,18 @@ select {
   width: 100%;
 }
 
+.appium-linked-script-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.appium-linked-script-picker .appium-linked-script-select {
+  flex: 1;
+  min-width: 0;
+}
+
 .appium-linked-script-activity {
   display: block;
   box-sizing: border-box;
@@ -1276,6 +1266,27 @@ select {
   font-family: inherit;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.appium-linked-script-preview-dialog .el-dialog__body {
+  padding-top: 10px;
+}
+
+.appium-linked-script-preview-meta {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.appium-linked-script-preview-meta strong {
+  color: #1f2937;
+}
+
+.appium-linked-script-preview-canvas.appium-flow-canvas--vue {
+  height: 68vh;
+  min-height: 520px;
 }
 
 .appium-replay-output {
@@ -2771,4 +2782,342 @@ select {
   .config-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Vue Flow based Appium recorder canvas. Keep these rules after the legacy
+   flow styles so the old hand-drawn connector CSS cannot leak into it. */
+.appium-flow-canvas--vue {
+  position: relative;
+  width: 100%;
+  height: clamp(520px, calc(100vh - 300px), 780px);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid #e6edf5;
+  border-radius: 12px;
+  background: #f7f9fc;
+}
+
+.appium-flow-canvas--dialog.appium-flow-canvas--vue {
+  height: 72vh;
+  min-height: 620px;
+}
+
+.appium-vue-flow {
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at 1px 1px, #d9e6f5 1.25px, transparent 0) 0 0 / 22px 22px,
+    #f8fafc;
+}
+
+.appium-vue-flow .vue-flow__pane {
+  cursor: grab;
+}
+
+.appium-vue-flow .vue-flow__pane:active {
+  cursor: grabbing;
+}
+
+.appium-vue-flow .vue-flow__node {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: all;
+  z-index: 2;
+}
+
+.appium-vue-flow .vue-flow__edges {
+  z-index: 0;
+}
+
+.appium-vue-flow .vue-flow__nodes {
+  z-index: 1;
+}
+
+.appium-vue-flow .vue-flow__edge {
+  pointer-events: none;
+}
+
+.appium-vue-flow .vue-flow__edge-path,
+.appium-vue-flow .vue-flow__connection-path {
+  stroke: #d8e4f2;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.appium-flow-graph-node {
+  position: relative;
+  width: max-content;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+.appium-flow-graph-node--start {
+  width: 180px;
+}
+
+.appium-flow-graph-node--step {
+  width: 340px;
+}
+
+.appium-flow-graph-node--insert {
+  width: 34px;
+  height: 34px;
+}
+
+.appium-flow-graph-node--branch {
+  width: 34px;
+  height: 26px;
+}
+
+.appium-flow-graph-node--split {
+  width: 10px;
+  height: 10px;
+}
+
+.appium-flow-handle {
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.appium-flow-handle--top {
+  top: 0;
+}
+
+.appium-flow-handle--bottom {
+  bottom: 0;
+}
+
+.appium-flow-graph-node--split .appium-flow-handle--top {
+  top: 50%;
+}
+
+.appium-flow-graph-node--split .appium-flow-handle--bottom {
+  bottom: 50%;
+}
+
+.appium-flow-start-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 180px;
+  height: 62px;
+  padding: 10px 14px;
+  border: 1px solid #e6edf5;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.appium-flow-start-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #e8f1ff;
+  color: #1677ff;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.appium-flow-start-card strong,
+.appium-flow-start-card small {
+  display: block;
+}
+
+.appium-flow-start-card strong {
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.appium-flow-start-card small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.appium-flow-branch-pill {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.appium-flow-branch-pill--yes {
+  background: #5cc43a;
+}
+
+.appium-flow-branch-pill--no {
+  background: #ff6872;
+}
+
+.appium-flow-split-joint {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 0;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.appium-flow-insert-node {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+}
+
+.appium-flow-insert-node .el-button.is-circle {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: #1677ff;
+  box-shadow: 0 8px 18px rgba(22, 119, 255, 0.25);
+}
+
+.appium-flow-insert-preview-point {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  box-shadow: 0 0 0 4px rgba(203, 213, 225, 0.28);
+}
+
+.appium-flow-step-shell {
+  position: relative;
+  width: 340px;
+}
+
+.appium-flow-step-card {
+  width: 340px;
+  min-height: 78px;
+  padding: 10px 96px 10px 14px;
+  border: 1px solid #dfe8f3;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.appium-flow-step-shell--readonly .appium-flow-step-card {
+  padding-right: 14px;
+  cursor: default;
+}
+
+.appium-flow-step-card:hover {
+  border-color: #a7c7f9;
+  box-shadow: 0 10px 24px rgba(39, 111, 236, 0.12);
+}
+
+.appium-flow-step-shell--condition .appium-flow-step-card {
+  border-color: #f6a23a;
+  background: #fffbf4;
+}
+
+.appium-flow-step-shell--assertion .appium-flow-step-card {
+  border-color: #95d475;
+  background: #f7fff5;
+}
+
+.appium-flow-step-shell--selected .appium-flow-step-card {
+  border-color: #2f7df6;
+  background: #eaf2ff;
+  box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.16);
+}
+
+.appium-flow-step-shell--copying .appium-flow-step-card {
+  cursor: copy;
+}
+
+.appium-flow-step-card__content {
+  display: block;
+  min-width: 0;
+}
+
+.appium-flow-step-card__content strong,
+.appium-flow-step-card__content small,
+.appium-flow-step-card__content em {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.appium-flow-step-card__content strong {
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.appium-flow-step-card__content small {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.appium-flow-step-card__content em {
+  margin-top: 3px;
+  color: #1f2937;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.appium-flow-step-card__actions {
+  position: absolute;
+  top: 11px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.appium-flow-step-card__actions .el-button {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  color: #64748b;
+}
+
+.appium-flow-step-editor {
+  width: 340px;
+  margin-top: 8px;
+  border-color: #dfe8f3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.appium-action-dropdown .el-dropdown-menu {
+  min-width: 180px;
+}
+
+.appium-action-dropdown__group {
+  padding: 8px 14px 4px;
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 12px;
 }

@@ -11,7 +11,7 @@ import {
   saveAppiumRecordedScript,
   type AppiumRecordedStepRecord,
 } from './repository';
-import { launchAppOnDevice, replayAppiumScript } from './appium-runner';
+import { clearAppDataOnDevice, launchAppOnDevice, replayAppiumScript } from './appium-runner';
 import { isRemoteDeviceId, sendRemoteCommand } from '../remote-agents/registry';
 import { getAdbCommand } from '../android-sdk';
 
@@ -201,6 +201,19 @@ export async function handleAppiumRecorderRequest(
       assertDeviceAllowed(deviceId);
       if (isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持直接启动 App');
       await launchAppOnDevice(deviceId, packageName);
+      sendJson(res, { success: true });
+      return true;
+    }
+
+    if (pathname === '/api/appium-recorder/clear-app-data' && req.method === 'POST') {
+      const parsed = await readBody<{ deviceId?: string; packageName?: string }>(req);
+      const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
+      const packageName = parsed.packageName?.trim() || '';
+      if (!deviceId) throw new Error('未检测到可用设备');
+      if (!packageName) throw new Error('请选择预设 App');
+      assertDeviceAllowed(deviceId);
+      if (isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持清理 App 缓存');
+      await clearAppDataOnDevice(deviceId, packageName);
       sendJson(res, { success: true });
       return true;
     }

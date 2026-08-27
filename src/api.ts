@@ -32,6 +32,8 @@ async function postJson<T>(url: string, body?: unknown) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
+  }).catch((error) => {
+    throw new Error(`无法连接本地后端 ${url}：${error instanceof Error ? error.message : '网络请求失败'}`);
   });
   return readJson<T>(response);
 }
