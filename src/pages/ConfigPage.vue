@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Delete, Edit } from '@element-plus/icons-vue';
-import ModelUsageChart from '../components/config/ModelUsageChart.vue';
+import { Delete, Edit, QuestionFilled } from '@element-plus/icons-vue';
 import {
   codexMidsceneModelOptions,
-  midsceneModelFamilyOptions,
-  midsceneModelOptions,
   midsceneModelPresets,
   type MidsceneModelProvider,
-  type MidsceneModelPresetKey,
 } from '../config/midscene-model-presets';
-import type { AppPreset, ConfigForm, ModelUsageRecord } from '../types';
+import type { AppPreset, ConfigForm } from '../types';
 
 type AppPresetForm = {
   id: string;
@@ -29,7 +25,6 @@ const props = defineProps<{
     midscene: string;
     scriptOptimizer: string;
   };
-  modelUsageRecords: ModelUsageRecord[];
 }>();
 
 const emit = defineEmits<{
@@ -39,38 +34,29 @@ const emit = defineEmits<{
   editAppPreset: [app: AppPreset];
   deleteAppPreset: [id: string];
   updateMidsceneModelProvider: [provider: MidsceneModelProvider];
-  applyMidsceneModelPreset: [key: MidsceneModelPresetKey];
 }>();
 
 const activeMidsceneProvider = computed<MidsceneModelProvider>(() =>
   props.configForm.midscene.model.provider === 'codex' ? 'codex' : 'custom',
 );
+const modelConfigGuideUrl = 'https://midscenejs.com/zh/model-common-config.html';
 
-const activeMidscenePresetKey = computed(() => {
-  const model = props.configForm.midscene.model;
-  return midsceneModelPresets.find(
-    (preset) =>
-      preset.baseUrl === model.baseUrl &&
-      preset.modelName === model.name &&
-      preset.modelFamily === model.family,
-  )?.key || '';
-});
-
-const activeMidsceneModelOptions = computed(() =>
-  activeMidsceneProvider.value === 'codex' ? codexMidsceneModelOptions : midsceneModelOptions,
-);
+const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
 
 const updateMidsceneModelName = (value: string) => {
   props.configForm.midscene.model.name = value;
-  const option = activeMidsceneModelOptions.value.find((item) => item.value === value);
+  const option = codexMidsceneModelOptions.find((item) => item.value === value);
   if (option) {
     props.configForm.midscene.model.family = option.family;
   }
 };
 
-const applyMidscenePreset = (value: string) => {
-  if (value === 'gpt' || value === 'doubao') {
-    emit('applyMidsceneModelPreset', value);
+const updateCustomMidsceneBaseUrl = (value: string) => {
+  props.configForm.midscene.model.baseUrl = value;
+  const preset = midsceneModelPresets.find((item) => normalizeBaseUrl(item.baseUrl) === normalizeBaseUrl(value));
+  if (preset) {
+    props.configForm.midscene.model.name = preset.modelName;
+    props.configForm.midscene.model.family = preset.modelFamily;
   }
 };
 
@@ -78,6 +64,10 @@ const updateMidsceneProvider = (value: string) => {
   if (value === 'custom' || value === 'codex') {
     emit('updateMidsceneModelProvider', value);
   }
+};
+
+const openModelConfigGuide = () => {
+  window.open(modelConfigGuideUrl, '_blank', 'noopener,noreferrer');
 };
 </script>
 
@@ -184,49 +174,51 @@ const updateMidsceneProvider = (value: string) => {
               </el-form-item>
 
               <template v-if="activeMidsceneProvider === 'custom'">
-                <el-form-item label="模型预设参数">
-                  <el-select
-                    :model-value="activeMidscenePresetKey"
-                    placeholder="请选择模型预设"
-                    @change="applyMidscenePreset"
-                  >
-                    <el-option
-                      v-for="preset in midsceneModelPresets"
-                      :key="preset.key"
-                      :label="preset.label"
-                      :value="preset.key"
-                    />
-                  </el-select>
-                </el-form-item>
                 <el-form-item label="Base URL">
-                  <el-input v-model="configForm.midscene.model.baseUrl" />
+                  <el-input
+                    :model-value="configForm.midscene.model.baseUrl"
+                    placeholder="输入 Base URL，匹配已知提供方时自动填充模型"
+                    @input="updateCustomMidsceneBaseUrl"
+                  />
                 </el-form-item>
                 <el-form-item label="API Key">
                   <el-input v-model="configForm.midscene.model.apiKey" show-password />
                 </el-form-item>
-                <el-form-item label="Model Name">
-                  <el-select
-                    :model-value="configForm.midscene.model.name"
-                    filterable
-                    @change="updateMidsceneModelName"
-                  >
-                    <el-option
-                      v-for="option in activeMidsceneModelOptions"
-                      :key="option.value"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </el-select>
+                <el-form-item>
+                  <template #label>
+                    <span class="config-field-label">
+                      <span>Model Name</span>
+                      <el-tooltip content="查看模型填写参考" placement="top">
+                        <el-button
+                          class="config-field-help"
+                          text
+                          size="small"
+                          :icon="QuestionFilled"
+                          aria-label="查看 Model Name 填写参考"
+                          @click.stop="openModelConfigGuide"
+                        />
+                      </el-tooltip>
+                    </span>
+                  </template>
+                  <el-input v-model="configForm.midscene.model.name" placeholder="例如：gpt-5.5" />
                 </el-form-item>
-                <el-form-item label="Model Family">
-                  <el-select v-model="configForm.midscene.model.family" filterable>
-                    <el-option
-                      v-for="option in midsceneModelFamilyOptions"
-                      :key="option.value"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </el-select>
+                <el-form-item>
+                  <template #label>
+                    <span class="config-field-label">
+                      <span>Model Family</span>
+                      <el-tooltip content="查看模型填写参考" placement="top">
+                        <el-button
+                          class="config-field-help"
+                          text
+                          size="small"
+                          :icon="QuestionFilled"
+                          aria-label="查看 Model Family 填写参考"
+                          @click.stop="openModelConfigGuide"
+                        />
+                      </el-tooltip>
+                    </span>
+                  </template>
+                  <el-input v-model="configForm.midscene.model.family" placeholder="例如：gpt-5" />
                 </el-form-item>
               </template>
 
@@ -246,7 +238,7 @@ const updateMidsceneProvider = (value: string) => {
                     @change="updateMidsceneModelName"
                   >
                     <el-option
-                      v-for="option in activeMidsceneModelOptions"
+                      v-for="option in codexMidsceneModelOptions"
                       :key="option.value"
                       :label="option.label"
                       :value="option.value"
@@ -292,9 +284,6 @@ const updateMidsceneProvider = (value: string) => {
           </section>
         </div>
 
-        <ModelUsageChart
-          :records="modelUsageRecords"
-        />
       </el-card>
 
     </section>

@@ -120,6 +120,52 @@ select {
   padding: 6px 16px 14px;
 }
 
+.action-dialog__footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.action-dialog__footer-button.el-button {
+  min-width: 88px;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.action-dialog__footer-button.el-button + .action-dialog__footer-button.el-button {
+  margin-left: 0;
+}
+
+.action-dialog__footer-button--secondary.el-button {
+  border-color: #e5e7eb;
+  background: #fff;
+  color: #8b95a5;
+}
+
+.action-dialog__footer-button--secondary.el-button:hover,
+.action-dialog__footer-button--secondary.el-button:focus {
+  border-color: #d7dce5;
+  background: #f8fafc;
+  color: #6b7280;
+}
+
+.action-dialog__footer-button--primary.el-button {
+  border-color: #ffd436;
+  background: #ffd436;
+  color: #111827;
+}
+
+.action-dialog__footer-button--primary.el-button:hover,
+.action-dialog__footer-button--primary.el-button:focus {
+  border-color: #ffca1f;
+  background: #ffca1f;
+  color: #111827;
+}
+
 @keyframes action-dialog-spin {
   from {
     transform: rotate(0deg);
@@ -147,6 +193,10 @@ select {
 .layout-header__actions {
   display: flex;
   gap: 12px;
+}
+
+.layout-header__button--loading .el-icon {
+  animation: action-dialog-spin 1s linear infinite;
 }
 
 .page-body {
@@ -1587,6 +1637,18 @@ select {
   gap: 8px;
 }
 
+.config-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.config-field-help.el-button {
+  height: 18px;
+  padding: 0;
+  color: var(--el-text-color-secondary);
+}
+
 .config-module-card {
   min-width: 0;
 }
@@ -1595,137 +1657,6 @@ select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
-}
-
-.model-usage-chart {
-  margin-top: 20px;
-  padding-top: 18px;
-  border-top: 1px solid #ebeef5;
-}
-
-.model-usage-chart__body {
-  display: grid;
-  gap: 10px;
-}
-
-.model-usage-chart__summary,
-.model-usage-chart__legend,
-.model-usage-chart__record {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.model-usage-chart__summary {
-  flex-wrap: wrap;
-}
-
-.model-usage-chart__svg {
-  width: 100%;
-  height: 180px;
-  display: block;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  background: #fbfdff;
-}
-
-.model-usage-chart__axis {
-  stroke: #d8dee9;
-  stroke-width: 1;
-}
-
-.model-usage-chart__line {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2.5;
-}
-
-.model-usage-chart__line--prompt,
-.model-usage-chart__point--prompt {
-  stroke: #2563eb;
-}
-
-.model-usage-chart__line--completion,
-.model-usage-chart__point--completion {
-  stroke: #d97706;
-}
-
-.model-usage-chart__line--duration,
-.model-usage-chart__point--duration {
-  stroke: #16a34a;
-}
-
-.model-usage-chart__point {
-  fill: #fff;
-  stroke-width: 2;
-}
-
-.model-usage-chart__legend {
-  flex-wrap: wrap;
-}
-
-.model-usage-chart__legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.model-usage-chart__swatch {
-  width: 18px;
-  height: 3px;
-  border-radius: 999px;
-}
-
-.model-usage-chart__swatch--prompt {
-  background: #2563eb;
-}
-
-.model-usage-chart__swatch--completion {
-  background: #d97706;
-}
-
-.model-usage-chart__swatch--duration {
-  background: #16a34a;
-}
-
-.model-usage-chart__records {
-  display: grid;
-  gap: 6px;
-  height: 220px;
-  align-content: start;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.model-usage-chart__record {
-  display: grid;
-  grid-template-columns: 86px 64px minmax(120px, 1fr) 84px 84px 84px 72px;
-  justify-content: initial;
-  min-height: 38px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: #f8fafc;
-}
-
-.model-usage-chart__record--head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  min-height: 30px;
-  background: #eef2f7;
-  color: #475569;
-  font-weight: 700;
-}
-
-.model-usage-chart__record span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .app-preset-list {
@@ -2089,6 +2020,7 @@ select {
   display: grid;
   grid-template-columns: 420px minmax(0, 1fr);
   gap: 16px;
+  height: 100%;
   min-height: 0;
 }
 
@@ -2114,12 +2046,19 @@ select {
 
 .execution-card > .el-card__body {
   display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.execution-card.el-card {
+  height: 100%;
 }
 
 .execution-card .el-form {
   display: flex;
   flex: 1;
   width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
@@ -2129,12 +2068,17 @@ select {
   flex: 0 0 auto;
 }
 
+.execution-card .execution-script-item {
+  margin-bottom: 12px;
+}
+
 .execution-card .execution-output-item {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
+  margin-bottom: 0;
 }
 
 .execution-card .execution-output-item .el-form-item__content {
@@ -2562,11 +2506,13 @@ select {
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
-  height: auto;
+  height: 100%;
+  min-height: 0;
   padding: 0;
-  border: 1px solid #e4e7ed;
+  border: 1px solid #263244;
   border-radius: 6px;
-  background: #fff;
+  background: #101722;
+  scrollbar-color: #526174 #101722;
 }
 
 .execution-output-header {
@@ -2611,15 +2557,30 @@ select {
   border: 0;
   outline: 0;
   resize: none;
-  background: #fff;
-  color: #475569;
+  background: #101722;
+  color: #d7e0ea;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   line-height: 1.6;
   overflow: auto;
-  white-space: pre;
+  white-space: pre-wrap;
   overflow-wrap: normal;
-  word-break: normal;
+  word-break: break-word;
+}
+
+.execution-log__output::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.execution-log__output::-webkit-scrollbar-track {
+  background: #101722;
+}
+
+.execution-log__output::-webkit-scrollbar-thumb {
+  border: 2px solid #101722;
+  border-radius: 6px;
+  background: #526174;
 }
 
 .execution-process {
@@ -2733,10 +2694,16 @@ select {
 
   .automation-layout {
     height: auto;
+    min-height: calc(100vh - 108px);
   }
 
   .automation-stage {
     grid-template-columns: 1fr;
+  }
+
+  .execution-card.el-card {
+    height: min(760px, calc(100vh - 120px));
+    min-height: 560px;
   }
 
   .appium-recorder-layout {

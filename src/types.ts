@@ -34,20 +34,6 @@ export type ConfigForm = {
   };
 };
 
-export type ModelUsageRecord = {
-  id: string;
-  modelKey: 'midscene' | 'scriptOptimizer';
-  provider: string;
-  modelName: string;
-  family: string;
-  success: boolean;
-  durationMs: number;
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-  createdAt: string;
-};
-
 export type SavedScript = {
   id: string;
   name: string;

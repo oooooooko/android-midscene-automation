@@ -5,7 +5,6 @@ import type {
   ConfigForm,
   DeviceLock,
   DeviceSession,
-  ModelUsageRecord,
   OperationEvent,
   OperationRecord,
   RunScriptStreamEvent,
@@ -27,12 +26,16 @@ async function readJson<T>(response: Response) {
 }
 
 // 项目内大部分接口都是 JSON POST，这里集中处理请求头和错误转换。
-async function postJson<T>(url: string, body?: unknown) {
+async function postJson<T>(url: string, body?: unknown, options: { signal?: AbortSignal } = {}) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: options.signal,
     body: JSON.stringify(body || {}),
   }).catch((error) => {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
     throw new Error(`无法连接本地后端 ${url}：${error instanceof Error ? error.message : '网络请求失败'}`);
   });
   return readJson<T>(response);
@@ -86,7 +89,7 @@ export function updateScriptCode(input: { id: string; code: string }) {
 }
 
 // 调用脚本优化模型，把原始 Prompt 转成项目内的结构化步骤。
-export function generatePlan(input: { prompt: string }) {
+export function generatePlan(input: { prompt: string; signal?: AbortSignal }) {
   return postJson<{
     promptTitle?: string;
     steps?: Array<Omit<ScriptStep, 'id'>>;
@@ -97,7 +100,7 @@ export function generatePlan(input: { prompt: string }) {
       completionTokens?: number;
       totalTokens?: number;
     };
-  }>(`${APP_BASE}/api/generate`, input);
+  }>(`${APP_BASE}/api/generate`, { prompt: input.prompt }, { signal: input.signal });
 }
 
 // 读取模型配置和脚本优化模型配置。
@@ -131,12 +134,6 @@ export function testModel(input: {
       totalTokens?: number;
     };
   }>(`${APP_BASE}/api/test-model`, input);
-}
-
-// 读取模型测试消耗记录，后端按时间保存在 SQLite。
-export async function getModelUsageRecords(limit = 50) {
-  const response = await fetch(`${APP_BASE}/api/model-usage-records?limit=${encodeURIComponent(String(limit))}`);
-  return readJson<{ records?: ModelUsageRecord[] }>(response);
 }
 
 // 读取预设 App 列表，测试脚本生成时用于自动拼接 App 名称和包名上下文。
@@ -203,6 +200,14 @@ export async function getPlaygroundStatus() {
     previewError?: string;
     setupState?: string;
   }>(response);
+}
+
+// 重启本地 Android Playground 实时预览，用于恢复花屏或卡住的 scrcpy 流。
+export function restartPlaygroundPreview(input: { deviceId: string }) {
+  return postJson<{ success?: boolean; started?: boolean; available?: boolean; url?: string; skippedReason?: string }>(
+    `${APP_BASE}/api/playground-restart`,
+    input,
+  );
 }
 
 // 切换当前自动化测试设备，并创建或复用对应设备会话。

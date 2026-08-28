@@ -20,7 +20,7 @@ defineProps<{
   formatScriptTime: (value: string) => string;
   switchAndroidDevice: (deviceId: string) => void;
   triggerDeviceKey: (keyCode: number) => void;
-  refreshDevicePreview: () => void;
+  refreshDevicePreview: () => void | Promise<void>;
   openCodeDialog: (script: SavedScript) => void;
   removeSavedScript: (id: string) => void;
   deviceWidth: number;
@@ -110,7 +110,7 @@ const getRunStatusTagText = (status: string) => {
       <el-card shadow="never" class="automation-card execution-card">
         <template #header>执行面板</template>
         <el-form label-position="top">
-          <el-form-item label="当前脚本">
+          <el-form-item class="execution-script-item" label="当前脚本">
             <el-input :model-value="selectedScript ? `${selectedScript.promptTitle || selectedScript.name} · ${selectedScript.name}` : ''" readonly />
           </el-form-item>
           <el-form-item class="execution-output-item">
@@ -148,7 +148,7 @@ const getRunStatusTagText = (status: string) => {
                   class="execution-log__output"
                   :value="executionLog"
                   readonly
-                  wrap="off"
+                  wrap="soft"
                   spellcheck="false"
                 />
               </div>

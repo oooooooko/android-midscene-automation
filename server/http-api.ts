@@ -9,12 +9,10 @@ type NextHandleFunction = (req: IncomingMessage, res: ServerResponse, next: Next
 
 import { execFile, spawn } from 'node:child_process';
 import { appPath } from './paths';
-import { loadConfig, saveConfig, type AppConfig } from './config';
+import { ConfigValidationError, loadConfig, saveConfig, type AppConfig } from './config';
 import { listAppPresetRecords, removeAppPresetRecord, saveAppPresetRecord } from './config-store';
 import { generatePlan } from './script-agent';
-import { importMidsceneModelUsage } from './model-call-usage-importer';
 import { testModelConnection } from './model-tester';
-import { listModelUsageRecords, saveModelUsageRecord } from './model-usage-repository';
 import { DeviceLockConflictError } from './device-locks/types';
 import { acquireDeviceLock, listActiveDeviceLocks, releaseDeviceLock } from './device-locks/service';
 import { ensureDeviceSession, listDeviceSessions } from './device-sessions/service';
@@ -95,12 +93,38 @@ function writeNdjson(res: ServerResponse, event: RunGeneratedScriptEvent | { typ
   res.write(`${JSON.stringify(event)}\n`);
 }
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+// Work around @midscene/android-playground v1.12.x ESM __dirname usage on Node 24.
 const START_ANDROID_PLAYGROUND_WITHOUT_BROWSER = [
-  "import { androidPlaygroundPlatform, ScrcpyServer } from '@midscene/android-playground';",
-  "import { launchPreparedPlaygroundPlatform } from '@midscene/playground';",
-  'const scrcpyServer = new ScrcpyServer();',
-  'const prepared = await androidPlaygroundPlatform.prepare({ scrcpyServer });',
-  'await launchPreparedPlaygroundPlatform(prepared);',
+  "import { createRequire } from 'node:module';",
+  'const require = createRequire(import.meta.url);',
+  "const { androidPlaygroundPlatform, ScrcpyServer } = require('@midscene/android-playground');",
+  "const { launchPreparedPlaygroundPlatform } = require('@midscene/playground');",
+  'const STABLE_PREVIEW_OPTIONS = {',
+  '  maxFps: 15,',
+  '  maxSize: 1024,',
+  '  videoBitRate: 3000000,',
+  "  videoCodecOptions: 'i-frame-interval=0',",
+  '};',
+  'async function main() {',
+  '  const scrcpyServer = new ScrcpyServer();',
+  '  const startScrcpy = scrcpyServer.startScrcpy.bind(scrcpyServer);',
+  '  scrcpyServer.startScrcpy = (adb, options = {}, onProgress) => startScrcpy(adb, {',
+  '    ...options,',
+  '    ...STABLE_PREVIEW_OPTIONS,',
+  '  }, onProgress);',
+  '  const prepared = await androidPlaygroundPlatform.prepare({ scrcpyServer });',
+  '  await launchPreparedPlaygroundPlatform(prepared);',
+  '}',
+  "main().catch((error) => {",
+  "  console.error(error);",
+  "  process.exit(1);",
+  "});",
 ].join('\n');
 
 type AndroidDevice = {
@@ -458,6 +482,24 @@ async function proxyPlaygroundRequest(req: IncomingMessage, res: ServerResponse,
     return;
   }
 
+  if (targetPath === '/mjpeg' && response.body) {
+    const reader = response.body.getReader();
+    req.once('close', () => {
+      reader.cancel().catch(() => undefined);
+    });
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) res.write(Buffer.from(value));
+      }
+      res.end();
+    } catch {
+      if (!res.writableEnded) res.end();
+    }
+    return;
+  }
+
   const buffer = Buffer.from(await response.arrayBuffer());
   res.end(buffer);
 }
@@ -557,6 +599,39 @@ export function createApiMiddleware() {
       });
   };
 
+  const stopAndroidPlayground = async () => {
+    const processToStop = playgroundProcess;
+    if (!processToStop || processToStop.killed) return;
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 1500);
+      processToStop.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      processToStop.kill('SIGTERM');
+    });
+    if (playgroundProcess === processToStop) {
+      playgroundProcess = null;
+    }
+  };
+
+  const waitForUsablePlaygroundTarget = async (selectedDeviceId: string, timeoutMs = 30000) => {
+    const deadline = Date.now() + timeoutMs;
+    let resolved: PlaygroundTarget = null;
+    while (Date.now() < deadline) {
+      resolved = await resolvePlaygroundUrl(selectedDeviceId);
+      if (resolved && selectedDeviceId && !isUsablePlaygroundTarget(resolved, selectedDeviceId) && !resolved.sessionConnected) {
+        resolved = await createPlaygroundSession(resolved, selectedDeviceId) || resolved;
+      }
+      if (isUsablePlaygroundTarget(resolved, selectedDeviceId)) {
+        return resolved;
+      }
+      await delay(500);
+    }
+    return resolved;
+  };
+
   const handler: NextHandleFunction = async (req, res, next) => {
     const requestUrl = new URL(req.url || '/', 'http://localhost');
     const pathname = requestUrl.pathname;
@@ -648,7 +723,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = error instanceof ConfigValidationError ? 400 : 500;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -947,16 +1022,53 @@ export function createApiMiddleware() {
       return;
     }
 
+    if (req.url === '/api/playground-restart' && req.method === 'POST') {
+      try {
+        const payload = await readBody<{ deviceId?: string }>(req);
+        const deviceId = payload.deviceId || selectedDeviceId;
+        if (!deviceId) {
+          throw new Error('请先选择 Android 设备');
+        }
+        if (isRemoteDeviceId(deviceId)) {
+          throw new Error('远程设备不支持重启本地实时预览');
+        }
+
+        setSelectedDeviceId(req, res, deviceId);
+        selectedDeviceId = deviceId;
+        playgroundEnsurePromise = null;
+        lastPlaygroundEnsureAt = 0;
+        lastPlaygroundEnsureDeviceId = '';
+        await stopAndroidPlayground();
+        const result = await ensureAndroidPlayground(deviceId);
+        const target = result.target || await waitForUsablePlaygroundTarget(deviceId);
+
+        ensureDeviceSession({
+          deviceId,
+          patch: {
+            playgroundUrl: target?.url || '',
+            previewKind: target?.previewKind || '',
+            sessionConnected: target?.sessionConnected || false,
+            setupState: target?.setupState || result.skippedReason || '',
+            previewError: target?.previewError || '',
+          },
+        });
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({
+          success: true,
+          started: result.started,
+          available: isUsablePlaygroundTarget(target, deviceId),
+          url: target?.url || '',
+          skippedReason: result.skippedReason,
+        }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ message: error instanceof Error ? error.message : '重启 Android Playground 失败' }));
+      }
+      return;
+    }
+
     if (req.url === '/api/test-model' && req.method === 'POST') {
-      const startedAt = Date.now();
-      let modelKey: 'midscene' | 'scriptOptimizer' = 'midscene';
-      let model: {
-        provider?: 'custom' | 'codex';
-        baseUrl?: string;
-        apiKey?: string;
-        name?: string;
-        family?: string;
-      } = {};
       try {
         const parsed = await readBody<{
           modelKey?: 'midscene' | 'scriptOptimizer';
@@ -968,8 +1080,7 @@ export function createApiMiddleware() {
             family?: string;
           };
         }>(req);
-        model = parsed.model || {};
-        modelKey = parsed.modelKey === 'scriptOptimizer' ? 'scriptOptimizer' : 'midscene';
+        const model = parsed.model || {};
 
         const result = await testModelConnection({
           provider: model.provider,
@@ -978,42 +1089,8 @@ export function createApiMiddleware() {
           name: model.name || '',
           family: model.family || '',
         });
-        saveModelUsageRecord({
-          modelKey,
-          provider: modelKey === 'midscene' ? model.provider || 'custom' : 'custom',
-          modelName: model.name || '',
-          family: model.family || '',
-          success: true,
-          durationMs: result.durationMs ?? Date.now() - startedAt,
-          promptTokens: result.usage?.promptTokens,
-          completionTokens: result.usage?.completionTokens,
-          totalTokens: result.usage?.totalTokens,
-        });
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify(result));
-      } catch (error) {
-        saveModelUsageRecord({
-          modelKey,
-          provider: modelKey === 'midscene' ? model.provider || 'custom' : 'custom',
-          modelName: model.name || '',
-          family: model.family || '',
-          success: false,
-          durationMs: Date.now() - startedAt,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        });
-        res.statusCode = 500;
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
-      }
-      return;
-    }
-
-    if (req.url?.startsWith('/api/model-usage-records') && req.method === 'GET') {
-      try {
-        const requestUrl = new URL(req.url, 'http://localhost');
-        const limit = Number(requestUrl.searchParams.get('limit') || 50);
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ records: listModelUsageRecords(limit) }));
       } catch (error) {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1175,43 +1252,23 @@ export function createApiMiddleware() {
 
     try {
       if (req.url === '/api/generate' && req.method === 'POST') {
-        const startedAt = Date.now();
-        const config = loadConfig();
         const parsed = await readBody<{
           prompt?: string;
         }>(req);
+        const generateAbortController = new AbortController();
+        res.on('close', () => {
+          if (!res.writableEnded) {
+            generateAbortController.abort();
+          }
+        });
 
-        try {
-          const result = await generatePlan({
-            prompt: parsed.prompt || '',
-          });
+        const result = await generatePlan({
+          prompt: parsed.prompt || '',
+          signal: generateAbortController.signal,
+        });
 
-          saveModelUsageRecord({
-            modelKey: 'scriptOptimizer',
-            provider: 'custom',
-            modelName: config.scriptOptimizer.model.name || '',
-            family: '',
-            success: true,
-            durationMs: result.durationMs || Date.now() - startedAt,
-            promptTokens: result.usage?.promptTokens,
-            completionTokens: result.usage?.completionTokens,
-            totalTokens: result.usage?.totalTokens,
-          });
-
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify(result));
-        } catch (error) {
-          saveModelUsageRecord({
-            modelKey: 'scriptOptimizer',
-            provider: 'custom',
-            modelName: config.scriptOptimizer.model.name || '',
-            family: '',
-            success: false,
-            durationMs: Date.now() - startedAt,
-            errorMessage: error instanceof Error ? error.message : 'AI 生成失败',
-          });
-          throw error;
-        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(result));
         return;
       }
 
@@ -1281,7 +1338,6 @@ export function createApiMiddleware() {
         res.setHeader('X-Accel-Buffering', 'no');
         writeNdjson(res, { type: 'operation', operation });
 
-        const usageImportSinceMs = Date.now();
         try {
           const result = await runGeneratedScript({
             code: parsed.code || '',
@@ -1316,26 +1372,6 @@ export function createApiMiddleware() {
               writeNdjson(res, event);
             },
           });
-          try {
-            const usageImportResult = importMidsceneModelUsage({
-              sinceMs: usageImportSinceMs,
-              model: loadConfig().midscene.model,
-              success: result.success,
-            });
-            if (usageImportResult.imported > 0) {
-              recordOperationEvent({
-                operationId: operation.id,
-                eventType: 'model_usage_imported',
-                data: usageImportResult,
-              });
-            }
-          } catch (error) {
-            recordOperationEvent({
-              operationId: operation.id,
-              eventType: 'model_usage_import_failed',
-              message: error instanceof Error ? error.message : '模型消耗导入失败',
-            });
-          }
           finishScriptRunOperation({
             operationId: operation.id,
             status: result.success ? 'succeeded' : runAbortController.signal.aborted ? 'cancelled' : 'failed',

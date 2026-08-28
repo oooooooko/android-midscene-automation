@@ -112,7 +112,7 @@ const props = defineProps<{
   deviceHeight: number;
   switchAndroidDevice: (deviceId: string) => Promise<void>;
   triggerDeviceKey: (keyCode: number) => Promise<void>;
-  refreshDevicePreview: () => void;
+  refreshDevicePreview: () => void | Promise<void>;
   swipeDevice: (
     startX: number,
     startY: number,

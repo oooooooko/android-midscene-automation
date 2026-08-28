@@ -7,9 +7,19 @@ const readmeUrl = new URL('../README.md', import.meta.url);
 const stripFirstHeading = (markdown) =>
   markdown.replace(/^#\s+[^\r\n]+\r?\n+/, '').trim();
 
-const [readme, usage, changelog] = await Promise.all([
+const stripUsageFaqPointer = (markdown) =>
+  markdown.replace(
+    /\n## 常见问题\r?\n\r?\n常见问题已独立整理到 \[FAQ\.md\]\(\.\/FAQ\.md\)。\r?\n/g,
+    '\n',
+  );
+
+const linkReadmeAnchors = (markdown) =>
+  markdown.replace(/\[FAQ\.md\]\(\.\/FAQ\.md\)/g, '[常见问题](#常见问题)');
+
+const [readme, usage, faq, changelog] = await Promise.all([
   readFile(readmeUrl, 'utf8'),
   readFile(new URL('../USAGE.md', import.meta.url), 'utf8'),
+  readFile(new URL('../FAQ.md', import.meta.url), 'utf8'),
   readFile(new URL('../CHANGELOG.md', import.meta.url), 'utf8'),
 ]);
 
@@ -23,7 +33,11 @@ const generatedDocs = [
   '',
   '# Appium 录制器使用说明',
   '',
-  stripFirstHeading(usage),
+  linkReadmeAnchors(stripUsageFaqPointer(stripFirstHeading(usage))),
+  '',
+  '# 常见问题',
+  '',
+  stripFirstHeading(faq),
   '',
   '# 项目更新记录',
   '',

@@ -3,23 +3,27 @@ import AiGeneratorPage from './AiGeneratorPage.vue';
 import ManualStepsPage from './ManualStepsPage.vue';
 import GeneratedCodePanel from '../components/generator/GeneratedCodePanel.vue';
 import type { AppPreset, GeneratorForm, GeneratorMode } from '../types';
+import type { PromptPreset } from '../config/prompt-presets';
 import type { ScriptStep } from '../script-generator';
 
 defineProps<{
   form: GeneratorForm;
   appPresets: AppPreset[];
+  promptPresets: PromptPreset[];
   promptExample: string;
   steps: ScriptStep[];
   generatedCode: string;
   showGeneratedCode: boolean;
   generatedCodeEditing: boolean;
   generatedCodeEditSaving: boolean;
+  isGenerating: boolean;
   importingTestCase: boolean;
   importedTestCaseFileName: string;
 }>();
 
 const mode = defineModel<GeneratorMode>('mode', { required: true });
 const sourcePrompt = defineModel<string>('sourcePrompt', { required: true });
+const promptPresetId = defineModel<string>('promptPresetId', { required: true });
 const generatedCodeDraft = defineModel<string>('generatedCodeDraft', { required: true });
 
 defineEmits<{
@@ -64,9 +68,12 @@ defineEmits<{
     <AiGeneratorPage
       v-if="mode === 'ai'"
       v-model:source-prompt="sourcePrompt"
+      v-model:prompt-preset-id="promptPresetId"
       :form="form"
       :app-presets="appPresets"
+      :prompt-presets="promptPresets"
       :prompt-example="promptExample"
+      :generating="isGenerating"
       :importing-test-case="importingTestCase"
       :imported-file-name="importedTestCaseFileName"
       @import-test-case="$emit('importTestCase', $event)"

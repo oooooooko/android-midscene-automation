@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import { appDataPath } from './paths';
@@ -31,6 +32,14 @@ export type AppConfig = {
 let cachedConfig: AppConfig | null = null;
 const configPath = appDataPath('config.json');
 const legacyConfigPath = appDataPath('config.yaml');
+const adbFileName = process.platform === 'win32' ? 'adb.exe' : 'adb';
+
+export class ConfigValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigValidationError';
+  }
+}
 
 function defaultConfig(): AppConfig {
   return {
@@ -95,6 +104,65 @@ function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConf
   };
 }
 
+function expandRuntimePath(value: string) {
+  const trimmed = value.trim().replace(/^(["'])(.*)\1$/, '$2');
+  if (trimmed === '~') return os.homedir();
+  if (trimmed.startsWith(`~${path.sep}`) || trimmed.startsWith('~/')) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return path.isAbsolute(trimmed) ? path.normalize(trimmed) : appDataPath(trimmed);
+}
+
+function isAbsoluteRuntimePath(value: string) {
+  const trimmed = value.trim().replace(/^(["'])(.*)\1$/, '$2');
+  return trimmed === '~'
+    || trimmed.startsWith(`~${path.sep}`)
+    || trimmed.startsWith('~/')
+    || path.isAbsolute(trimmed);
+}
+
+function validateAndroidSdkPath(value: string) {
+  if (!value) return;
+  const candidate = expandRuntimePath(value);
+  const lowerBaseName = path.basename(candidate).toLowerCase();
+  const root = lowerBaseName === adbFileName.toLowerCase()
+    ? path.dirname(path.dirname(candidate))
+    : lowerBaseName === 'platform-tools'
+      ? path.dirname(candidate)
+      : candidate;
+  const adbPath = path.join(root, 'platform-tools', adbFileName);
+  if (!fs.existsSync(adbPath)) {
+    throw new ConfigValidationError(
+      `Android SDK 路径无效：${value}。请选择包含 platform-tools/${adbFileName} 的 SDK 目录。`,
+    );
+  }
+}
+
+function validateReportOutputPath(value: string) {
+  if (!value) return;
+  if (!isAbsoluteRuntimePath(value)) {
+    throw new ConfigValidationError(`回放报告目录无效：${value}。请填写绝对路径，或留空使用默认 output 目录。`);
+  }
+  const outputDir = expandRuntimePath(value);
+  try {
+    if (!fs.existsSync(outputDir)) {
+      throw new Error('目录不存在');
+    }
+    if (!fs.statSync(outputDir).isDirectory()) {
+      throw new Error('不是目录');
+    }
+    fs.accessSync(outputDir, fs.constants.W_OK);
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? `（${error.message}）` : '';
+    throw new ConfigValidationError(`回放报告目录无效：${value}。请选择已经存在并可写入的目录${detail}。`);
+  }
+}
+
+function validateRuntimeConfig(config: AppConfig) {
+  validateAndroidSdkPath(config.runtime.androidSdkPath);
+  validateReportOutputPath(config.runtime.reportOutputPath);
+}
+
 export function loadConfig(): AppConfig {
   if (cachedConfig) {
     return cachedConfig;
@@ -126,7 +194,9 @@ export function loadConfig(): AppConfig {
 }
 
 export function saveConfig(config: AppConfig) {
-  cachedConfig = normalizeConfig(config);
+  const normalized = normalizeConfig(config);
+  validateRuntimeConfig(normalized);
+  cachedConfig = normalized;
   saveModelConfigToDb(cachedConfig);
 }
 

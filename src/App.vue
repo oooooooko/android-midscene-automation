@@ -20,15 +20,14 @@ import tasksIcon from './assets/device-actions/tasks.svg';
 import volumeDownIcon from './assets/device-actions/volume-down.svg';
 import volumeUpIcon from './assets/device-actions/volume-up.svg';
 import { promptDocument } from './config/prompt-example';
+import { defaultPromptPresetId, promptPresets } from './config/prompt-presets';
 import {
   buildScript,
   type ScriptStep,
 } from './script-generator';
 import {
   codexMidsceneModel,
-  midsceneModelPresets,
   type MidsceneModelProvider,
-  type MidsceneModelPresetKey,
 } from './config/midscene-model-presets';
 import * as api from './api';
 import AutomationPage from './pages/AutomationPage.vue';
@@ -42,7 +41,6 @@ import type {
   ExecutionStep,
   GeneratorMode,
   MenuKey,
-  ModelUsageRecord,
   RunScriptStreamEvent,
   SavedScript,
 } from './types';
@@ -52,7 +50,9 @@ const menuKeys: MenuKey[] = ['generator', 'automation', 'config', 'appium'];
 const storedMenu = window.localStorage.getItem(ACTIVE_MENU_STORAGE_KEY) as MenuKey | null;
 const activeMenu = ref<MenuKey>(storedMenu && menuKeys.includes(storedMenu) ? storedMenu : 'generator');
 const activeGeneratorMode = ref<GeneratorMode>('ai');
-const sourcePrompt = ref('');
+const defaultSourcePrompt = promptPresets.find((item) => item.id === defaultPromptPresetId)?.content || '';
+const sourcePrompt = ref(defaultSourcePrompt);
+const promptPresetId = shallowRef(defaultPromptPresetId);
 const steps = ref<ScriptStep[]>([]);
 const errorMessage = ref('');
 const isGenerating = ref(false);
@@ -73,6 +73,7 @@ const playgroundPreviewError = ref('');
 const playgroundDeviceId = ref('');
 const playgroundFrameUrl = ref('');
 const playgroundFrameSignature = ref('');
+const restartingPlaygroundPreview = shallowRef(false);
 const devicePreviewUrl = ref('');
 const devicePreviewMode = ref<'stream' | 'screenshot' | ''>('');
 const backendOffline = shallowRef(false);
@@ -95,7 +96,6 @@ const runStartedAt = shallowRef<number | null>(null);
 const runningElapsedNow = shallowRef(0);
 const savedScripts = ref<SavedScript[]>([]);
 const appPresets = ref<AppPreset[]>([]);
-const modelUsageRecords = ref<ModelUsageRecord[]>([]);
 const modelTestStatus = reactive({
   midscene: '',
   scriptOptimizer: '',
@@ -105,6 +105,10 @@ const actionDialog = reactive({
   title: '',
   loading: false,
   error: '',
+  canRunInBackground: false,
+  canCancel: false,
+  cancelText: '终止',
+  canceling: false,
 });
 const codeDialog = reactive({
   visible: false,
@@ -116,8 +120,9 @@ const codeDialog = reactive({
   saving: false,
 });
 let playgroundPollTimer: number | null = null;
-let appiumPreviewTimer: number | null = null;
+let devicePreviewTimer: number | null = null;
 let executionProgressTimer: number | null = null;
+let aiGenerateAbortController: AbortController | null = null;
 let scriptRunAbortController: AbortController | null = null;
 
 const isBackendFetchError = (error: unknown) => {
@@ -265,17 +270,36 @@ async function migrateLegacySavedScripts() {
   localStorage.removeItem('midscene-saved-scripts');
 }
 
-const openActionDialog = (title: string) => {
+type ActionDialogOptions = {
+  canRunInBackground?: boolean;
+  canCancel?: boolean;
+  cancelText?: string;
+};
+
+const openActionDialog = (title: string, options: ActionDialogOptions = {}) => {
   actionDialog.visible = true;
   actionDialog.title = title;
   actionDialog.loading = true;
   actionDialog.error = '';
+  actionDialog.canRunInBackground = !!options.canRunInBackground;
+  actionDialog.canCancel = !!options.canCancel;
+  actionDialog.cancelText = options.cancelText || '终止';
+  actionDialog.canceling = false;
 };
 
 const closeActionDialog = () => {
   actionDialog.visible = false;
   actionDialog.loading = false;
   actionDialog.error = '';
+  actionDialog.canRunInBackground = false;
+  actionDialog.canCancel = false;
+  actionDialog.cancelText = '终止';
+  actionDialog.canceling = false;
+};
+
+const sendActionDialogToBackground = () => {
+  if (!actionDialog.loading || !actionDialog.canRunInBackground) return;
+  actionDialog.visible = false;
 };
 
 const openCodeDialog = (script: SavedScript) => {
@@ -328,6 +352,7 @@ const saveCodeDialog = async () => {
 const failActionDialog = (message: string) => {
   actionDialog.loading = false;
   actionDialog.error = message;
+  actionDialog.canceling = false;
 };
 
 const addStep = () => {
@@ -403,7 +428,8 @@ const clearGeneratorPage = () => {
   form.testName = '';
   form.promptTitle = '';
   form.appPresetId = '';
-  sourcePrompt.value = '';
+  promptPresetId.value = defaultPromptPresetId;
+  sourcePrompt.value = defaultSourcePrompt;
   steps.value = [];
   showGeneratedCode.value = false;
   importedTestCaseFileName.value = '';
@@ -534,6 +560,15 @@ const saveCurrentScript = async () => {
   }
 };
 
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === 'AbortError';
+
+const stopGenerateWithModel = () => {
+  if (!aiGenerateAbortController || aiGenerateAbortController.signal.aborted) return;
+  actionDialog.canceling = true;
+  aiGenerateAbortController.abort();
+};
+
 const removeSavedScript = async (id: string) => {
   const script = savedScripts.value.find((item) => item.id === id);
   try {
@@ -559,6 +594,11 @@ const removeSavedScript = async (id: string) => {
 };
 
 const generateWithModel = async () => {
+  if (isGenerating.value) {
+    actionDialog.visible = true;
+    return;
+  }
+
   if (!validateCurrentGeneratorInputs()) return;
 
   if (activeGeneratorMode.value === 'manual') {
@@ -570,11 +610,18 @@ const generateWithModel = async () => {
 
   isGenerating.value = true;
   errorMessage.value = '';
-  openActionDialog('AI生成');
+  const controller = new AbortController();
+  aiGenerateAbortController = controller;
+  openActionDialog('AI生成', {
+    canRunInBackground: true,
+    canCancel: true,
+    cancelText: '终止',
+  });
 
   try {
     const payload = await api.generatePlan({
       prompt: effectiveSourcePrompt.value,
+      signal: controller.signal,
     });
 
     form.promptTitle = payload.promptTitle || form.promptTitle;
@@ -583,11 +630,19 @@ const generateWithModel = async () => {
     showGeneratedCode.value = true;
     closeActionDialog();
   } catch (error) {
+    if (isAbortError(error)) {
+      closeActionDialog();
+      return;
+    }
+
     const message = error instanceof Error ? error.message : 'AI 生成失败';
     errorMessage.value = message;
     failActionDialog(message);
   } finally {
-    await loadModelUsageRecords().catch(() => undefined);
+    if (aiGenerateAbortController === controller) {
+      aiGenerateAbortController = null;
+    }
+    actionDialog.canceling = false;
     isGenerating.value = false;
   }
 };
@@ -624,18 +679,6 @@ const updateMidsceneModelProvider = (provider: MidsceneModelProvider) => {
       ...lastCustomMidsceneModel,
     });
   }
-  modelTestStatus.midscene = '';
-};
-
-const applyMidsceneModelPreset = (key: MidsceneModelPresetKey) => {
-  const preset = midsceneModelPresets.find((item) => item.key === key);
-  if (!preset) return;
-
-  configForm.midscene.model.provider = 'custom';
-  configForm.midscene.model.baseUrl = preset.baseUrl;
-  configForm.midscene.model.name = preset.modelName;
-  configForm.midscene.model.family = preset.modelFamily;
-  rememberCustomMidsceneModel();
   modelTestStatus.midscene = '';
 };
 
@@ -733,11 +776,6 @@ const removeAppPreset = async (id: string) => {
   }
 };
 
-const loadModelUsageRecords = async () => {
-  const payload = await api.getModelUsageRecords(50);
-  modelUsageRecords.value = payload.records || [];
-};
-
 const testModel = async (key: 'midscene' | 'scriptOptimizer') => {
   testingModelKey.value = key;
   errorMessage.value = '';
@@ -753,7 +791,6 @@ const testModel = async (key: 'midscene' | 'scriptOptimizer') => {
   } catch (error) {
     modelTestStatus[key] = error instanceof Error ? error.message : '测试失败';
   } finally {
-    await loadModelUsageRecords().catch(() => undefined);
     testingModelKey.value = '';
   }
 };
@@ -789,11 +826,13 @@ const loadDeviceInterface = async () => {
 const loadAdbPreview = () => {
   if (backendOffline.value) return;
   if (!playgroundDeviceId.value) {
+    playgroundFrameUrl.value = '';
     devicePreviewUrl.value = '';
     devicePreviewMode.value = '';
     return;
   }
 
+  playgroundFrameUrl.value = '';
   devicePreviewUrl.value = `${api.APP_BASE}/api/android-preview?deviceId=${encodeURIComponent(playgroundDeviceId.value)}&t=${Date.now()}`;
   devicePreviewMode.value = 'screenshot';
 };
@@ -804,25 +843,37 @@ const refreshAdbPreviewAfterInput = () => {
   }
 };
 
-const refreshDevicePreview = () => {
-  if (devicePreviewMode.value === 'stream' && playgroundFrameUrl.value) {
-    playgroundFrameUrl.value = `${api.APP_BASE}/__android_playground__/?ts=${Date.now()}`;
+const refreshDevicePreview = async () => {
+  if (devicePreviewMode.value === 'stream' && playgroundDeviceId.value) {
+    if (restartingPlaygroundPreview.value) return;
+    restartingPlaygroundPreview.value = true;
+    playgroundFrameUrl.value = '';
+    playgroundFrameSignature.value = '';
+    try {
+      await api.restartPlaygroundPreview({ deviceId: playgroundDeviceId.value });
+      restartingPlaygroundPreview.value = false;
+      await loadPlaygroundStatus();
+    } catch (error) {
+      playgroundPreviewError.value = error instanceof Error ? error.message : '重启实时预览失败';
+    } finally {
+      restartingPlaygroundPreview.value = false;
+    }
     return;
   }
   loadAdbPreview();
 };
 
-const startAppiumPreviewTimer = () => {
+const startDevicePreviewTimer = () => {
   if (backendOffline.value) return;
-  if (appiumPreviewTimer) return;
+  if (devicePreviewTimer) return;
   loadAdbPreview();
-  appiumPreviewTimer = window.setInterval(loadAdbPreview, 1000);
+  devicePreviewTimer = window.setInterval(loadAdbPreview, 1000);
 };
 
-const stopAppiumPreviewTimer = () => {
-  if (!appiumPreviewTimer) return;
-  window.clearInterval(appiumPreviewTimer);
-  appiumPreviewTimer = null;
+const stopDevicePreviewTimer = () => {
+  if (!devicePreviewTimer) return;
+  window.clearInterval(devicePreviewTimer);
+  devicePreviewTimer = null;
 };
 
 const markBackendOffline = () => {
@@ -836,13 +887,13 @@ const markBackendOffline = () => {
   playgroundPreviewError.value = '本地服务已断开，请重新运行启动命令后刷新页面。';
   errorMessage.value = playgroundPreviewError.value;
   stopPlaygroundPollTimer();
-  stopAppiumPreviewTimer();
+  stopDevicePreviewTimer();
 };
 
 const loadPlaygroundStatus = async () => {
-  if (backendOffline.value) return;
+  if (backendOffline.value || restartingPlaygroundPreview.value) return;
   if (!playgroundDeviceId.value) {
-    stopAppiumPreviewTimer();
+    stopDevicePreviewTimer();
     playgroundAvailable.value = false;
     playgroundPreviewError.value = '';
     playgroundFrameUrl.value = '';
@@ -854,7 +905,9 @@ const loadPlaygroundStatus = async () => {
 
   try {
     await loadDeviceInterface();
+    if (restartingPlaygroundPreview.value) return;
     const payload = await api.getPlaygroundStatus();
+    if (restartingPlaygroundPreview.value) return;
 
     const matchedDevice = !payload.deviceId || payload.deviceId === playgroundDeviceId.value;
     const hasRealtimeStream = payload.previewKind === 'scrcpy' && payload.sessionConnected === true;
@@ -867,7 +920,7 @@ const loadPlaygroundStatus = async () => {
 
     const nextSignature = `${payload.url || ''}::${playgroundDeviceId.value}`;
     if (hasPlayground) {
-      stopAppiumPreviewTimer();
+      stopDevicePreviewTimer();
       if (nextSignature !== playgroundFrameSignature.value || !playgroundFrameUrl.value) {
         playgroundFrameSignature.value = nextSignature;
         playgroundFrameUrl.value = `${api.APP_BASE}/__android_playground__/?ts=${Date.now()}`;
@@ -881,7 +934,7 @@ const loadPlaygroundStatus = async () => {
       playgroundFrameUrl.value = '';
       playgroundFrameSignature.value = '';
       loadAdbPreview();
-      if (activeMenu.value === 'appium') startAppiumPreviewTimer();
+      if (activeMenu.value === 'appium' || activeMenu.value === 'automation') startDevicePreviewTimer();
     }
   } catch (error) {
     if (isBackendFetchError(error)) {
@@ -892,6 +945,7 @@ const loadPlaygroundStatus = async () => {
     playgroundFrameUrl.value = '';
     playgroundFrameSignature.value = '';
     loadAdbPreview();
+    if (activeMenu.value === 'appium' || activeMenu.value === 'automation') startDevicePreviewTimer();
     playgroundPreviewError.value = error instanceof Error ? error.message : '设备预览不可用';
   }
 };
@@ -1183,7 +1237,6 @@ const runSelectedScript = async () => {
     lastRunStatus.value = isAbortError ? '已停止' : '执行失败';
   } finally {
     stopExecutionProgressTimer();
-    await loadModelUsageRecords().catch(() => undefined);
     isRunningScript.value = false;
     isStoppingScript.value = false;
     runStartedAt.value = null;
@@ -1233,10 +1286,10 @@ watch(
 watch(activeMenu, (menu) => {
   window.localStorage.setItem(ACTIVE_MENU_STORAGE_KEY, menu);
   if (menu === 'appium' || menu === 'automation') {
-    stopAppiumPreviewTimer();
+    stopDevicePreviewTimer();
     void loadPlaygroundStatus();
   } else {
-    stopAppiumPreviewTimer();
+    stopDevicePreviewTimer();
   }
 }, { immediate: true });
 
@@ -1247,7 +1300,7 @@ onMounted(async () => {
     console.warn('脚本缓存迁移失败', error);
   }
 
-  await Promise.allSettled([loadConfig(), loadAppPresets(), loadAndroidDevices(), loadSavedScripts(), loadModelUsageRecords()]);
+  await Promise.allSettled([loadConfig(), loadAppPresets(), loadAndroidDevices(), loadSavedScripts()]);
   await loadPlaygroundStatus();
   playgroundPollTimer = window.setInterval(() => {
     if (backendOffline.value) {
@@ -1261,8 +1314,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPlaygroundPollTimer();
-  stopAppiumPreviewTimer();
+  stopDevicePreviewTimer();
   stopExecutionProgressTimer();
+  aiGenerateAbortController?.abort();
   scriptRunAbortController?.abort();
 });
 </script>
@@ -1286,7 +1340,31 @@ onUnmounted(() => {
         {{ actionDialog.error }}
       </div>
       <template #footer>
-        <el-button v-if="!actionDialog.loading" type="primary" @click="closeActionDialog">关闭</el-button>
+        <div v-if="actionDialog.loading" class="action-dialog__footer-actions">
+          <el-button
+            v-if="actionDialog.canCancel"
+            class="action-dialog__footer-button action-dialog__footer-button--secondary"
+            :icon="VideoPause"
+            :loading="actionDialog.canceling"
+            @click="stopGenerateWithModel"
+          >
+            {{ actionDialog.cancelText === '终止' ? '终止生成' : actionDialog.cancelText }}
+          </el-button>
+          <el-button
+            v-if="actionDialog.canRunInBackground"
+            class="action-dialog__footer-button action-dialog__footer-button--primary"
+            @click="sendActionDialogToBackground"
+          >
+            后台处理
+          </el-button>
+        </div>
+        <el-button
+          v-else
+          class="action-dialog__footer-button action-dialog__footer-button--primary"
+          @click="closeActionDialog"
+        >
+          关闭
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1355,11 +1433,11 @@ onUnmounted(() => {
           <el-button
             v-if="activeMenu === 'generator'"
             type="primary"
-            :icon="Check"
-            :loading="isGenerating"
+            :icon="isGenerating ? Loading : Check"
+            :class="{ 'layout-header__button--loading': isGenerating }"
             @click="generateWithModel"
           >
-            AI 生成
+            {{ isGenerating ? 'AI 生成中' : 'AI 生成' }}
           </el-button>
           <el-button
             v-if="activeMenu === 'generator'"
@@ -1404,15 +1482,18 @@ onUnmounted(() => {
           v-show="activeMenu === 'generator'"
           v-model:mode="activeGeneratorMode"
           v-model:source-prompt="sourcePrompt"
+          v-model:prompt-preset-id="promptPresetId"
           v-model:generated-code-draft="generatedCodeDraft"
           :form="form"
           :app-presets="appPresets"
+          :prompt-presets="promptPresets"
           :prompt-example="promptDocument.trim()"
           :steps="steps"
           :generated-code="generatedCode"
           :show-generated-code="showGeneratedCode"
           :generated-code-editing="generatedCodeEditing"
           :generated-code-edit-saving="generatedCodeEditSaving"
+          :is-generating="isGenerating"
           :importing-test-case="importingTestCase"
           :imported-test-case-file-name="importedTestCaseFileName"
           @add-step="addStep"
@@ -1434,14 +1515,12 @@ onUnmounted(() => {
           :is-saving-model-config="isSavingModelConfig"
           :is-saving-app-preset="isSavingAppPreset"
           :model-test-status="modelTestStatus"
-          :model-usage-records="modelUsageRecords"
           @test-model="testModel"
           @save-model-config="saveModelConfig"
           @save-app-preset="saveAppPreset"
           @edit-app-preset="editAppPreset"
           @delete-app-preset="removeAppPreset"
           @update-midscene-model-provider="updateMidsceneModelProvider"
-          @apply-midscene-model-preset="applyMidsceneModelPreset"
         />
 
         <AutomationPage
