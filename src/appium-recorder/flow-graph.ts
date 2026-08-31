@@ -402,11 +402,12 @@ export function buildFlowGraph(
     const directItems = directBranchItems(items, condition.step.id, branch);
     const connectedTargetId = branchConnectionTargetId(items, condition.step, branch);
     const targetStep = connectedTargetId ? stepById.get(connectedTargetId) : undefined;
+    const entryInsertId = addInsertNode(condition.index, branch, condition);
     addVisibleLink(splitId, labelId, branch);
     if (directItems[0]) {
-      addVisibleLink(labelId, nodeIdForStep(directItems[0].step), branch);
+      addVisibleLink(labelId, entryInsertId, branch);
+      addVisibleLink(entryInsertId, nodeIdForStep(directItems[0].step), branch);
     } else {
-      const entryInsertId = addInsertNode(condition.index, branch, condition);
       addVisibleLink(labelId, entryInsertId, branch);
       if (targetStep) {
         addVisibleLink(entryInsertId, nodeIdForStep(targetStep.step), branch);

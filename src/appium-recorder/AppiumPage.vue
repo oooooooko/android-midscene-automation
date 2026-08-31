@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, shallowRef, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { computed, h, onMounted, onUnmounted, reactive, shallowRef, watch } from 'vue';
+import { ElForm, ElFormItem, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus';
 import { Check, CircleClose, CopyDocument, Delete, Document, Download, Refresh, Upload, VideoPlay, View } from '@element-plus/icons-vue';
 import type { AndroidDevice, AppPreset, DeviceAction } from '../types';
 import DevicePreviewPanel from '../components/device/DevicePreviewPanel.vue';
@@ -34,6 +34,8 @@ import type { AppiumNode, AppiumRecordedScript, AppiumRecordedStep } from './typ
 type NodeStepType = 'tap' | 'input' | 'assertExists' | 'waitFor';
 type BranchName = 'yes' | 'no';
 type LegacyFlow = NonNullable<AppiumRecordedStep['flow']> & { scope?: string };
+type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
+type SwipeForm = SwipeGesture & { direction: string };
 type BranchTarget = {
   stepId: string;
   branch: BranchName;
@@ -332,11 +334,24 @@ function attachStepToBranch(stepId: string, conditionId: string, branch: BranchN
   ));
 }
 
-function branchInsertIndex(conditionId: string, branch: BranchName, fallbackIndex: number) {
-  const ownedIndexes = steps.value.flatMap((step, index) => (
-    step.flow?.parentConditionId === conditionId && step.flow?.parentBranch === branch ? [index] : []
+function branchContextForInsert(index: number, branch: BranchName) {
+  const anchor = steps.value[index];
+  if (!anchor) return undefined;
+  if (anchor.flow?.parentConditionId && anchor.flow.parentBranch === branch) {
+    const conditionIndex = steps.value.findIndex((step) => step.id === anchor.flow?.parentConditionId);
+    const condition = conditionIndex >= 0 ? steps.value[conditionIndex] : undefined;
+    return condition ? { condition, conditionIndex } : undefined;
+  }
+  if (anchor.flow?.nodeKind === 'condition') {
+    return { condition: anchor, conditionIndex: index };
+  }
+  return undefined;
+}
+
+function nextBranchStepAfter(conditionId: string, branch: BranchName, index: number) {
+  return steps.value.slice(index + 1).find((step) => (
+    step.flow?.parentConditionId === conditionId && step.flow.parentBranch === branch
   ));
-  return ownedIndexes.length ? ownedIndexes[ownedIndexes.length - 1] : fallbackIndex;
 }
 
 function createStep(type: NodeStepType, node: AppiumNode): AppiumRecordedStep {
@@ -423,7 +438,7 @@ function createKeyStep(keyCode: number, label = '按返回键'): AppiumRecordedS
   };
 }
 
-function createSwipeStep(direction: string): AppiumRecordedStep {
+function swipePreset(direction: string): { direction: string; label: string; swipe: SwipeGesture } {
   const normalizedDirection = ({ 上: 'up', 下: 'down', 左: 'left', 右: 'right' } as Record<string, string>)[direction] || direction;
   const width = props.deviceWidth || 1080;
   const height = props.deviceHeight || 1920;
@@ -431,7 +446,7 @@ function createSwipeStep(direction: string): AppiumRecordedStep {
   const centerY = Math.round(height * 0.5);
   const distanceX = Math.round(width * 0.35);
   const distanceY = Math.round(height * 0.35);
-  const swipeMap: Record<string, AppiumRecordedStep['swipe']> = {
+  const swipeMap: Record<string, SwipeGesture> = {
     up: { startX: centerX, startY: centerY + distanceY, endX: centerX, endY: centerY - distanceY, duration: 500 },
     down: { startX: centerX, startY: centerY - distanceY, endX: centerX, endY: centerY + distanceY, duration: 500 },
     left: { startX: centerX + distanceX, startY: centerY, endX: centerX - distanceX, endY: centerY, duration: 500 },
@@ -439,10 +454,18 @@ function createSwipeStep(direction: string): AppiumRecordedStep {
   };
   const labelMap: Record<string, string> = { up: '上滑', down: '下滑', left: '左滑', right: '右滑' };
   return {
-    id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    type: 'swipe',
+    direction: normalizedDirection,
     label: labelMap[normalizedDirection] || '滑动',
     swipe: swipeMap[normalizedDirection] || swipeMap.up,
+  };
+}
+
+function createSwipeStep(input: { label: string; swipe: SwipeGesture }): AppiumRecordedStep {
+  return {
+    id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    type: 'swipe',
+    label: input.label,
+    swipe: input.swipe,
   };
 }
 
@@ -818,6 +841,77 @@ async function addDelayStep(index?: number) {
   return insertStep(step, index);
 }
 
+function toSwipeNumber(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : fallback;
+}
+
+function patchSwipeForm(form: SwipeForm, key: keyof SwipeGesture, value: unknown) {
+  form[key] = toSwipeNumber(value, form[key]);
+}
+
+function renderSwipeForm(form: SwipeForm) {
+  const coordinateInput = (label: string, key: keyof SwipeGesture, min = 0) => h(ElFormItem, { label }, () => h(ElInputNumber, {
+    modelValue: form[key],
+    min,
+    max: 99999,
+    precision: 0,
+    controlsPosition: 'right',
+    'onUpdate:modelValue': (value: number | undefined) => patchSwipeForm(form, key, value),
+  }));
+
+  return h(ElForm, { labelPosition: 'top', size: 'small', class: 'appium-swipe-dialog-form' }, () => [
+    h(ElFormItem, { label: '滑动方向' }, () => h(ElSelect, {
+      modelValue: form.direction,
+      'onUpdate:modelValue': (value: string) => {
+        const preset = swipePreset(value);
+        form.direction = preset.direction;
+        Object.assign(form, preset.swipe);
+      },
+    }, () => [
+      h(ElOption, { label: '上滑', value: 'up' }),
+      h(ElOption, { label: '下滑', value: 'down' }),
+      h(ElOption, { label: '左滑', value: 'left' }),
+      h(ElOption, { label: '右滑', value: 'right' }),
+    ])),
+    h('div', { class: 'appium-swipe-dialog-grid' }, () => [
+      coordinateInput('起点 X', 'startX'),
+      coordinateInput('起点 Y', 'startY'),
+      coordinateInput('终点 X', 'endX'),
+      coordinateInput('终点 Y', 'endY'),
+      coordinateInput('时长 ms', 'duration', 80),
+    ]),
+  ]);
+}
+
+async function addSwipeStep(index?: number) {
+  const preset = swipePreset('up');
+  const form = reactive<SwipeForm>({
+    direction: preset.direction,
+    ...preset.swipe,
+  });
+  const result = await ElMessageBox({
+    title: '添加滑动',
+    message: renderSwipeForm(form),
+    showCancelButton: true,
+    confirmButtonText: '添加',
+    cancelButtonText: '取消',
+    customClass: 'appium-swipe-message-box',
+  }).catch(() => null);
+  if (!result) return;
+  const finalPreset = swipePreset(form.direction);
+  return insertStep(createSwipeStep({
+    label: finalPreset.label,
+    swipe: {
+      startX: toSwipeNumber(form.startX, finalPreset.swipe.startX),
+      startY: toSwipeNumber(form.startY, finalPreset.swipe.startY),
+      endX: toSwipeNumber(form.endX, finalPreset.swipe.endX),
+      endY: toSwipeNumber(form.endY, finalPreset.swipe.endY),
+      duration: Math.max(80, toSwipeNumber(form.duration, finalPreset.swipe.duration)),
+    },
+  }), index);
+}
+
 function openLinkedScriptDialog(index?: number, branchTarget?: BranchTarget) {
   if (!linkableScripts.value.length) {
     ElMessage.warning('暂无可连接的已保存脚本');
@@ -987,15 +1081,7 @@ async function addAction(
     return;
   }
   if (action === 'swipe') {
-    const input = await ElMessageBox.prompt('请输入滑动方向：上 / 下 / 左 / 右', '添加滑动', {
-      inputValue: '上',
-      inputPattern: /^(上|下|左|右|up|down|left|right)$/,
-      inputErrorMessage: '只能输入 上、下、左、右',
-      confirmButtonText: '添加',
-      cancelButtonText: '取消',
-    }).catch(() => null);
-    if (input?.value) return insertStep(createSwipeStep(input.value), index);
-    return;
+    return addSwipeStep(index);
   }
   if (action === 'pinch') {
     const input = await ElMessageBox.prompt('请输入缩放方向：放大 / 缩小', '添加双指缩放', {
@@ -1083,12 +1169,21 @@ async function addAction(
       ElMessage.warning('当前组件没有可长按坐标');
       return;
     }
+    const input = await ElMessageBox.prompt('请输入长按时间（毫秒）', '添加长按', {
+      inputValue: '800',
+      inputPattern: /^[1-9]\d*$/,
+      inputErrorMessage: '请输入大于 0 的整数',
+      confirmButtonText: '添加',
+      cancelButtonText: '取消',
+    }).catch(() => null);
+    if (!input?.value) return;
+    const duration = Math.max(80, Math.round(Number(input.value) || 800));
     return insertStep({
       id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'longPress',
       label: `长按 ${node.label}`,
       fallback: { strategy: 'bounds', centerX: node.bounds.centerX, centerY: node.bounds.centerY },
-      timeoutMs: 800,
+      timeoutMs: duration,
     }, index);
   }
   if (action === 'waitDisappear') {
@@ -1105,36 +1200,42 @@ async function addAction(
 }
 
 async function addBranchAction(index: number, branch: BranchName, action: RecorderAction) {
-  const source = steps.value[index];
-  if (!source) return;
+  const context = branchContextForInsert(index, branch);
+  if (!context) return;
+  const { condition, conditionIndex } = context;
   const existingBranchSteps = steps.value.filter((step) => (
-    step.flow?.parentConditionId === source.id
-    && step.flow.parentBranch === branch
+    step.flow?.parentConditionId === condition.id && step.flow.parentBranch === branch
   ));
-  const currentTargetId = branch === 'yes' ? source.flow?.yesTargetId : source.flow?.noTargetId;
+  const currentTargetId = branch === 'yes' ? condition.flow?.yesTargetId : condition.flow?.noTargetId;
   const currentTarget = steps.value.find((step) => step.id === currentTargetId);
-  const targetIsBranchStep = currentTarget?.flow?.parentConditionId === source.id
+  const targetIsBranchStep = currentTarget?.flow?.parentConditionId === condition.id
     && currentTarget.flow.parentBranch === branch;
-  const insertIndex = branchInsertIndex(source.id, branch, index);
+  const insertAtBranchEntry = index === conditionIndex;
+  const insertIndex = insertAtBranchEntry ? conditionIndex : index;
+  const nextTargetId = insertAtBranchEntry
+    ? nextBranchStepAfter(condition.id, branch, index)?.id || (!targetIsBranchStep ? currentTargetId : undefined)
+    : undefined;
   const inserted = await addAction(action, insertIndex, {
-    stepId: source.id,
+    stepId: condition.id,
     branch,
-    updateTarget: !currentTargetId || !targetIsBranchStep,
-    entryTargetId: existingBranchSteps[0]?.id,
-    nextTargetId: !targetIsBranchStep ? currentTargetId : undefined,
+    updateTarget: insertAtBranchEntry || !currentTargetId || !targetIsBranchStep,
+    entryTargetId: insertAtBranchEntry ? undefined : existingBranchSteps[0]?.id,
+    nextTargetId,
   });
   if (!inserted) return;
-  attachStepToBranch(inserted.id, source.id, branch);
-  if (!currentTargetId || !targetIsBranchStep) {
+  attachStepToBranch(inserted.id, condition.id, branch);
+  if (nextTargetId) {
     steps.value = steps.value.map((step) => (
-      step.id === inserted.id && currentTargetId
+      step.id === inserted.id
         ? {
             ...step,
-            flow: { ...(step.flow || {}), successTargetId: currentTargetId },
+            flow: { ...(step.flow || {}), successTargetId: nextTargetId },
           }
         : step
     ));
-    updateBranchTarget(source.id, branch, existingBranchSteps[0]?.id || inserted.id);
+  }
+  if (insertAtBranchEntry || !currentTargetId || !targetIsBranchStep) {
+    updateBranchTarget(condition.id, branch, insertAtBranchEntry ? inserted.id : existingBranchSteps[0]?.id || inserted.id);
   }
 }
 
@@ -1470,24 +1571,6 @@ watch(
     </div>
 
     <div class="appium-recorder-layout">
-      <el-card shadow="never" class="appium-recorder-card">
-        <template #header>
-          <div class="panel-header">
-            <span>App 组件树</span>
-            <el-button :icon="Refresh" :loading="loadingTree" :disabled="replaying" @click="refreshTree">
-              刷新组件树
-            </el-button>
-          </div>
-        </template>
-        <div class="appium-tree-panel">
-          <ComponentTree :tree="tree" :selected-id="selectedNode?.id || ''" @select="selectedNode = $event" />
-          <div class="appium-current-activity">
-            <span>当前 Activity</span>
-            <code>{{ currentActivity || '-' }}</code>
-          </div>
-        </div>
-      </el-card>
-
       <DevicePreviewPanel
         :available="playgroundAvailable"
         :devices="androidDevices"
@@ -1506,6 +1589,24 @@ watch(
         @tap="selectNodeFromPoint"
         @swipe="swipePreview"
       />
+
+      <el-card shadow="never" class="appium-recorder-card">
+        <template #header>
+          <div class="panel-header">
+            <span>App 组件树</span>
+            <el-button :icon="Refresh" :loading="loadingTree" :disabled="replaying" @click="refreshTree">
+              刷新组件树
+            </el-button>
+          </div>
+        </template>
+        <div class="appium-tree-panel">
+          <ComponentTree :tree="tree" :selected-id="selectedNode?.id || ''" @select="selectedNode = $event" />
+          <div class="appium-current-activity">
+            <span>当前 Activity</span>
+            <code>{{ currentActivity || '-' }}</code>
+          </div>
+        </div>
+      </el-card>
 
       <el-card shadow="never" class="appium-recorder-card appium-recorder-card--workbench">
         <template #header>录制与脚本</template>

@@ -20,7 +20,7 @@ const targetKeys = [
 ] as const;
 
 function clone<T>(value: T): T {
-  return structuredClone(value);
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function scopeKey(step: AppiumRecordedStep) {
@@ -56,6 +56,38 @@ function wireContinuation(step: AppiumRecordedStep, targetId: string) {
   if (step.flow?.nodeKind !== 'condition' || !targetId) return;
   if (!step.flow.yesTargetId) setFlowTarget(step, 'yesTargetId', targetId);
   if (!step.flow.noTargetId) setFlowTarget(step, 'noTargetId', targetId);
+}
+
+function branchConditionForTarget(
+  steps: AppiumRecordedStep[],
+  target: PasteTarget,
+) {
+  if (!target.branch) return undefined;
+  const anchor = steps[target.afterIndex];
+  if (!anchor) return undefined;
+  if (anchor.flow?.parentConditionId && anchor.flow.parentBranch === target.branch) {
+    return steps.find((step) => step.id === anchor.flow?.parentConditionId);
+  }
+  if (anchor.flow?.nodeKind === 'condition') return anchor;
+  return undefined;
+}
+
+function nextSiblingInScope(steps: AppiumRecordedStep[], index: number) {
+  const anchor = steps[index];
+  if (!anchor) return undefined;
+  const key = scopeKey(anchor);
+  return steps.slice(index + 1).find((step) => scopeKey(step) === key);
+}
+
+function nextBranchStepAfter(
+  steps: AppiumRecordedStep[],
+  conditionId: string,
+  branch: FlowBranch,
+  index: number,
+) {
+  return steps.slice(index + 1).find((step) => (
+    step.flow?.parentConditionId === conditionId && step.flow.parentBranch === branch
+  ));
 }
 
 export function createFlowClipboard(steps: AppiumRecordedStep[], indexes: number[]): FlowClipboard {
@@ -104,7 +136,7 @@ export function pasteFlowClipboard(
 
   const idMap = new Map(clipboard.steps.map((step) => [step.id, createId()]));
   const rootIdSet = new Set(clipboard.rootIds);
-  const condition = target.branch ? steps[target.afterIndex] : undefined;
+  const condition = branchConditionForTarget(steps, target);
   if (target.branch && (!condition || condition.flow?.nodeKind !== 'condition')) {
     throw new Error('目标分支不存在');
   }
@@ -152,29 +184,28 @@ export function pasteFlowClipboard(
   let continuationId = '';
 
   if (target.branch && condition) {
-    const branchRoots = steps.filter((step) => (
-      step.flow?.parentConditionId === condition.id
-      && step.flow.parentBranch === target.branch
-    ));
-    if (branchRoots.length) {
-      const ownedIds = collectDescendantIds(steps, branchRoots.map((step) => step.id));
-      insertAfterIndex = Math.max(...steps.flatMap((step, index) => (ownedIds.has(step.id) ? [index] : [])));
-      const lastExistingRoot = branchRoots[branchRoots.length - 1];
-      continuationId = lastExistingRoot.flow?.successTargetId || condition.flow?.successTargetId || '';
-      const lastExistingIndex = nextSteps.findIndex((step) => step.id === lastExistingRoot.id);
-      const updatedLastExisting = clone(nextSteps[lastExistingIndex]);
-      setFlowTarget(updatedLastExisting, 'successTargetId', firstRoot.id);
-      nextSteps[lastExistingIndex] = updatedLastExisting;
-    } else {
+    const anchor = steps[target.afterIndex];
+    const isBranchEntry = anchor?.id === condition.id;
+    if (isBranchEntry) {
       const targetKey = target.branch === 'yes' ? 'yesTargetId' : 'noTargetId';
       const currentTargetId = condition.flow?.[targetKey] || '';
       const currentTarget = steps.find((step) => step.id === currentTargetId);
-      continuationId = currentTarget && !currentTarget.flow?.parentConditionId
+      continuationId = nextBranchStepAfter(steps, condition.id, target.branch, target.afterIndex)?.id
+        || (currentTarget && !currentTarget.flow?.parentConditionId
         ? currentTargetId
-        : condition.flow?.successTargetId || '';
+        : condition.flow?.successTargetId || '');
       const updatedCondition = clone(nextSteps[target.afterIndex]);
       setFlowTarget(updatedCondition, targetKey, firstRoot.id);
       nextSteps[target.afterIndex] = updatedCondition;
+    } else {
+      const previous = nextSteps[target.afterIndex];
+      const nextSibling = nextSiblingInScope(steps, target.afterIndex);
+      continuationId = previous?.flow?.successTargetId || nextSibling?.id || condition.flow?.successTargetId || '';
+      if (previous?.flow?.successTargetId) {
+        const updatedPrevious = clone(previous);
+        setFlowTarget(updatedPrevious, 'successTargetId', firstRoot.id);
+        nextSteps[target.afterIndex] = updatedPrevious;
+      }
     }
   } else {
     const previous = target.afterIndex >= 0 ? nextSteps[target.afterIndex] : undefined;

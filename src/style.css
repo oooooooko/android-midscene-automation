@@ -242,7 +242,7 @@ select {
 .appium-recorder-layout {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 3fr) minmax(320px, 2.8fr) minmax(0, 4.2fr);
+  grid-template-columns: minmax(320px, 2.8fr) minmax(0, 3fr) minmax(0, 4.2fr);
   gap: 12px;
   align-items: stretch;
   height: auto;
@@ -1245,6 +1245,20 @@ select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.appium-flow-editor__grid--swipe {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.appium-swipe-message-box {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.appium-swipe-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
 }
 
 .appium-flow-insert {

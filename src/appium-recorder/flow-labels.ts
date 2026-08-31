@@ -59,7 +59,10 @@ export function flowStepMeta(step: AppiumRecordedStep) {
     return swipe ? `[${swipe.startX},${swipe.startY}] -> [${swipe.endX},${swipe.endY}]` : '';
   }
   if (step.type === 'pinch') return step.pinch?.direction === 'out' ? '放大' : '缩小';
-  if (step.type === 'longPress' || step.type === 'coordinateTap') {
+  if (step.type === 'longPress') {
+    return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''} · ${step.timeoutMs || 800}ms`;
+  }
+  if (step.type === 'coordinateTap') {
     return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''}`;
   }
   if (step.type === 'assertText') return step.value || '';

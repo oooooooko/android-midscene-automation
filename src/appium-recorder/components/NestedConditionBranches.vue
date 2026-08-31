@@ -133,6 +133,12 @@ function typeLabel(step: AppiumRecordedStep) {
 function stepMeta(step: AppiumRecordedStep) {
   if (step.type === 'delay') return `${step.timeoutMs || 1000}ms`;
   if (step.type === 'input' || step.type === 'inputIfExists') return `输入内容：${step.value || '空'}`;
+  if (step.type === 'longPress') return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''} · ${step.timeoutMs || 800}ms`;
+  if (step.type === 'coordinateTap') return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''}`;
+  if (step.type === 'swipe') {
+    const swipe = step.swipe;
+    return swipe ? `[${swipe.startX},${swipe.startY}] -> [${swipe.endX},${swipe.endY}]` : '';
+  }
   if (defaultKind(step) === 'condition' && step.value) {
     return `${step.flow?.textMatch === 'exact' ? '精准匹配' : '模糊匹配'}：${step.value}`;
   }

@@ -2,6 +2,7 @@
 import type { AppiumRecordedStep, AppiumSelector } from '../types';
 
 type FlowKind = 'action' | 'condition' | 'assertion';
+type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
 
 const props = defineProps<{
   step: AppiumRecordedStep;
@@ -33,6 +34,38 @@ function patchFlow(patch: NonNullable<AppiumRecordedStep['flow']>) {
       ...patch,
     },
   });
+}
+
+function toInteger(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : fallback;
+}
+
+function patchSwipe(patch: Partial<SwipeGesture>) {
+  patchStep({
+    swipe: {
+      startX: 0,
+      startY: 0,
+      endX: 0,
+      endY: 0,
+      duration: 500,
+      ...(props.step.swipe || {}),
+      ...patch,
+    },
+  });
+}
+
+function timeoutLabel() {
+  return props.step.type === 'longPress' ? '长按时间 ms' : '超时时间 ms';
+}
+
+function timeoutMin() {
+  return props.step.type === 'longPress' ? 80 : 0;
+}
+
+function patchTimeout(value: unknown) {
+  const timeout = Math.max(timeoutMin(), toInteger(value, props.step.timeoutMs || 0));
+  patchStep({ timeoutMs: timeout || undefined });
 }
 </script>
 
@@ -67,14 +100,14 @@ function patchFlow(patch: NonNullable<AppiumRecordedStep['flow']>) {
             <el-option label="校验" value="assertion" />
           </el-select>
         </el-form-item>
-        <el-form-item label="超时时间 ms">
+        <el-form-item :label="timeoutLabel()">
           <el-input-number
             :model-value="step.timeoutMs || undefined"
             :disabled="disabled"
-            :min="0"
+            :min="timeoutMin()"
             :max="999999"
             controls-position="right"
-            @update:model-value="patchStep({ timeoutMs: Number($event || 0) || undefined })"
+            @update:model-value="patchTimeout($event)"
           />
         </el-form-item>
       </div>
@@ -88,6 +121,63 @@ function patchFlow(patch: NonNullable<AppiumRecordedStep['flow']>) {
           @update:model-value="patchStep({ value: String($event) })"
         />
       </el-form-item>
+      <div v-if="step.type === 'swipe'" class="appium-flow-editor__grid appium-flow-editor__grid--swipe">
+        <el-form-item label="起点 X">
+          <el-input-number
+            :model-value="step.swipe?.startX ?? 0"
+            :disabled="disabled"
+            :min="0"
+            :max="99999"
+            :precision="0"
+            controls-position="right"
+            @update:model-value="patchSwipe({ startX: toInteger($event, step.swipe?.startX ?? 0) })"
+          />
+        </el-form-item>
+        <el-form-item label="起点 Y">
+          <el-input-number
+            :model-value="step.swipe?.startY ?? 0"
+            :disabled="disabled"
+            :min="0"
+            :max="99999"
+            :precision="0"
+            controls-position="right"
+            @update:model-value="patchSwipe({ startY: toInteger($event, step.swipe?.startY ?? 0) })"
+          />
+        </el-form-item>
+        <el-form-item label="终点 X">
+          <el-input-number
+            :model-value="step.swipe?.endX ?? 0"
+            :disabled="disabled"
+            :min="0"
+            :max="99999"
+            :precision="0"
+            controls-position="right"
+            @update:model-value="patchSwipe({ endX: toInteger($event, step.swipe?.endX ?? 0) })"
+          />
+        </el-form-item>
+        <el-form-item label="终点 Y">
+          <el-input-number
+            :model-value="step.swipe?.endY ?? 0"
+            :disabled="disabled"
+            :min="0"
+            :max="99999"
+            :precision="0"
+            controls-position="right"
+            @update:model-value="patchSwipe({ endY: toInteger($event, step.swipe?.endY ?? 0) })"
+          />
+        </el-form-item>
+        <el-form-item label="时长 ms">
+          <el-input-number
+            :model-value="step.swipe?.duration ?? 500"
+            :disabled="disabled"
+            :min="80"
+            :max="99999"
+            :precision="0"
+            controls-position="right"
+            @update:model-value="patchSwipe({ duration: Math.max(80, toInteger($event, step.swipe?.duration ?? 500)) })"
+          />
+        </el-form-item>
+      </div>
       <div v-if="step.selector" class="appium-flow-editor__grid">
         <el-form-item label="Selector 类型">
           <el-select

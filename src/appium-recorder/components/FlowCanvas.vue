@@ -144,11 +144,11 @@ function handleInsert(payload: {
   conditionIndex?: number;
 }) {
   if (payload.action === PASTE_COMMAND) {
-    emit('paste', payload.conditionIndex ?? payload.afterIndex, payload.branch);
+    emit('paste', payload.afterIndex, payload.branch);
     return;
   }
   if (payload.branch && payload.conditionIndex !== undefined) {
-    emit('insertBranchAction', payload.conditionIndex, payload.branch, payload.action);
+    emit('insertBranchAction', payload.afterIndex, payload.branch, payload.action);
     return;
   }
   emit('insertAction', payload.afterIndex, payload.action);
