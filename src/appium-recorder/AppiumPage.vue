@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, reactive, shallowRef, watch } from 'vue';
 import { ElForm, ElFormItem, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus';
-import { Check, CircleClose, CopyDocument, Delete, Document, Download, Refresh, Upload, VideoPlay, View } from '@element-plus/icons-vue';
+import { Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Refresh, Upload, VideoPlay, View } from '@element-plus/icons-vue';
 import type { AndroidDevice, AppPreset, DeviceAction } from '../types';
 import DevicePreviewPanel from '../components/device/DevicePreviewPanel.vue';
 import {
@@ -21,15 +21,34 @@ import ComponentTree from './components/ComponentTree.vue';
 import FlowCanvas from './components/FlowCanvas.vue';
 import NodeDetail from './components/NodeDetail.vue';
 import RecordedSteps from './components/RecordedSteps.vue';
+import VisualChangeDialog from './components/VisualChangeDialog.vue';
 import {
   createFlowClipboard,
   pasteFlowClipboard,
   type FlowClipboard,
 } from './flow-copy';
 import { labelFlowStep } from './flow-labels';
+import { normalizeLegacyNestedConditionBranches } from './flow-normalize';
+import { removeFlowStep } from './flow-remove';
 import type { FlowActionGroup, InsertAction } from './flow-graph';
 import { findSmallestNodeAtPoint, flattenNodes, parseWindowHierarchy } from './tree';
-import type { AppiumNode, AppiumRecordedScript, AppiumRecordedStep } from './types';
+import {
+  boundsToVisualRegion,
+  createStepId,
+  normalizeVisualChangeConfig,
+  visualRegionToBounds,
+} from './visual-change';
+import {
+  findOpenVisualChangeStart,
+  nextVisualChangePairLabel,
+} from './visual-change-pairs';
+import type {
+  AppiumNode,
+  AppiumRecordedScript,
+  AppiumRecordedStep,
+  AppiumVisualChangeConfig,
+  AppiumVisualChangeRegion,
+} from './types';
 
 type NodeStepType = 'tap' | 'input' | 'assertExists' | 'waitFor';
 type BranchName = 'yes' | 'no';
@@ -43,29 +62,7 @@ type BranchTarget = {
   entryTargetId?: string;
   nextTargetId?: string;
 };
-type RecorderAction =
-  | 'delay'
-  | NodeStepType
-  | 'tapIfExists'
-  | 'inputIfExists'
-  | 'clearIfExists'
-  | 'backIfExists'
-  | 'popupCondition'
-  | 'runScript'
-  | 'keyBack'
-  | 'keyHome'
-  | 'keyRecent'
-  | 'keyPower'
-  | 'waitActivity'
-  | 'swipe'
-  | 'clearInput'
-  | 'coordinateTap'
-  | 'launchApp'
-  | 'clearAppData'
-  | 'waitDisappear'
-  | 'assertText'
-  | 'longPress'
-  | 'pinch';
+type RecorderAction = InsertAction;
 
 const WORKBENCH_TAB_STORAGE_KEY = 'android-midscene-automation:appium-workbench-tab';
 const AUTO_TREE_REFRESH_INTERVAL_MS = 1800;
@@ -96,6 +93,9 @@ const insertableRecorderActions: RecorderAction[] = [
   'assertText',
   'longPress',
   'pinch',
+  'noop',
+  'visualChangeStart',
+  'visualChangeEnd',
 ];
 const readonlyFlowActionGroups: FlowActionGroup[] = [];
 const readonlyFlowSelectedIndexes: number[] = [];
@@ -145,11 +145,18 @@ const linkedScriptExpectedActivity = shallowRef('');
 const linkedScriptPreviewVisible = shallowRef(false);
 const linkedScriptPreviewScriptId = shallowRef('');
 const linkedScriptPreviewResetToken = shallowRef(0);
+const visualChangeDialogVisible = shallowRef(false);
+const visualChangePicking = shallowRef(false);
+const visualChangeInsertIndex = shallowRef<number | undefined>();
+const visualChangeBranchTarget = shallowRef<BranchTarget | null>(null);
+const visualChangeConfig = shallowRef<AppiumVisualChangeConfig>(normalizeVisualChangeConfig());
 const loadingTree = shallowRef(false);
 const saving = shallowRef(false);
 const importingScript = shallowRef(false);
 const scriptImportInput = shallowRef<HTMLInputElement | null>(null);
 const deletingScriptId = shallowRef('');
+const duplicatingScriptId = shallowRef('');
+const renamingScriptId = shallowRef('');
 const replaying = shallowRef(false);
 const stoppingReplay = shallowRef(false);
 const activeReplayDeviceId = shallowRef('');
@@ -229,16 +236,38 @@ const selectedBounds = computed(() => {
   const bounds = selectedNode.value?.bounds;
   return bounds && selectedNode.value ? { id: selectedNode.value.id, ...bounds } : undefined;
 });
+const visualChangeSelectedRegion = computed(() => {
+  if (!visualChangeDialogVisible.value || visualChangeConfig.value.mode !== 'region') return undefined;
+  return visualRegionToBounds('visual-change-region', visualChangeConfig.value.region);
+});
+const visualChangeRegionSelectionEnabled = computed(() => (
+  visualChangeDialogVisible.value && visualChangeConfig.value.mode === 'region'
+));
 
-function insertStep(step: AppiumRecordedStep, index?: number) {
-  const nextSteps = [...steps.value];
-  let insertedStep = step;
+function stepWithBranchTarget(step: AppiumRecordedStep, branchTarget: BranchTarget) {
+  return {
+    ...step,
+    flow: {
+      ...(step.flow || {}),
+      parentConditionId: branchTarget.stepId,
+      parentBranch: branchTarget.branch,
+      ...(branchTarget.nextTargetId ? { successTargetId: branchTarget.nextTargetId } : {}),
+    },
+  };
+}
+
+function insertStep(step: AppiumRecordedStep, index?: number, branchTarget?: BranchTarget) {
+  let nextSteps = [...steps.value];
+  let insertedStep = branchTarget ? stepWithBranchTarget(step, branchTarget) : step;
   if (index === -1) {
     nextSteps.unshift(insertedStep);
   } else if (typeof index === 'number') {
     const previousStep = nextSteps[index];
     const previousTargetId = previousStep?.flow?.successTargetId;
-    if (previousStep && previousTargetId) {
+    const shouldRewireSuccess = previousStep
+      && previousTargetId
+      && !(branchTarget && previousStep.id === branchTarget.stepId);
+    if (shouldRewireSuccess) {
       insertedStep = {
         ...insertedStep,
         flow: {
@@ -256,7 +285,22 @@ function insertStep(step: AppiumRecordedStep, index?: number) {
     }
     nextSteps.splice(index + 1, 0, insertedStep);
   } else {
-    nextSteps.push(step);
+    nextSteps.push(insertedStep);
+  }
+  if (branchTarget?.updateTarget) {
+    const targetKey = branchTarget.branch === 'yes' ? 'yesTargetId' : 'noTargetId';
+    nextSteps = nextSteps.map((item) => (
+      item.id === branchTarget.stepId
+        ? {
+            ...item,
+            flow: {
+              ...(item.flow || {}),
+              nodeKind: 'condition',
+              [targetKey]: branchTarget.entryTargetId || insertedStep.id,
+            },
+          }
+        : item
+    ));
   }
   steps.value = nextSteps;
   return insertedStep;
@@ -334,16 +378,37 @@ function attachStepToBranch(stepId: string, conditionId: string, branch: BranchN
   ));
 }
 
+function applyBranchTargetToInsertedStep(inserted: AppiumRecordedStep, branchTarget: BranchTarget) {
+  attachStepToBranch(inserted.id, branchTarget.stepId, branchTarget.branch);
+  if (branchTarget.nextTargetId) {
+    steps.value = steps.value.map((step) => (
+      step.id === inserted.id
+        ? {
+            ...step,
+            flow: { ...(step.flow || {}), successTargetId: branchTarget.nextTargetId },
+          }
+        : step
+    ));
+  }
+  if (branchTarget.updateTarget) {
+    updateBranchTarget(
+      branchTarget.stepId,
+      branchTarget.branch,
+      branchTarget.entryTargetId || inserted.id,
+    );
+  }
+}
+
 function branchContextForInsert(index: number, branch: BranchName) {
   const anchor = steps.value[index];
   if (!anchor) return undefined;
+  if (anchor.flow?.nodeKind === 'condition') {
+    return { condition: anchor, conditionIndex: index };
+  }
   if (anchor.flow?.parentConditionId && anchor.flow.parentBranch === branch) {
     const conditionIndex = steps.value.findIndex((step) => step.id === anchor.flow?.parentConditionId);
     const condition = conditionIndex >= 0 ? steps.value[conditionIndex] : undefined;
     return condition ? { condition, conditionIndex } : undefined;
-  }
-  if (anchor.flow?.nodeKind === 'condition') {
-    return { condition: anchor, conditionIndex: index };
   }
   return undefined;
 }
@@ -486,6 +551,87 @@ function createRunScriptStep(script: AppiumRecordedScript): AppiumRecordedStep {
     label: `连接脚本 ${script.name}`,
     value: script.id,
     flow: { nodeKind: 'action' },
+  };
+}
+
+function createNoopStep(): AppiumRecordedStep {
+  return {
+    id: createStepId(),
+    type: 'noop',
+    label: '空节点',
+    flow: { nodeKind: 'action' },
+  };
+}
+
+function defaultVisualChangeRegion(): AppiumVisualChangeRegion {
+  const width = props.deviceWidth || 1080;
+  const height = props.deviceHeight || 1920;
+  const regionWidth = Math.max(1, Math.round(width * 0.5));
+  const regionHeight = Math.max(1, Math.round(height * 0.25));
+  return {
+    x: Math.max(0, Math.round((width - regionWidth) / 2)),
+    y: Math.max(0, Math.round((height - regionHeight) / 2)),
+    width: regionWidth,
+    height: regionHeight,
+  };
+}
+
+function currentVisualChangeConfig() {
+  const bounds = selectedNode.value?.bounds;
+  return normalizeVisualChangeConfig({
+    mode: bounds ? 'selectedElement' : 'region',
+    region: bounds ? boundsToVisualRegion(bounds) : defaultVisualChangeRegion(),
+  } as AppiumVisualChangeConfig);
+}
+
+function createVisualChangeStartStep(config: AppiumVisualChangeConfig): AppiumRecordedStep {
+  const normalizedConfig = normalizeVisualChangeConfig(config);
+  const pairId = createStepId();
+  const pairLabel = nextVisualChangePairLabel(steps.value);
+  const visualChange = {
+    ...normalizedConfig,
+    role: 'start' as const,
+    pairId,
+    pairLabel,
+    startStepId: '',
+    endStepId: '',
+  };
+  const node = normalizedConfig.mode === 'selectedElement' ? selectedNode.value : null;
+  if (node) {
+    const step = createNodeActionStep('visualChange', `${pairLabel}-开始节点`, node);
+    return {
+      ...step,
+      label: `${pairLabel}-开始节点`,
+      visualChange,
+      flow: { ...(step.flow || {}), nodeKind: 'assertion' },
+    };
+  }
+  return {
+    id: createStepId(),
+    type: 'visualChange',
+    label: `${pairLabel}-开始节点`,
+    visualChange,
+    flow: { nodeKind: 'assertion' },
+  };
+}
+
+function createVisualChangeEndStep(startStep: AppiumRecordedStep): AppiumRecordedStep {
+  const config = normalizeVisualChangeConfig(startStep.visualChange);
+  const id = createStepId();
+  const pairLabel = config.pairLabel || '检测画面变化';
+  const pairId = config.pairId || startStep.id;
+  return {
+    id,
+    type: 'visualChange',
+    label: `${pairLabel}-结束节点`,
+    visualChange: {
+      ...config,
+      role: 'end',
+      pairId,
+      startStepId: startStep.id,
+      endStepId: id,
+    },
+    flow: { nodeKind: 'assertion' },
   };
 }
 
@@ -763,7 +909,7 @@ async function swipePreview(gesture: {
   }
 }
 
-async function recordTapStep(index?: number) {
+async function recordTapStep(index?: number, branchTarget?: BranchTarget) {
   if (!selectedNode.value || recordingTap.value) return;
   if (!ensureAppPackageSelected()) return;
   if (!selectedDeviceId.value) {
@@ -778,7 +924,7 @@ async function recordTapStep(index?: number) {
   }
   const beforeActivity = currentActivity.value;
   const step = createStep('tap', node);
-  insertStep(step, index);
+  const inserted = insertStep(step, index, branchTarget);
   recordingTap.value = true;
   try {
     await tapAppiumDevice({ deviceId: selectedDeviceId.value, x: bounds.centerX, y: bounds.centerY });
@@ -805,12 +951,12 @@ async function recordTapStep(index?: number) {
   }
 }
 
-async function addStep(type: NodeStepType, index?: number) {
+async function addStep(type: NodeStepType, index?: number, branchTarget?: BranchTarget) {
   if (recordingBusy.value) return;
   if (!selectedNode.value) return;
   if (!ensureAppPackageSelected()) return;
   if (type === 'tap') {
-    return recordTapStep(index);
+    return recordTapStep(index, branchTarget);
   }
   const step = createStep(type, selectedNode.value);
   if (type === 'input') {
@@ -823,10 +969,10 @@ async function addStep(type: NodeStepType, index?: number) {
     if (!input) return;
     step.value = input.value;
   }
-  return insertStep(step, index);
+  return insertStep(step, index, branchTarget);
 }
 
-async function addDelayStep(index?: number) {
+async function addDelayStep(index?: number, branchTarget?: BranchTarget) {
   if (recordingBusy.value) return;
   const input = await ElMessageBox.prompt('请输入延时时间，单位毫秒', '添加延时', {
     inputValue: '1000',
@@ -838,7 +984,7 @@ async function addDelayStep(index?: number) {
   if (!input) return;
   const timeoutMs = Number(input.value);
   const step = createDelayStep(timeoutMs);
-  return insertStep(step, index);
+  return insertStep(step, index, branchTarget);
 }
 
 function toSwipeNumber(value: unknown, fallback: number) {
@@ -884,7 +1030,7 @@ function renderSwipeForm(form: SwipeForm) {
   ]);
 }
 
-async function addSwipeStep(index?: number) {
+async function addSwipeStep(index?: number, branchTarget?: BranchTarget) {
   const preset = swipePreset('up');
   const form = reactive<SwipeForm>({
     direction: preset.direction,
@@ -909,7 +1055,7 @@ async function addSwipeStep(index?: number) {
       endY: toSwipeNumber(form.endY, finalPreset.swipe.endY),
       duration: Math.max(80, toSwipeNumber(form.duration, finalPreset.swipe.duration)),
     },
-  }), index);
+  }), index, branchTarget);
 }
 
 function openLinkedScriptDialog(index?: number, branchTarget?: BranchTarget) {
@@ -958,30 +1104,11 @@ function addLinkedScriptStep() {
     );
     return;
   }
-  const step = insertStep(createRunScriptStep(script), linkedScriptInsertIndex.value);
-  if (linkedScriptBranchTarget.value) {
-    attachStepToBranch(step.id, linkedScriptBranchTarget.value.stepId, linkedScriptBranchTarget.value.branch);
-    if (linkedScriptBranchTarget.value.nextTargetId) {
-      steps.value = steps.value.map((item) => (
-        item.id === step.id
-          ? {
-              ...item,
-              flow: {
-                ...(item.flow || {}),
-                successTargetId: linkedScriptBranchTarget.value?.nextTargetId,
-              },
-            }
-          : item
-      ));
-    }
-    if (linkedScriptBranchTarget.value.updateTarget) {
-      updateBranchTarget(
-        linkedScriptBranchTarget.value.stepId,
-        linkedScriptBranchTarget.value.branch,
-        linkedScriptBranchTarget.value.entryTargetId || step.id,
-      );
-    }
-  }
+  insertStep(
+    createRunScriptStep(script),
+    linkedScriptInsertIndex.value,
+    linkedScriptBranchTarget.value || undefined,
+  );
   linkedScriptInsertIndex.value = undefined;
   linkedScriptBranchTarget.value = null;
   linkedScriptExpectedActivity.value = '';
@@ -1018,6 +1145,64 @@ function loadPreviewScriptForEditing() {
   loadScript(linkedScriptPreviewScript.value);
 }
 
+function openVisualChangeDialog(index?: number, branchTarget?: BranchTarget) {
+  visualChangeInsertIndex.value = index;
+  visualChangeBranchTarget.value = branchTarget || null;
+  visualChangeConfig.value = currentVisualChangeConfig();
+  visualChangePicking.value = false;
+  visualChangeDialogVisible.value = true;
+}
+
+function closeVisualChangeDialog() {
+  visualChangeDialogVisible.value = false;
+  visualChangePicking.value = false;
+  visualChangeInsertIndex.value = undefined;
+  visualChangeBranchTarget.value = null;
+}
+
+function updateVisualChangeConfig(config: AppiumVisualChangeConfig) {
+  visualChangeConfig.value = normalizeVisualChangeConfig(config);
+}
+
+function pickVisualChangeRegion() {
+  if (!selectedDeviceId.value) {
+    ElMessage.warning('请选择设备');
+    return;
+  }
+  visualChangeConfig.value = normalizeVisualChangeConfig({
+    ...visualChangeConfig.value,
+    mode: 'region',
+  });
+  visualChangePicking.value = true;
+  ElMessage.info('请在设备预览中拖拽框选检测区域');
+}
+
+function applyVisualChangeRegion(region: AppiumVisualChangeRegion) {
+  visualChangeConfig.value = normalizeVisualChangeConfig({
+    ...visualChangeConfig.value,
+    mode: 'region',
+    region,
+  });
+  visualChangePicking.value = false;
+  ElMessage.success('已选择检测区域');
+}
+
+function confirmVisualChangeStep() {
+  const config = normalizeVisualChangeConfig(visualChangeConfig.value);
+  if (config.mode === 'selectedElement' && !selectedNode.value?.bounds) {
+    ElMessage.warning('当前没有可用的选中元素，请先选择组件或改为手动框选区域');
+    return;
+  }
+  const step = createVisualChangeStartStep(config);
+  insertStep(
+    step,
+    visualChangeInsertIndex.value,
+    visualChangeBranchTarget.value || undefined,
+  );
+  closeVisualChangeDialog();
+  ElMessage.success('已添加检测画面变化开始节点');
+}
+
 function isReadonlyFlowActionDisabled(_action: InsertAction) {
   return true;
 }
@@ -1037,6 +1222,7 @@ async function addAction(
 ) {
   if (recordingBusy.value) return;
   if (!ensureAppPackageSelected()) return;
+  const previousStep = typeof index === 'number' && index >= 0 ? steps.value[index] : undefined;
   if (action === 'launchApp' && steps.value.some((step) => step.type === 'launchApp')) {
     ElMessage.warning('启动 APP 节点只能添加一个');
     return;
@@ -1045,8 +1231,12 @@ async function addAction(
     ElMessage.warning('清理 App 缓存节点只能添加一个');
     return;
   }
-  if ((action === 'launchApp' || action === 'clearAppData') && index !== -1) {
-    ElMessage.warning(`${action === 'launchApp' ? '启动 APP' : '清理 App 缓存'}只能从开始节点添加`);
+  if (action === 'clearAppData' && index !== -1) {
+    ElMessage.warning('清理 App 缓存只能从开始节点添加');
+    return;
+  }
+  if (action === 'launchApp' && index !== -1 && previousStep?.type !== 'clearAppData') {
+    ElMessage.warning('启动 APP 只能从开始节点或清理 App 缓存后添加');
     return;
   }
   if (action === 'runScript') {
@@ -1054,22 +1244,22 @@ async function addAction(
     return;
   }
   if (action === 'delay') {
-    return addDelayStep(index);
+    return addDelayStep(index, branchTarget);
   }
   if (action === 'tap' || action === 'input' || action === 'assertExists' || action === 'waitFor') {
-    return addStep(action, index);
+    return addStep(action, index, branchTarget);
   }
   if (action === 'keyBack') {
-    return insertStep(createKeyStep(4, '系统返回'), index);
+    return insertStep(createKeyStep(4, '系统返回'), index, branchTarget);
   }
   if (action === 'keyHome') {
-    return insertStep(createKeyStep(3, 'Home 键'), index);
+    return insertStep(createKeyStep(3, 'Home 键'), index, branchTarget);
   }
   if (action === 'keyRecent') {
-    return insertStep(createKeyStep(187, '最近任务'), index);
+    return insertStep(createKeyStep(187, '最近任务'), index, branchTarget);
   }
   if (action === 'keyPower') {
-    return insertStep(createKeyStep(26, '电源键'), index);
+    return insertStep(createKeyStep(26, '电源键'), index, branchTarget);
   }
   if (action === 'waitActivity') {
     const input = await ElMessageBox.prompt('请输入目标 Activity', '等待 Activity', {
@@ -1077,11 +1267,25 @@ async function addAction(
       confirmButtonText: '添加',
       cancelButtonText: '取消',
     }).catch(() => null);
-    if (input?.value) return insertStep(createWaitActivityStep(input.value), index);
+    if (input?.value) return insertStep(createWaitActivityStep(input.value), index, branchTarget);
     return;
   }
   if (action === 'swipe') {
-    return addSwipeStep(index);
+    return addSwipeStep(index, branchTarget);
+  }
+  if (action === 'visualChange' || action === 'visualChangeStart') {
+    openVisualChangeDialog(index, branchTarget);
+    return;
+  }
+  if (action === 'visualChangeEnd') {
+    const startStep = findOpenVisualChangeStart(steps.value, index, branchTarget);
+    if (!startStep) {
+      ElMessage.warning('当前分支没有可对应的检测画面变化开始节点');
+      return;
+    }
+    const inserted = insertStep(createVisualChangeEndStep(startStep), index, branchTarget);
+    ElMessage.success(`已添加 ${inserted.label}`);
+    return inserted;
   }
   if (action === 'pinch') {
     const input = await ElMessageBox.prompt('请输入缩放方向：放大 / 缩小', '添加双指缩放', {
@@ -1103,16 +1307,20 @@ async function addAction(
         centerY: Math.round((props.deviceHeight || 1920) / 2),
         percent: 0.5,
       },
-    }, index);
+    }, index, branchTarget);
+  }
+  if (action === 'noop') {
+    return insertStep(createNoopStep(), index, branchTarget);
   }
   if (action === 'launchApp') {
     const clearStepIndex = steps.value.findIndex((step) => step.type === 'clearAppData');
+    const insertIndex = previousStep?.type === 'clearAppData' ? index : clearStepIndex >= 0 ? clearStepIndex : index;
     return insertStep({
       id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'launchApp',
       label: `启动 APP ${form.appPackage}`,
       value: form.appPackage,
-    }, clearStepIndex >= 0 ? clearStepIndex : index);
+    }, insertIndex);
   }
   if (action === 'clearAppData') {
     return insertStep({
@@ -1126,12 +1334,12 @@ async function addAction(
   if (!node) return;
   if (action === 'popupCondition') {
     const step = createNodeActionStep('assertExists', '判断存在', node, { timeoutMs: 2000 });
-    const inserted = insertStep({ ...step, flow: { nodeKind: 'condition' } }, index);
+    const inserted = insertStep({ ...step, flow: { nodeKind: 'condition' } }, index, branchTarget);
     ElMessage.success('已添加判断节点，请在节点面板配置是/否分支');
     return inserted;
   }
   if (action === 'tapIfExists') {
-    return insertStep(createNodeActionStep('tapIfExists', '存在则点击', node, { timeoutMs: 2000 }), index);
+    return insertStep(createNodeActionStep('tapIfExists', '存在则点击', node, { timeoutMs: 2000 }), index, branchTarget);
   }
   if (action === 'inputIfExists') {
     const input = await ElMessageBox.prompt('', '存在则输入', {
@@ -1141,16 +1349,20 @@ async function addAction(
       center: true,
     }).catch(() => null);
     if (!input) return;
-    return insertStep(createNodeActionStep('inputIfExists', '存在则输入', node, { timeoutMs: 2000, value: input.value }), index);
+    return insertStep(
+      createNodeActionStep('inputIfExists', '存在则输入', node, { timeoutMs: 2000, value: input.value }),
+      index,
+      branchTarget,
+    );
   }
   if (action === 'clearIfExists') {
-    return insertStep(createNodeActionStep('clearIfExists', '存在则清空', node, { timeoutMs: 2000 }), index);
+    return insertStep(createNodeActionStep('clearIfExists', '存在则清空', node, { timeoutMs: 2000 }), index, branchTarget);
   }
   if (action === 'backIfExists') {
-    return insertStep(createNodeActionStep('backIfExists', '存在则返回', node, { timeoutMs: 2000 }), index);
+    return insertStep(createNodeActionStep('backIfExists', '存在则返回', node, { timeoutMs: 2000 }), index, branchTarget);
   }
   if (action === 'clearInput') {
-    return insertStep(createNodeActionStep('clearInput', '清空输入', node), index);
+    return insertStep(createNodeActionStep('clearInput', '清空输入', node), index, branchTarget);
   }
   if (action === 'coordinateTap') {
     if (!node.bounds) {
@@ -1162,7 +1374,7 @@ async function addAction(
       type: 'coordinateTap',
       label: `点击坐标 ${node.bounds.centerX},${node.bounds.centerY}`,
       fallback: { strategy: 'bounds', centerX: node.bounds.centerX, centerY: node.bounds.centerY },
-    }, index);
+    }, index, branchTarget);
   }
   if (action === 'longPress') {
     if (!node.bounds) {
@@ -1184,10 +1396,10 @@ async function addAction(
       label: `长按 ${node.label}`,
       fallback: { strategy: 'bounds', centerX: node.bounds.centerX, centerY: node.bounds.centerY },
       timeoutMs: duration,
-    }, index);
+    }, index, branchTarget);
   }
   if (action === 'waitDisappear') {
-    return insertStep(createNodeActionStep('waitDisappear', '等待元素消失', node, { timeoutMs: 10000 }), index);
+    return insertStep(createNodeActionStep('waitDisappear', '等待元素消失', node, { timeoutMs: 10000 }), index, branchTarget);
   }
   if (action === 'assertText') {
     const input = await ElMessageBox.prompt('请输入要断言的文本', '断言文本', {
@@ -1195,7 +1407,7 @@ async function addAction(
       confirmButtonText: '添加',
       cancelButtonText: '取消',
     }).catch(() => null);
-    if (input?.value) return insertStep(createNodeActionStep('assertText', '断言文本', node, { value: input.value }), index);
+    if (input?.value) return insertStep(createNodeActionStep('assertText', '断言文本', node, { value: input.value }), index, branchTarget);
   }
 }
 
@@ -1215,28 +1427,18 @@ async function addBranchAction(index: number, branch: BranchName, action: Record
   const nextTargetId = insertAtBranchEntry
     ? nextBranchStepAfter(condition.id, branch, index)?.id || (!targetIsBranchStep ? currentTargetId : undefined)
     : undefined;
-  const inserted = await addAction(action, insertIndex, {
+  const branchTarget: BranchTarget = {
     stepId: condition.id,
     branch,
     updateTarget: insertAtBranchEntry || !currentTargetId || !targetIsBranchStep,
     entryTargetId: insertAtBranchEntry ? undefined : existingBranchSteps[0]?.id,
     nextTargetId,
-  });
+  };
+  const inserted = await addAction(action, insertIndex, branchTarget);
   if (!inserted) return;
-  attachStepToBranch(inserted.id, condition.id, branch);
-  if (nextTargetId) {
-    steps.value = steps.value.map((step) => (
-      step.id === inserted.id
-        ? {
-            ...step,
-            flow: { ...(step.flow || {}), successTargetId: nextTargetId },
-          }
-        : step
-    ));
-  }
-  if (insertAtBranchEntry || !currentTargetId || !targetIsBranchStep) {
-    updateBranchTarget(condition.id, branch, insertAtBranchEntry ? inserted.id : existingBranchSteps[0]?.id || inserted.id);
-  }
+  const currentInserted = steps.value.find((step) => step.id === inserted.id);
+  if (currentInserted?.flow?.parentConditionId === condition.id && currentInserted.flow.parentBranch === branch) return;
+  applyBranchTargetToInsertedStep(inserted, branchTarget);
 }
 
 async function saveOnActivityChange() {
@@ -1270,41 +1472,42 @@ async function saveOnActivityChange() {
 
 function removeStep(index: number) {
   if (recordingBusy.value) return;
-  const removed = steps.value[index];
-  if (!removed) return;
-  const nextBranchStep = removed.flow?.parentConditionId && removed.flow.parentBranch
-    ? steps.value.slice(index + 1).find((step) => (
-        step.flow?.parentConditionId === removed.flow?.parentConditionId
-        && step.flow?.parentBranch === removed.flow?.parentBranch
-      ))
-    : undefined;
-  const replacementId = removed.flow?.parentConditionId
-    ? nextBranchStep?.id || ''
-    : steps.value[index + 1]?.id || '';
-  steps.value = steps.value
-    .filter((_step, stepIndex) => stepIndex !== index)
-    .map((step) => {
-      if (!step.flow) return step;
-      const flow = { ...step.flow };
-      let changed = false;
-      (['yesTargetId', 'noTargetId', 'successTargetId', 'failureTargetId'] as const).forEach((key) => {
-        if (flow[key] !== removed.id) return;
-        flow[key] = replacementId;
-        changed = true;
-      });
-      if (flow.parentConditionId === removed.id) {
-        delete flow.parentConditionId;
-        delete flow.parentBranch;
-        changed = true;
-      }
-      return changed ? { ...step, flow } : step;
-    });
+  steps.value = removeFlowStep(steps.value, index);
+}
+
+function syncVisualChangePairConfig(
+  candidate: AppiumRecordedStep,
+  sourceConfig: NonNullable<AppiumRecordedStep['visualChange']>,
+) {
+  if (candidate.visualChange?.role !== 'end') return candidate;
+  if (!sourceConfig.pairId || candidate.visualChange.pairId !== sourceConfig.pairId) return candidate;
+  return {
+    ...candidate,
+    visualChange: {
+      ...candidate.visualChange,
+      mode: sourceConfig.mode,
+      region: sourceConfig.region,
+      pairLabel: sourceConfig.pairLabel,
+      durationMs: sourceConfig.durationMs,
+      intervalMs: sourceConfig.intervalMs,
+      changeRatioThreshold: sourceConfig.changeRatioThreshold,
+      pixelmatchThreshold: sourceConfig.pixelmatchThreshold,
+    },
+  };
 }
 
 function updateStep(index: number, step: AppiumRecordedStep) {
   if (recordingLocked.value) return;
-  const nextSteps = [...steps.value];
-  nextSteps[index] = step;
+  const visualChange = step.visualChange?.role === 'start'
+    ? normalizeVisualChangeConfig(step.visualChange)
+    : undefined;
+  const nextSteps = steps.value.map((candidate, stepIndex) => (
+    stepIndex === index
+      ? step
+      : visualChange
+        ? syncVisualChangePairConfig(candidate, visualChange)
+        : candidate
+  ));
   steps.value = nextSteps;
 }
 
@@ -1339,7 +1542,7 @@ function loadScript(script: AppiumRecordedScript) {
   if (script.deviceId && script.deviceId !== selectedDeviceId.value) {
     void switchDevice(script.deviceId);
   }
-  steps.value = (script.steps || []).map(normalizeLegacyFlowScope);
+  steps.value = normalizeLegacyNestedConditionBranches((script.steps || []).map(normalizeLegacyFlowScope));
   markDraftSaved();
 }
 
@@ -1365,6 +1568,91 @@ function formatScriptTime(value: string) {
   if (!value) return '-';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+}
+
+function cloneScriptSteps(stepList: AppiumRecordedStep[]) {
+  return JSON.parse(JSON.stringify(stepList || [])) as AppiumRecordedStep[];
+}
+
+function isScriptNameTaken(name: string, exceptId = '') {
+  return scripts.value.some((script) => script.id !== exceptId && script.name === name);
+}
+
+function createDuplicateScriptName(sourceName: string) {
+  const baseName = `${sourceName} Copy`;
+  if (!isScriptNameTaken(baseName)) return baseName;
+
+  let suffix = 2;
+  let nextName = `${baseName} ${suffix}`;
+  while (isScriptNameTaken(nextName)) {
+    suffix += 1;
+    nextName = `${baseName} ${suffix}`;
+  }
+  return nextName;
+}
+
+async function duplicateScript(script: AppiumRecordedScript) {
+  if (duplicatingScriptId.value) return;
+  duplicatingScriptId.value = script.id;
+  try {
+    const payload = await saveAppiumScript({
+      name: createDuplicateScriptName(script.name),
+      appPackage: script.appPackage,
+      appActivity: script.appActivity,
+      deviceId: script.deviceId,
+      steps: cloneScriptSteps(script.steps),
+    });
+    await loadScripts();
+    ElMessage.success(`已复制为「${payload.script.name}」`);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '复制脚本失败');
+  } finally {
+    duplicatingScriptId.value = '';
+  }
+}
+
+async function renameScript(script: AppiumRecordedScript) {
+  if (renamingScriptId.value) return;
+  const input = await ElMessageBox.prompt('请输入新的脚本名称', '修改脚本名称', {
+    inputValue: script.name,
+    confirmButtonText: '保存',
+    cancelButtonText: '取消',
+    center: true,
+    inputValidator(value) {
+      const nextName = String(value || '').trim();
+      if (!nextName) return '脚本名称不能为空';
+      if (isScriptNameTaken(nextName, script.id)) return '脚本名称已存在';
+      return true;
+    },
+  }).catch(() => null);
+  const nextName = input ? String(input.value || '').trim() : '';
+  if (!nextName || nextName === script.name) return;
+
+  const wasCurrentScript = selectedScriptId.value === script.id;
+  const hadUnsavedChanges = hasUnsavedChanges.value;
+  renamingScriptId.value = script.id;
+  try {
+    const payload = await saveAppiumScript({
+      id: script.id,
+      name: nextName,
+      appPackage: script.appPackage,
+      appActivity: script.appActivity,
+      deviceId: script.deviceId,
+      steps: cloneScriptSteps(script.steps),
+    });
+    await loadScripts();
+    if (wasCurrentScript) {
+      form.name = payload.script.name;
+      if (!hadUnsavedChanges) {
+        markDraftSaved();
+      }
+    }
+    ElMessage.success('脚本名称已修改');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '修改脚本名称失败');
+  } finally {
+    renamingScriptId.value = '';
+  }
 }
 
 async function removeScript(script: AppiumRecordedScript) {
@@ -1428,7 +1716,7 @@ async function importScriptFile(event: Event) {
 }
 
 async function saveScript() {
-  if (!ensureAppPackageSelected()) return;
+  if (!ensureAppPackageSelected()) return false;
   saving.value = true;
   try {
     const payload = await saveAppiumScript({
@@ -1443,8 +1731,10 @@ async function saveScript() {
     selectedScriptId.value = payload.script.id;
     markDraftSaved();
     ElMessage.success('Appium 脚本已保存');
+    return true;
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '保存失败');
+    return false;
   } finally {
     saving.value = false;
   }
@@ -1454,6 +1744,10 @@ async function replayScript() {
   if (!selectedScript.value) {
     ElMessage.warning('请选择已保存脚本');
     return;
+  }
+  if (hasUnsavedChanges.value) {
+    const saved = await saveScript();
+    if (!saved || !selectedScript.value) return;
   }
   replaying.value = true;
   stoppingReplay.value = false;
@@ -1470,6 +1764,8 @@ async function replayScript() {
     replayOutput.value = result.output || '';
     if (result.stopped) {
       ElMessage.info('回放已终止，报告、日志和截图回放已生成');
+    } else if (result.softFailureCount) {
+      ElMessage.warning(`回放完成，但存在 ${result.softFailureCount} 个视觉变化未达预期节点`);
     } else if (result.success) {
       ElMessage.success('回放完成');
     } else {
@@ -1581,12 +1877,16 @@ watch(
         :actions="deviceActions"
         :overlay-bounds="overlayBounds"
         :selected-bounds="selectedBounds"
+        :selected-region="visualChangeSelectedRegion"
+        :region-selection="visualChangeRegionSelectionEnabled"
+        :region-draw-mode="visualChangePicking"
         :device-width="deviceWidth"
         :device-height="deviceHeight"
         @switch-device="switchDevice"
         @trigger-key="triggerDeviceKey"
         @refresh-preview="refreshDevicePreview"
         @tap="selectNodeFromPoint"
+        @region-select="applyVisualChangeRegion"
         @swipe="swipePreview"
       />
 
@@ -1717,16 +2017,31 @@ watch(
                     <el-button size="small" @click.stop="loadScript(script)">加载</el-button>
                     <el-button
                       size="small"
+                      :icon="Edit"
+                      :loading="renamingScriptId === script.id"
+                      title="修改脚本名称"
+                      @click.stop="renameScript(script)"
+                    />
+                    <el-button
+                      size="small"
+                      :icon="CopyDocument"
+                      :loading="duplicatingScriptId === script.id"
+                      title="复制脚本"
+                      @click.stop="duplicateScript(script)"
+                    />
+                    <el-button
+                      size="small"
                       :icon="Download"
                       title="下载脚本"
-                      @click="downloadScript(script)"
+                      @click.stop="downloadScript(script)"
                     />
                     <el-button
                       size="small"
                       type="danger"
                       :icon="Delete"
                       :loading="deletingScriptId === script.id"
-                      @click="removeScript(script)"
+                      title="删除脚本"
+                      @click.stop="removeScript(script)"
                     />
                   </div>
                 </article>
@@ -1736,6 +2051,17 @@ watch(
         </el-tabs>
       </el-card>
     </div>
+
+    <VisualChangeDialog
+      :model-value="visualChangeDialogVisible"
+      :config="visualChangeConfig"
+      :has-selected-element="Boolean(selectedNode?.bounds)"
+      :picking-region="visualChangePicking"
+      @update:model-value="$event ? (visualChangeDialogVisible = true) : closeVisualChangeDialog()"
+      @update:config="updateVisualChangeConfig"
+      @pick-region="pickVisualChangeRegion"
+      @confirm="confirmVisualChangeStep"
+    />
 
     <el-dialog
       :model-value="Boolean(pendingNavigation)"

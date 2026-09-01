@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { getAppiumRecordedScript, type AppiumRecordedScriptRecord, type AppiumRecordedStepRecord } from './repository';
 import { appDataPath } from '../paths';
 import { ensureAndroidSdkAvailable, getAdbCommand } from '../android-sdk';
-import { createAppiumReplayReport, type AppiumReplayFrame } from './report';
+import { createAppiumReplayReport, type AppiumReplayFrame, type AppiumReplayVisualCheck } from './report';
 import { startManagedAppiumServer, usesManagedAppiumServer } from './managed-appium';
+import { compareVisualChangeFrames, type VisualChangeRegion } from './visual-change';
 
 type AppiumSessionResponse = {
   value?: {
@@ -34,11 +35,21 @@ class ReplayStoppedError extends Error {
   }
 }
 
+type PendingVisualChangeCheck = {
+  step: AppiumRecordedStepRecord;
+  nodeNumber: number;
+  scriptName: string;
+};
+
 const replayContext = new AsyncLocalStorage<{
   signal?: AbortSignal;
   appiumLog: (line: string) => void;
   serverUrl: string;
+  deviceId: string;
   frames: AppiumReplayFrame[];
+  visualChecks: AppiumReplayVisualCheck[];
+  pendingVisualChecks: PendingVisualChangeCheck[];
+  softFailureCount: number;
 }>();
 
 const appiumServerUrl = () => replayContext.getStore()?.serverUrl || configuredAppiumServerUrl();
@@ -58,6 +69,11 @@ function errorDetail(error: unknown) {
     return `${error.message}：${cause.message}`;
   }
   return error.message;
+}
+
+function isTimeoutError(error: unknown) {
+  const detail = errorDetail(error).toLowerCase();
+  return detail.includes('timeout') || detail.includes('timed out');
 }
 
 function isStaleElementError(error: unknown) {
@@ -174,6 +190,29 @@ function adbText(deviceId: string, args: string[]) {
   });
 }
 
+function adbScreenshotBase64(deviceId: string) {
+  return new Promise<string>((resolve, reject) => {
+    execFile(
+      getAdbCommand(),
+      ['-s', deviceId, 'exec-out', 'screencap', '-p'],
+      { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024, timeout: 8000 },
+      (error, stdout, stderr) => {
+        if (error) {
+          const detail = Buffer.isBuffer(stderr) ? stderr.toString('utf8').trim() : String(stderr || '').trim();
+          reject(new Error(detail || error.message || 'ADB 截图失败'));
+          return;
+        }
+        const imageBuffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || '');
+        if (!imageBuffer.length) {
+          reject(new Error('ADB 未返回截图内容'));
+          return;
+        }
+        resolve(imageBuffer.toString('base64'));
+      },
+    );
+  });
+}
+
 async function getCurrentActivity(deviceId: string) {
   const output = await adbText(deviceId, ['shell', 'dumpsys', 'activity', 'activities']);
   const resumedLine = output
@@ -254,6 +293,9 @@ async function appiumRequest<T>(
       throw new ReplayStoppedError();
     }
     context?.appiumLog(`[Appium] 异常：${method} ${path}（${errorDetail(error)}）`);
+    if (isTimeoutError(error)) {
+      throw new Error(`Appium 请求超时 ${requestUrl}，${errorDetail(error)}`);
+    }
     throw new Error(`无法连接 Appium 服务 ${requestUrl}，${errorDetail(error)}`);
   }
 
@@ -291,7 +333,7 @@ function replayFrameSelector(step: AppiumRecordedStepRecord) {
 }
 
 async function captureReplayFrame(
-  sessionId: string,
+  _sessionId: string,
   step: AppiumRecordedStepRecord,
   nodeNumber: number,
   scriptName: string,
@@ -299,7 +341,7 @@ async function captureReplayFrame(
   status: string,
 ) {
   const context = replayContext.getStore();
-  if (!context || !sessionId) return;
+  if (!context || !context.deviceId) return;
   const appendFrame = (imageBase64: string) => {
     context.frames.push({
       sequence: context.frames.length + 1,
@@ -324,14 +366,8 @@ async function captureReplayFrame(
   }
 
   try {
-    const payload = await appiumRequest<AppiumValueResponse<string>>(
-      `/session/${sessionId}/screenshot`,
-      undefined,
-      { ignoreAbort: true, timeoutMs: 5000 },
-    );
-    const imageBase64 = typeof payload.value === 'string' ? payload.value : '';
-    if (!imageBase64) throw new Error('Appium 未返回截图内容');
-    appendFrame(imageBase64);
+    // Report screenshots use ADB so a slow capture cannot block Appium's command queue.
+    appendFrame(await adbScreenshotBase64(context.deviceId));
   } catch (error) {
     context.appiumLog(`[节点 ${nodeNumber}] 截图失败：${errorDetail(error)}`);
   }
@@ -483,16 +519,183 @@ async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRec
   throw new Error(`${step.label} 等待消失超时`);
 }
 
-async function saveScreenshot(sessionId: string) {
-  const payload = await appiumRequest<AppiumValueResponse<string>>(`/session/${sessionId}/screenshot`);
-  if (!payload.value) throw new Error('Appium 未返回截图数据');
+async function saveScreenshot(deviceId: string) {
   const dir = appDataPath('.midscene-app', 'screenshots');
   await mkdir(dir, { recursive: true });
   const file = join(dir, `appium-${Date.now()}.png`);
-  await writeFile(file, Buffer.from(payload.value, 'base64'));
+  await writeFile(file, Buffer.from(await adbScreenshotBase64(deviceId), 'base64'));
 }
 
-async function runStep(sessionId: string, deviceId: string, step: AppiumRecordedStepRecord) {
+type RunStepMeta = {
+  nodeNumber: number;
+  scriptName: string;
+};
+
+type RunStepResult = string | {
+  message?: string;
+  softFailed?: boolean;
+};
+
+function completedStepStatus(step: AppiumRecordedStepRecord, softFailed: boolean) {
+  if (step.type === 'visualChange') {
+    if (step.visualChange?.role === 'start') return '已记录基准帧';
+    if (step.visualChange?.role === 'end') return '已记录对比帧';
+  }
+  return softFailed ? '视觉变化未达预期' : '成功';
+}
+
+function visualChangeNumber(value: unknown, fallback: number, min: number, max = Number.POSITIVE_INFINITY) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function visualChangeRegion(step: AppiumRecordedStepRecord): VisualChangeRegion {
+  const config = step.visualChange;
+  if (!config?.region) throw new Error(`${step.label} 缺少检测区域`);
+  return {
+    x: Math.max(0, Math.round(Number(config.region.x) || 0)),
+    y: Math.max(0, Math.round(Number(config.region.y) || 0)),
+    width: Math.max(1, Math.round(Number(config.region.width) || 1)),
+    height: Math.max(1, Math.round(Number(config.region.height) || 1)),
+  };
+}
+
+function findVisualFrame(
+  frames: AppiumReplayFrame[],
+  nodeId: string,
+  scriptName: string,
+  preferredPhase: AppiumReplayFrame['phase'],
+) {
+  const matches = frames.filter((frame) => frame.nodeId === nodeId && frame.scriptName === scriptName);
+  if (!matches.length) return undefined;
+  const preferred = preferredPhase === 'before'
+    ? matches.find((frame) => frame.phase === preferredPhase)
+    : [...matches].reverse().find((frame) => frame.phase === preferredPhase);
+  return preferred || (preferredPhase === 'before' ? matches[0] : matches[matches.length - 1]);
+}
+
+const EMPTY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+
+function registerVisualChangeStep(
+  step: AppiumRecordedStepRecord,
+  meta: RunStepMeta,
+): RunStepResult {
+  const config = step.visualChange;
+  if (!config) throw new Error(`${step.label} 缺少画面变化检测配置`);
+  if (config.role === 'start') {
+    return {
+      message: `已记录画面变化基准点：${config.pairLabel || step.label}`,
+    };
+  }
+  const context = replayContext.getStore();
+  const endStep = {
+    ...step,
+    visualChange: {
+      ...config,
+      endStepId: config.endStepId || step.id,
+    },
+  };
+  context?.pendingVisualChecks.push({ step: endStep, nodeNumber: meta.nodeNumber, scriptName: meta.scriptName });
+  return {
+    message: `已记录画面变化对比点：${config.pairLabel || step.label}`,
+  };
+}
+
+function appendVisualCheckFailure(lines: string[], check: PendingVisualChangeCheck, message: string) {
+  const context = replayContext.getStore();
+  if (context) {
+    const config = check.step.visualChange;
+    context.softFailureCount += 1;
+    context.visualChecks.push({
+      nodeId: check.step.id,
+      nodeNumber: check.nodeNumber,
+      nodeLabel: check.step.label,
+      status: 'failed',
+      message,
+      region: config?.region ? visualChangeRegion(check.step) : { x: 0, y: 0, width: 1, height: 1 },
+      durationMs: 0,
+      intervalMs: 0,
+      sampleCount: 0,
+      changeRatioThreshold: visualChangeNumber(config?.changeRatioThreshold, 2, 0.01),
+      maxChangeRatio: 0,
+      baselineBase64: EMPTY_PNG_BASE64,
+      comparisonBase64: EMPTY_PNG_BASE64,
+      diffBase64: EMPTY_PNG_BASE64,
+      startNodeId: config?.startStepId,
+      endNodeId: config?.endStepId,
+    });
+  }
+  lines.push(`[节点 ${check.nodeNumber}] 视觉变化检测异常：${message}（继续执行）`);
+}
+
+function processPendingVisualChecks(lines: string[]) {
+  const context = replayContext.getStore();
+  if (!context || !context.pendingVisualChecks.length) return;
+
+  // Visual checks compare captured replay frames after the path finishes, so
+  // they never block or mutate the device state for downstream nodes.
+  context.pendingVisualChecks.forEach((check) => {
+    const config = check.step.visualChange;
+    if (!config?.startStepId || !config.endStepId) {
+      appendVisualCheckFailure(lines, check, `${check.step.label} 缺少开始节点或结束节点`);
+      return;
+    }
+    const baselineFrame = findVisualFrame(context.frames, config.startStepId, check.scriptName, 'after');
+    const comparisonFrame = findVisualFrame(context.frames, config.endStepId, check.scriptName, 'after');
+    if (!baselineFrame || !comparisonFrame) {
+      const missing = [
+        baselineFrame ? '' : '开始节点截图',
+        comparisonFrame ? '' : '结束节点截图',
+      ].filter(Boolean).join('、');
+      appendVisualCheckFailure(lines, check, `${check.step.label} 未捕获到${missing}`);
+      return;
+    }
+    let result: ReturnType<typeof compareVisualChangeFrames>;
+    try {
+      result = compareVisualChangeFrames({
+        baselineScreenshot: Buffer.from(baselineFrame.imageBase64, 'base64'),
+        comparisonScreenshot: Buffer.from(comparisonFrame.imageBase64, 'base64'),
+        region: visualChangeRegion(check.step),
+        changeRatioThreshold: visualChangeNumber(config.changeRatioThreshold, 2, 0.01),
+        pixelmatchThreshold: visualChangeNumber(config.pixelmatchThreshold, 0.1, 0, 1),
+      });
+    } catch (error) {
+      appendVisualCheckFailure(lines, check, `${check.step.label} 对比失败：${errorDetail(error)}`);
+      return;
+    }
+    context.visualChecks.push({
+      nodeId: check.step.id,
+      nodeNumber: check.nodeNumber,
+      nodeLabel: check.step.label,
+      status: result.passed ? 'passed' : 'failed',
+      message: result.message,
+      region: result.region,
+      durationMs: result.durationMs,
+      intervalMs: result.intervalMs,
+      sampleCount: result.sampleCount,
+      changeRatioThreshold: result.changeRatioThreshold,
+      maxChangeRatio: result.maxChangeRatio,
+      baselineBase64: result.baselineBase64,
+      comparisonBase64: result.comparisonBase64,
+      diffBase64: result.diffBase64,
+      startNodeId: config.startStepId,
+      startNodeLabel: `${baselineFrame.nodeNumber}. ${baselineFrame.nodeLabel}`,
+      endNodeId: config.endStepId,
+      endNodeLabel: `${comparisonFrame.nodeNumber}. ${comparisonFrame.nodeLabel}`,
+    });
+    if (!result.passed) context.softFailureCount += 1;
+    lines.push(`[节点 ${check.nodeNumber}] 视觉变化检测${result.passed ? '有变化' : '无明显变化'}：${result.message}${result.passed ? '' : '（继续执行）'}`);
+  });
+  context.pendingVisualChecks = [];
+}
+
+async function runStep(
+  sessionId: string,
+  deviceId: string,
+  step: AppiumRecordedStepRecord,
+  meta: RunStepMeta,
+): Promise<RunStepResult | void> {
   throwIfReplayStopped();
   if (step.type === 'delay') {
     await wait(Math.max(0, step.timeoutMs || 1000));
@@ -528,7 +731,15 @@ async function runStep(sessionId: string, deviceId: string, step: AppiumRecorded
   }
 
   if (step.type === 'screenshot') {
-    await saveScreenshot(sessionId);
+    await saveScreenshot(deviceId);
+    return;
+  }
+
+  if (step.type === 'visualChange') {
+    return registerVisualChangeStep(step, meta);
+  }
+
+  if (step.type === 'noop') {
     return;
   }
 
@@ -797,6 +1008,20 @@ async function replayLinkedScript(
   lines.push(`连接脚本完成：${linkedScript.name}`);
 }
 
+function appendRunStepResult(lines: string[], nodeNumber: number, result: RunStepResult | void) {
+  if (!result) return false;
+  if (typeof result === 'string') {
+    if (result) lines.push(`[节点 ${nodeNumber}] 结果：${result}`);
+    return false;
+  }
+  if (result.softFailed) {
+    lines.push(`[节点 ${nodeNumber}] 视觉变化未达预期：${result.message || '未检测到明显变化'}（继续执行）`);
+    return true;
+  }
+  if (result.message) lines.push(`[节点 ${nodeNumber}] 结果：${result.message}`);
+  return false;
+}
+
 async function replayLinearSteps(
   sessionId: string,
   deviceId: string,
@@ -814,14 +1039,18 @@ async function replayLinearSteps(
     lines.push(`[节点 ${index + 1}] 开始：${step.label}`);
     await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'before', '执行前');
     try {
+      let softFailed = false;
       if (step.type === 'runScript') {
         await replayLinkedScript(sessionId, deviceId, step, lines, stack);
       } else {
-        const result = await runStep(sessionId, deviceId, step);
-        if (result) lines.push(`[节点 ${index + 1}] 结果：${result}`);
+        const result = await runStep(sessionId, deviceId, step, {
+          nodeNumber: index + 1,
+          scriptName: options.scriptName || '',
+        });
+        softFailed = appendRunStepResult(lines, index + 1, result);
       }
-      lines.push(`[节点 ${index + 1}] 完成：${step.label}`);
-      await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'after', '成功');
+      lines.push(`[节点 ${index + 1}] 完成：${step.label}${softFailed ? '（存在软失败，已继续）' : ''}`);
+      await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'after', completedStepStatus(step, softFailed));
     } catch (error) {
       if (isReplayStopped(error)) {
         lines.push(`[节点 ${index + 1}] 已终止：${step.label}`);
@@ -915,14 +1144,18 @@ async function replayFlowSteps(
     }
 
     try {
+      let softFailed = false;
       if (step.type === 'runScript') {
         await replayLinkedScript(sessionId, deviceId, step, lines, stack);
       } else {
-        const result = await runStep(sessionId, deviceId, step);
-        if (result) lines.push(`[节点 ${index + 1}] 结果：${result}`);
+        const result = await runStep(sessionId, deviceId, step, {
+          nodeNumber: index + 1,
+          scriptName: options.scriptName || '',
+        });
+        softFailed = appendRunStepResult(lines, index + 1, result);
       }
-      lines.push(`[节点 ${index + 1}] 完成：${step.label}`);
-      await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'after', '成功');
+      lines.push(`[节点 ${index + 1}] 完成：${step.label}${softFailed ? '（存在软失败，已继续）' : ''}`);
+      await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'after', completedStepStatus(step, softFailed));
       index = nextIndexAfterStep(index, step);
     } catch (error) {
       if (isReplayStopped(error)) {
@@ -997,7 +1230,7 @@ async function replayScriptSteps(
     try {
       await replayLinkedScript(sessionId, deviceId, step, lines, stack);
       lines.push(`[节点 ${nodeNumber}] 完成：${step.label}`);
-      await captureReplayFrame(sessionId, step, nodeNumber, options.scriptName || '', 'after', '成功');
+      await captureReplayFrame(sessionId, step, nodeNumber, options.scriptName || '', 'after', completedStepStatus(step, false));
     } catch (error) {
       if (isReplayStopped(error)) {
         lines.push(`[节点 ${nodeNumber}] 已终止：${step.label}`);
@@ -1033,7 +1266,11 @@ export async function replayAppiumScript(
     signal,
     appiumLog: (line) => lines.push(line),
     serverUrl: configuredAppiumServerUrl(),
+    deviceId: targetDeviceId,
     frames: [] as AppiumReplayFrame[],
+    visualChecks: [] as AppiumReplayVisualCheck[],
+    pendingVisualChecks: [] as PendingVisualChangeCheck[],
+    softFailureCount: 0,
   };
   return replayContext.run(context, async () => {
     lines.push(
@@ -1071,8 +1308,14 @@ export async function replayAppiumScript(
       await replayScriptSteps(sessionId, targetDeviceId, script.steps, lines, [script.id], {
         scriptName: script.name,
       });
-      lines.push('回放完成');
-      success = true;
+      processPendingVisualChecks(lines);
+      if (context.softFailureCount > 0) {
+        lines.push(`回放完成，但存在 ${context.softFailureCount} 个视觉变化未达预期节点`);
+        success = false;
+      } else {
+        lines.push('回放完成');
+        success = true;
+      }
     } catch (error) {
       stopped = isReplayStopped(error);
       const detail = errorDetail(error);
@@ -1126,6 +1369,7 @@ export async function replayAppiumScript(
         startedAt,
         completedAt,
         frames: context.frames,
+        visualChecks: context.visualChecks,
       });
       reportPath = report.filePath;
       reportId = report.id;
@@ -1145,6 +1389,7 @@ export async function replayAppiumScript(
       reportId,
       logPath,
       htmlReportPath,
+      softFailureCount: context.softFailureCount,
     };
   });
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue';
+import { computed, shallowRef, watch } from 'vue';
 import { Cpu, Refresh } from '@element-plus/icons-vue';
 import type { AndroidDevice, DeviceAction } from '../../types';
 
@@ -9,6 +9,13 @@ type DeviceOverlayBounds = {
   top: number;
   right: number;
   bottom: number;
+};
+
+type DeviceRegionSelection = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 const props = defineProps<{
@@ -21,6 +28,9 @@ const props = defineProps<{
   actions?: readonly DeviceAction[];
   overlayBounds?: readonly DeviceOverlayBounds[];
   selectedBounds?: DeviceOverlayBounds;
+  selectedRegion?: DeviceOverlayBounds;
+  regionSelection?: boolean;
+  regionDrawMode?: boolean;
   deviceWidth?: number;
   deviceHeight?: number;
 }>();
@@ -32,6 +42,7 @@ const emit = defineEmits<{
   previewError: [];
   refreshPreview: [];
   tap: [point: { x: number; y: number }];
+  regionSelect: [region: DeviceRegionSelection];
   swipe: [gesture: {
     startX: number;
     startY: number;
@@ -43,11 +54,14 @@ const emit = defineEmits<{
 
 const imageSize = shallowRef({ width: 0, height: 0 });
 let pointerSession: {
+  mode: 'gesture' | 'region-draw' | 'region-move';
   pointerId: number;
   start: { x: number; y: number };
   startClientX: number;
   startClientY: number;
+  origin?: DeviceOverlayBounds;
 } | null = null;
+const draftRegion = shallowRef<DeviceOverlayBounds | null>(null);
 const hasPreview = computed(() => Boolean(props.frameUrl || props.imageUrl));
 const imageBoxStyle = computed(() => {
   if (props.frameUrl) return {};
@@ -59,6 +73,12 @@ const overlayViewBox = computed(() => {
   const width = props.deviceWidth || imageSize.value.width;
   const height = props.deviceHeight || imageSize.value.height;
   return width && height ? `0 0 ${width} ${height}` : '';
+});
+
+watch(() => props.regionSelection, (enabled) => {
+  if (enabled) return;
+  pointerSession = null;
+  draftRegion.value = null;
 });
 
 function updateImageSize(event: Event) {
@@ -97,18 +117,109 @@ function getDevicePoint(target: HTMLElement, clientX: number, clientY: number) {
   };
 }
 
+function boundsFromPoints(
+  id: string,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) {
+  return {
+    id,
+    left: Math.min(start.x, end.x),
+    top: Math.min(start.y, end.y),
+    right: Math.max(start.x, end.x),
+    bottom: Math.max(start.y, end.y),
+  };
+}
+
+function pointInBounds(point: { x: number; y: number }, bounds?: DeviceOverlayBounds) {
+  if (!bounds) return false;
+  return point.x >= bounds.left
+    && point.x <= bounds.right
+    && point.y >= bounds.top
+    && point.y <= bounds.bottom;
+}
+
+function clampRegion(bounds: DeviceOverlayBounds) {
+  const width = props.deviceWidth || imageSize.value.width;
+  const height = props.deviceHeight || imageSize.value.height;
+  const regionWidth = Math.max(1, bounds.right - bounds.left);
+  const regionHeight = Math.max(1, bounds.bottom - bounds.top);
+  const left = Math.max(0, Math.min(bounds.left, Math.max(0, width - regionWidth)));
+  const top = Math.max(0, Math.min(bounds.top, Math.max(0, height - regionHeight)));
+  return {
+    id: bounds.id,
+    left,
+    top,
+    right: left + regionWidth,
+    bottom: top + regionHeight,
+  };
+}
+
+function moveBounds(
+  origin: DeviceOverlayBounds,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  return clampRegion({
+    id: origin.id,
+    left: origin.left + dx,
+    top: origin.top + dy,
+    right: origin.right + dx,
+    bottom: origin.bottom + dy,
+  });
+}
+
+function emitRegion(bounds: DeviceOverlayBounds) {
+  const width = bounds.right - bounds.left;
+  const height = bounds.bottom - bounds.top;
+  if (width < 2 || height < 2) return;
+  emit('regionSelect', {
+    x: bounds.left,
+    y: bounds.top,
+    width,
+    height,
+  });
+}
+
 function handlePointerDown(event: PointerEvent) {
   if (event.pointerType === 'mouse' && event.button !== 0) return;
   const target = event.currentTarget as HTMLElement;
   const point = getDevicePoint(target, event.clientX, event.clientY);
   if (!point) return;
+  if (props.regionSelection) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
   target.setPointerCapture(event.pointerId);
+  const isMovingRegion = props.regionSelection
+    && !props.regionDrawMode
+    && pointInBounds(point, props.selectedRegion);
   pointerSession = {
+    mode: props.regionSelection ? (isMovingRegion ? 'region-move' : 'region-draw') : 'gesture',
     pointerId: event.pointerId,
     start: point,
     startClientX: event.clientX,
     startClientY: event.clientY,
+    origin: isMovingRegion && props.selectedRegion ? { ...props.selectedRegion } : undefined,
   };
+  if (props.regionSelection) {
+    draftRegion.value = pointerSession.origin || boundsFromPoints('draft-region', point, point);
+  }
+}
+
+function handlePointerMove(event: PointerEvent) {
+  if (!pointerSession || pointerSession.pointerId !== event.pointerId || pointerSession.mode === 'gesture') return;
+  const target = event.currentTarget as HTMLElement;
+  const point = getDevicePoint(target, event.clientX, event.clientY);
+  if (!point) return;
+  event.preventDefault();
+  if (pointerSession.mode === 'region-move' && pointerSession.origin) {
+    draftRegion.value = moveBounds(pointerSession.origin, pointerSession.start, point);
+    return;
+  }
+  draftRegion.value = boundsFromPoints('draft-region', pointerSession.start, point);
 }
 
 function handlePointerUp(event: PointerEvent) {
@@ -118,7 +229,17 @@ function handlePointerUp(event: PointerEvent) {
   const session = pointerSession;
   pointerSession = null;
   if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
-  if (!point) return;
+  if (!point) {
+    if (session.mode !== 'gesture') draftRegion.value = null;
+    return;
+  }
+
+  if (session.mode !== 'gesture') {
+    const bounds = draftRegion.value || boundsFromPoints('selected-region', session.start, point);
+    draftRegion.value = null;
+    emitRegion(bounds);
+    return;
+  }
 
   const moved = Math.hypot(
     event.clientX - session.startClientX,
@@ -139,7 +260,10 @@ function handlePointerUp(event: PointerEvent) {
 }
 
 function handlePointerCancel(event: PointerEvent) {
-  if (pointerSession?.pointerId === event.pointerId) pointerSession = null;
+  if (pointerSession?.pointerId === event.pointerId) {
+    pointerSession = null;
+    draftRegion.value = null;
+  }
 }
 </script>
 
@@ -208,7 +332,9 @@ function handlePointerCancel(event: PointerEvent) {
       >
         <div
           class="device-preview__surface"
+          :class="{ 'device-preview__surface--selecting': regionSelection }"
           @pointerdown="handlePointerDown"
+          @pointermove="handlePointerMove"
           @pointerup="handlePointerUp"
           @pointercancel="handlePointerCancel"
         />
@@ -229,7 +355,7 @@ function handlePointerCancel(event: PointerEvent) {
           @error="emit('previewError')"
         />
         <svg
-          v-if="overlayViewBox && (overlayBounds?.length || selectedBounds)"
+          v-if="overlayViewBox && (overlayBounds?.length || selectedBounds || selectedRegion || draftRegion)"
           class="device-preview__overlay"
           :viewBox="overlayViewBox"
           preserveAspectRatio="xMidYMid meet"
@@ -252,6 +378,24 @@ function handlePointerCancel(event: PointerEvent) {
             :y="selectedBounds.top"
             :width="Math.max(0, selectedBounds.right - selectedBounds.left)"
             :height="Math.max(0, selectedBounds.bottom - selectedBounds.top)"
+            vector-effect="non-scaling-stroke"
+          />
+          <rect
+            v-if="selectedRegion && !draftRegion"
+            class="device-preview__selected-region"
+            :x="selectedRegion.left"
+            :y="selectedRegion.top"
+            :width="Math.max(0, selectedRegion.right - selectedRegion.left)"
+            :height="Math.max(0, selectedRegion.bottom - selectedRegion.top)"
+            vector-effect="non-scaling-stroke"
+          />
+          <rect
+            v-if="draftRegion"
+            class="device-preview__draft-region"
+            :x="draftRegion.left"
+            :y="draftRegion.top"
+            :width="Math.max(0, draftRegion.right - draftRegion.left)"
+            :height="Math.max(0, draftRegion.bottom - draftRegion.top)"
             vector-effect="non-scaling-stroke"
           />
         </svg>

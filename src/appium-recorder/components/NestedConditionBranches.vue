@@ -32,7 +32,11 @@ type InsertAction =
   | 'assertText'
   | 'waitDisappear'
   | 'waitActivity'
-  | 'runScript';
+  | 'runScript'
+  | 'noop'
+  | 'visualChangeStart'
+  | 'visualChangeEnd'
+  | 'visualChange';
 
 const PASTE_COMMAND = '__paste_flow_nodes__';
 
@@ -87,6 +91,7 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'keyPower', label: '电源键' },
       { type: 'swipe', label: '滑动' },
       { type: 'pinch', label: '双指缩放' },
+      { type: 'noop', label: '空节点' },
     ],
   },
   {
@@ -103,6 +108,8 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'assertText', label: '断言文本' },
       { type: 'waitDisappear', label: '等待元素消失' },
       { type: 'waitActivity', label: '等待 Activity' },
+      { type: 'visualChangeStart', label: '检测画面变化开始节点' },
+      { type: 'visualChangeEnd', label: '检测画面变化结束节点' },
     ],
   },
   { title: '流程控制', actions: [{ type: 'runScript', label: '连接脚本' }] },
@@ -110,7 +117,7 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
 
 function defaultKind(step: AppiumRecordedStep): FlowKind {
   if (step.flow?.nodeKind) return step.flow.nodeKind;
-  if (step.type === 'assertExists' || step.type === 'assertText') return 'assertion';
+  if (step.type === 'assertExists' || step.type === 'assertText' || step.type === 'visualChange') return 'assertion';
   return 'action';
 }
 
@@ -125,7 +132,8 @@ function typeLabel(step: AppiumRecordedStep) {
     waitFor: '等待出现', waitDisappear: '等待消失', assertExists: '断言存在',
     assertText: '断言文本', key: '按键', waitActivity: '等待 Activity', delay: '延时',
     coordinateTap: '坐标点击', swipe: '滑动', launchApp: '启动 APP', clearAppData: '清理 APP 缓存', longPress: '长按',
-    pinch: '双指缩放', runScript: '连接脚本', screenshot: '截图',
+    pinch: '双指缩放', runScript: '连接脚本', screenshot: '截图', visualChange: '检测画面变化',
+    noop: '空节点',
   };
   return labels[step.type] || step.type;
 }
@@ -139,6 +147,14 @@ function stepMeta(step: AppiumRecordedStep) {
     const swipe = step.swipe;
     return swipe ? `[${swipe.startX},${swipe.startY}] -> [${swipe.endX},${swipe.endY}]` : '';
   }
+  if (step.type === 'visualChange') {
+    const config = step.visualChange;
+    if (!config) return '';
+    if (config.role === 'start') return `${config.pairLabel || '检测画面变化'} · 开始 · 阈值 ${config.changeRatioThreshold}%`;
+    if (config.role === 'end') return `${config.pairLabel || '检测画面变化'} · 结束`;
+    return `${config.startStepId && config.endStepId ? '起止节点截图对比' : '请选择起止节点'} · 阈值 ${config.changeRatioThreshold}%`;
+  }
+  if (step.type === 'noop') return '';
   if (defaultKind(step) === 'condition' && step.value) {
     return `${step.flow?.textMatch === 'exact' ? '精准匹配' : '模糊匹配'}：${step.value}`;
   }
@@ -197,6 +213,12 @@ function canOpenInsertMenu() {
 
 function isActionDisabled(action: InsertAction) {
   return Boolean(props.disabled && !props.allowedLockedActions?.includes(action));
+}
+
+function canCopyStep(step: AppiumRecordedStep) {
+  return step.type !== 'launchApp'
+    && step.type !== 'clearAppData'
+    && step.visualChange?.role !== 'end';
 }
 
 function insert(branch: BranchName, command: string | number | object) {
@@ -275,7 +297,7 @@ function branchSplitPath() {
               </button>
               <span class="appium-flow-node__actions" @click.stop>
                 <el-button
-                  v-if="!copyMode"
+                  v-if="!copyMode && canCopyStep(item.step)"
                   text
                   size="small"
                   :icon="CopyDocument"

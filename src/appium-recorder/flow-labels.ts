@@ -1,9 +1,10 @@
 import type { FlowKind } from './flow-graph';
 import type { AppiumRecordedStep } from './types';
+import { visualChangeMeta } from './visual-change';
 
 export function defaultFlowKind(step: AppiumRecordedStep): FlowKind {
   if (step.flow?.nodeKind) return step.flow.nodeKind;
-  if (step.type === 'assertExists' || step.type === 'assertText') return 'assertion';
+  if (step.type === 'assertExists' || step.type === 'assertText' || step.type === 'visualChange') return 'assertion';
   return 'action';
 }
 
@@ -35,6 +36,8 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     longPress: '长按',
     pinch: '双指缩放',
     runScript: '连接脚本',
+    noop: '空节点',
+    visualChange: '检测画面变化',
   };
   return labelMap[step.type] || step.type;
 }
@@ -53,7 +56,9 @@ export function flowStepMeta(step: AppiumRecordedStep) {
   if (step.type === 'launchApp') return step.value || '';
   if (step.type === 'clearAppData') return `${step.value || ''}（清除数据与缓存）`;
   if (step.type === 'runScript') return step.value ? `脚本 ${step.value}` : '';
+  if (step.type === 'noop') return '';
   if (step.type === 'screenshot') return '保存当前截图';
+  if (step.type === 'visualChange') return visualChangeMeta(step);
   if (step.type === 'swipe') {
     const swipe = step.swipe;
     return swipe ? `[${swipe.startX},${swipe.startY}] -> [${swipe.endX},${swipe.endY}]` : '';

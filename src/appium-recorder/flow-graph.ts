@@ -34,7 +34,11 @@ export type InsertAction =
   | 'assertText'
   | 'waitDisappear'
   | 'waitActivity'
-  | 'runScript';
+  | 'runScript'
+  | 'noop'
+  | 'visualChangeStart'
+  | 'visualChangeEnd'
+  | 'visualChange';
 
 export const PASTE_COMMAND = '__paste_flow_nodes__';
 export const FLOW_STEP_NODE_WIDTH = 340;
@@ -50,6 +54,7 @@ const FLOW_STANDARD_LINE_GAP = 24;
 const FLOW_BRANCH_TRUNK_GAP = 96;
 const FLOW_BRANCH_LABEL_GAP = 58;
 const FLOW_BRANCH_MIN_SPREAD = 260;
+const FLOW_BRANCH_SUBTREE_GAP = 80;
 
 export type FlowActionGroup = {
   title: string;
@@ -137,9 +142,16 @@ type Link = {
   visual?: boolean;
 };
 
+type BranchLayout = {
+  yesWidth: number;
+  noWidth: number;
+  centerGap: number;
+  totalWidth: number;
+};
+
 function defaultKind(step: AppiumRecordedStep): FlowKind {
   if (step.flow?.nodeKind) return step.flow.nodeKind;
-  if (step.type === 'assertExists' || step.type === 'assertText') return 'assertion';
+  if (step.type === 'assertExists' || step.type === 'assertText' || step.type === 'visualChange') return 'assertion';
   return 'action';
 }
 
@@ -232,6 +244,21 @@ function estimateStepNodeHeight(label: { title: string; meta: string; note?: str
   return Math.max(FLOW_STEP_NODE_HEIGHT, 34 + textHeight);
 }
 
+function withLaunchAppAction(groups: FlowActionGroup[]) {
+  if (groups.some((group) => group.actions.some((action) => action.type === 'launchApp'))) return groups;
+  const launchAction = { type: 'launchApp' as const, label: '启动 App' };
+  let added = false;
+  const nextGroups = groups.map((group) => {
+    if (group.title !== '设备操作') return group;
+    added = true;
+    return {
+      ...group,
+      actions: [...group.actions, launchAction],
+    };
+  });
+  return added ? nextGroups : [...nextGroups, { title: '设备操作', actions: [launchAction] }];
+}
+
 export function buildFlowGraph(
   steps: AppiumRecordedStep[],
   options: BuildFlowGraphOptions,
@@ -242,9 +269,63 @@ export function buildFlowGraph(
   const layoutLinks: Link[] = [];
   const seenLinks = new Set<string>();
   const allMainItems = mainItems(items);
+  const branchLayouts = new Map<string, BranchLayout>();
+  const measuringBranches = new Set<string>();
+
+  function conditionBranchLayout(condition: AppiumRecordedStep): BranchLayout {
+    const cached = branchLayouts.get(condition.id);
+    if (cached) return cached;
+    if (measuringBranches.has(condition.id)) {
+      return {
+        yesWidth: FLOW_STEP_NODE_WIDTH,
+        noWidth: FLOW_STEP_NODE_WIDTH,
+        centerGap: FLOW_BRANCH_MIN_SPREAD * 2,
+        totalWidth: FLOW_BRANCH_MIN_SPREAD * 2 + FLOW_STEP_NODE_WIDTH,
+      };
+    }
+
+    measuringBranches.add(condition.id);
+    const branchWidth = (branch: FlowBranch) => Math.max(
+      FLOW_STEP_NODE_WIDTH,
+      ...directBranchItems(items, condition.id, branch).map(({ step }) => (
+        defaultKind(step) === 'condition'
+          ? conditionBranchLayout(step).totalWidth
+          : FLOW_STEP_NODE_WIDTH
+      )),
+    );
+    const yesWidth = branchWidth('yes');
+    const noWidth = branchWidth('no');
+    const centerGap = Math.max(
+      FLOW_BRANCH_MIN_SPREAD * 2,
+      yesWidth / 2 + noWidth / 2 + FLOW_BRANCH_SUBTREE_GAP,
+    );
+    const sideExtent = Math.max(
+      centerGap / 2 + yesWidth / 2,
+      centerGap / 2 + noWidth / 2,
+    );
+    const layout = {
+      yesWidth,
+      noWidth,
+      centerGap,
+      totalWidth: Math.max(FLOW_STEP_NODE_WIDTH, sideExtent * 2),
+    };
+    measuringBranches.delete(condition.id);
+    branchLayouts.set(condition.id, layout);
+    return layout;
+  }
+
+  items
+    .filter(({ step }) => defaultKind(step) === 'condition')
+    .forEach(({ step }) => conditionBranchLayout(step));
 
   const addNode = (node: FlowGraphNode) => {
-    nodes.push(node);
+    nodes.push({
+      ...node,
+      dimensions: {
+        width: Number(node.width) || FLOW_STEP_NODE_WIDTH,
+        height: Number(node.height) || FLOW_STEP_NODE_HEIGHT,
+      },
+    } as FlowGraphNode);
   };
   const addVisibleLink = (source: string, target: string, branch?: FlowBranch) => {
     addUniqueLink(links, seenLinks, {
@@ -266,6 +347,11 @@ export function buildFlowGraph(
   ) => {
     const id = insertNodeId(afterIndex, branch, condition?.step.id);
     const isStartInsert = afterIndex < 0 && !branch;
+    const previousStep = afterIndex >= 0 ? steps[afterIndex] : undefined;
+    const canLaunchAfterClearAppData = !isStartInsert
+      && !branch
+      && previousStep?.type === 'clearAppData'
+      && !steps.some((step) => step.type === 'launchApp');
     addNode({
       id,
       type: 'flow-node',
@@ -279,7 +365,11 @@ export function buildFlowGraph(
       connectable: false,
       data: {
         kind: 'insert',
-        actionGroups: isStartInsert ? options.startActionGroups : options.mainActionGroups,
+        actionGroups: isStartInsert
+          ? options.startActionGroups
+          : canLaunchAfterClearAppData
+            ? withLaunchAppAction(options.mainActionGroups)
+            : options.mainActionGroups,
         afterIndex,
         branch,
         conditionIndex: condition?.index,
@@ -328,7 +418,9 @@ export function buildFlowGraph(
           : options.disabled,
         removeDisabled: options.removeDisabled,
         launching: options.launchingStepId === item.step.id,
-        canCopy: item.step.type !== 'launchApp' && item.step.type !== 'clearAppData',
+        canCopy: item.step.type !== 'launchApp'
+          && item.step.type !== 'clearAppData'
+          && item.step.visualChange?.role !== 'end',
         canEditInput: item.step.type === 'input' || item.step.type === 'inputIfExists',
         canExecute: item.step.type === 'launchApp' || item.step.type === 'clearAppData',
       },
@@ -527,7 +619,10 @@ export function buildFlowGraph(
         const yesNode = nodeById.get(branchLinks.find((link) => link.branch === 'yes')?.target || '');
         const noNode = nodeById.get(branchLinks.find((link) => link.branch === 'no')?.target || '');
         const splitX = centerX(splitNode);
-        const spread = FLOW_BRANCH_MIN_SPREAD;
+        const conditionId = splitNode.id.startsWith('split:')
+          ? splitNode.id.slice('split:'.length)
+          : '';
+        const spread = (branchLayouts.get(conditionId)?.centerGap || FLOW_BRANCH_MIN_SPREAD * 2) / 2;
         if (yesNode) setCenterX(yesNode, splitX - spread);
         if (noNode) setCenterX(noNode, splitX + spread);
       });

@@ -24,6 +24,27 @@ export type AppiumPageSnapshot = {
   selectedNodePath?: string;
 };
 
+export type AppiumVisualChangeRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type AppiumVisualChangeConfig = {
+  mode: 'selectedElement' | 'region';
+  region: AppiumVisualChangeRegion;
+  role?: 'start' | 'end';
+  pairId?: string;
+  pairLabel?: string;
+  startStepId?: string;
+  endStepId?: string;
+  durationMs: number;
+  intervalMs: number;
+  changeRatioThreshold: number;
+  pixelmatchThreshold: number;
+};
+
 export type AppiumNode = {
   id: string;
   label: string;
@@ -65,7 +86,9 @@ export type AppiumRecordedStep = {
     | 'assertText'
     | 'longPress'
     | 'pinch'
-    | 'runScript';
+    | 'runScript'
+    | 'noop'
+    | 'visualChange';
   label: string;
   note?: string;
   selector?: AppiumSelector;
@@ -102,6 +125,7 @@ export type AppiumRecordedStep = {
     centerY: number;
     percent: number;
   };
+  visualChange?: AppiumVisualChangeConfig;
   snapshot?: {
     text: string;
     resourceId: string;

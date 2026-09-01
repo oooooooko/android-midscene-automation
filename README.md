@@ -96,11 +96,15 @@ http://127.0.0.1:5173/
 - `Midscene模型`：执行测试脚本时使用，支持“自定义提供方”和“使用 Codex”。
 - `AI生成脚本模型`：根据测试需求生成脚本时使用。
 
-配置会保存到本地 SQLite：
+使用 `npx android-midscene-automation` 启动时，配置会保存到固定的系统用户数据目录：
 
 ```text
-.midscene-app/script-cache.sqlite
+Windows: %LOCALAPPDATA%\android-midscene-automation\.midscene-app\script-cache.sqlite
+macOS: ~/Library/Application Support/android-midscene-automation/.midscene-app/script-cache.sqlite
+Linux: ~/.local/share/android-midscene-automation/.midscene-app/script-cache.sqlite
 ```
+
+也可以通过 `ANDROID_MIDSCENE_DATA_ROOT` 指定自定义数据目录。使用 `npm run dev` 本地开发时，默认仍写入项目根目录。
 
 旧版 `config.yaml` 或 `config.json` 会在读取后迁移到数据库。当前运行时会优先读取数据库中的模型配置。
 
@@ -149,7 +153,7 @@ appium
 - Android 预览和操作：`GET /api/android-preview`、`POST /api/android-tap`、`POST /api/android-swipe`、`POST /api/android-keyevent`
 - App 预设：`GET /api/app-presets`、`POST /api/save-app-preset`、`POST /api/delete-app-preset`
 
-后端运行态文件默认都在项目根目录下：
+使用 `npx android-midscene-automation` 启动时，后端运行态文件默认都在系统用户数据目录下；使用 `npm run dev` 本地开发时，默认在项目根目录下。可以通过 `ANDROID_MIDSCENE_DATA_ROOT` 覆盖数据目录：
 
 ```text
 .midscene-app/                 # SQLite 数据库
@@ -1119,6 +1123,20 @@ output/2026-08-21_17-13-42-831-登录流程.html
 
 # 常见问题
 
+## 更新后脚本或配置不见了怎么办
+
+通常不是数据被删除，而是旧版本把数据保存到了启动命令所在目录。新版 `npx android-midscene-automation` 会默认使用固定的系统用户数据目录，并在启动时尝试从当前目录自动迁移旧数据。
+
+默认数据目录：
+
+```text
+Windows: %LOCALAPPDATA%\android-midscene-automation
+macOS: ~/Library/Application Support/android-midscene-automation
+Linux: ~/.local/share/android-midscene-automation
+```
+
+如果迁移后仍看不到旧数据，请在之前启动过的目录里查找 `.midscene-app/script-cache.sqlite`，再把 `.midscene-app` 复制到上面的固定数据目录。也可以设置 `ANDROID_MIDSCENE_DATA_ROOT` 指向原来的数据目录继续使用。
+
 ## 同一个 id 定位到错误输入框怎么办
 
 如果账号框和密码框都是 `id/tg_edit`，只按 id 回放可能输入到第一个输入框。
@@ -1210,6 +1228,16 @@ output/2026-08-21_17-13-42-831-登录流程.html
 4. 回放期间组件树自动刷新会暂停，回放完成后会自动恢复。
 
 # 项目更新记录
+
+## v0.1.27
+
+- `npx android-midscene-automation` 启动时默认使用固定的系统用户数据目录保存脚本、配置、报告和运行态文件，并在启动时尝试迁移旧版启动目录下的数据，降低升级后脚本或配置“不见了”的风险。
+- 新增脚本列表复制和重命名能力，可直接生成“原文件名 Copy”副本并修改脚本名称，便于复用已有录制流程。
+- 新增检测画面变化能力，支持框选设备预览区域或使用当前选中元素作为检测区域，通过“检测画面变化N-开始节点 / 结束节点”对同一分支内的前后截图进行差异对比。
+- 检测画面变化结果写入 Markdown 和 HTML 回放报告，展示检测区域、阈值、最大变化比例、基准帧、对比帧和差异图，HTML 图片支持点击放大查看。
+- 新增空节点，用于在顺序流程中作为无操作占位节点，配合画面变化检测或流程编排使用。
+- 优化流程图节点插入、删除、复制、缩放和判断分支布局，修复节点新增后连线延迟、缩放后节点不可见、删除检测节点后分支错乱、重复添加同一结束节点等问题。
+- 回放报告截图和截图节点改为使用 ADB 截图，避免 Appium `/screenshot` 超时后堵塞 UiAutomator2 命令队列；Appium 请求超时时也会显示更准确的超时提示。
 
 ## v0.1.26
 

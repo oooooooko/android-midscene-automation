@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue';
+import { computed, nextTick, shallowRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { Aim, CopyDocument, FullScreen } from '@element-plus/icons-vue';
 import type { AppiumRecordedStep } from '../types';
@@ -35,6 +35,7 @@ const copyMode = shallowRef(false);
 const selectedCopyIndexes = shallowRef<number[]>([]);
 const flowDialogVisible = shallowRef(false);
 const mainResetViewToken = shallowRef(0);
+const dialogResetViewToken = shallowRef(0);
 
 const insertActionGroups: FlowActionGroup[] = [
   {
@@ -56,6 +57,7 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'keyPower', label: '电源键' },
       { type: 'swipe', label: '滑动' },
       { type: 'pinch', label: '双指缩放' },
+      { type: 'noop', label: '空节点' },
       { type: 'clearAppData', label: '清理 App 缓存' },
       { type: 'launchApp', label: '启动 App' },
     ],
@@ -74,6 +76,8 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'assertText', label: '断言文本' },
       { type: 'waitDisappear', label: '等待元素消失' },
       { type: 'waitActivity', label: '等待 Activity' },
+      { type: 'visualChangeStart', label: '检测画面变化开始节点' },
+      { type: 'visualChangeEnd', label: '检测画面变化结束节点' },
     ],
   },
   {
@@ -168,6 +172,13 @@ function copySelectedNodes() {
 function resetMainFlowPosition() {
   mainResetViewToken.value += 1;
 }
+
+watch(flowDialogVisible, (visible) => {
+  if (!visible) return;
+  void nextTick(() => {
+    dialogResetViewToken.value += 1;
+  });
+});
 
 function canOpenInsertMenu() {
   return !props.disabled || Boolean(props.allowedLockedActions?.length);
@@ -308,6 +319,7 @@ function updateStep(index: number, step: AppiumRecordedStep) {
         :remove-disabled="removeDisabled"
         :launching-step-id="launchingStepId"
         :clipboard-count="clipboardCount"
+        :reset-view-token="dialogResetViewToken"
         :start-action-groups="startActionGroups"
         :main-action-groups="mainActionGroups"
         :can-open-insert-menu="canOpenInsertMenu()"

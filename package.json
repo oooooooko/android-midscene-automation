@@ -1,6 +1,6 @@
 {
   "name": "android-midscene-automation",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oooooooko/android-midscene-automation.git"
@@ -48,6 +48,8 @@
     "@vue-flow/core": "1.48.2",
     "element-plus": "2.11.1",
     "openai": "5.23.2",
+    "pixelmatch": "7.1.0",
+    "pngjs": "7.0.0",
     "tsx": "4.23.0",
     "typescript": "5.9.3",
     "vite": "7.3.6",
@@ -68,6 +70,7 @@
   "devDependencies": {
     "@playwright/test": "1.61.1",
     "@types/node": "24.13.2",
+    "@types/pngjs": "6.0.5",
     "@types/word-extractor": "1.0.6",
     "@vue/tsconfig": "0.7.0",
     "vue-tsc": "3.3.6"

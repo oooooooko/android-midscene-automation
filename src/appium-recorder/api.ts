@@ -80,6 +80,7 @@ type ReplayResult = {
   reportId?: string;
   logPath?: string;
   htmlReportPath?: string;
+  softFailureCount?: number;
 };
 
 type ReplayStreamEvent =

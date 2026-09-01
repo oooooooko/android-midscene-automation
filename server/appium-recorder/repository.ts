@@ -6,6 +6,7 @@ import {
   sqlNullableString,
   sqlString,
 } from '../storage/sqlite';
+import { normalizeLegacyNestedConditionBranches } from '../../src/appium-recorder/flow-normalize';
 
 export type AppiumRecordedStepRecord = {
   id: string;
@@ -31,7 +32,9 @@ export type AppiumRecordedStepRecord = {
     | 'assertText'
     | 'longPress'
     | 'pinch'
-    | 'runScript';
+    | 'runScript'
+    | 'noop'
+    | 'visualChange';
   label: string;
   note?: string;
   selector?: {
@@ -109,6 +112,24 @@ export type AppiumRecordedStepRecord = {
     centerX: number;
     centerY: number;
     percent: number;
+  };
+  visualChange?: {
+    mode: 'selectedElement' | 'region';
+    region: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+    role?: 'start' | 'end';
+    pairId?: string;
+    pairLabel?: string;
+    startStepId?: string;
+    endStepId?: string;
+    durationMs: number;
+    intervalMs: number;
+    changeRatioThreshold: number;
+    pixelmatchThreshold: number;
   };
   snapshot?: {
     text: string;
@@ -245,7 +266,7 @@ function normalizeScriptActivity(
 }
 
 function rowToRecord(row: AppiumRecordedScriptRow): AppiumRecordedScriptRecord {
-  const steps = parseStepList(row.flow_json);
+  const steps = normalizeLegacyNestedConditionBranches(parseStepList(row.flow_json));
   return {
     id: row.id,
     name: row.name,
@@ -307,7 +328,7 @@ export function saveAppiumRecordedScript(input: {
   const id = input.id || createId('appium_script');
   const name = input.name.trim();
   const appPackage = input.appPackage.trim();
-  const steps = input.steps || [];
+  const steps = normalizeLegacyNestedConditionBranches(input.steps || []);
   const appActivity = normalizeScriptActivity(appPackage, input.appActivity, steps);
 
   if (!name) throw new Error('脚本名称不能为空');

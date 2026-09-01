@@ -19,6 +19,32 @@ export type AppiumReplayFrame = {
   imageBase64: string;
 };
 
+export type AppiumReplayVisualCheck = {
+  nodeId: string;
+  nodeNumber: number;
+  nodeLabel: string;
+  startNodeId?: string;
+  startNodeLabel?: string;
+  endNodeId?: string;
+  endNodeLabel?: string;
+  status: 'passed' | 'failed';
+  message: string;
+  region: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  durationMs: number;
+  intervalMs: number;
+  sampleCount: number;
+  changeRatioThreshold: number;
+  maxChangeRatio: number;
+  baselineBase64: string;
+  comparisonBase64: string;
+  diffBase64: string;
+};
+
 function pad(value: number, length = 2) {
   return String(value).padStart(length, '0');
 }
@@ -80,7 +106,42 @@ function executionStatus(lines: string[]) {
   return '中断';
 }
 
-function stepSection(step: AppiumRecordedStepRecord, index: number, outputLines: string[]) {
+function visualCheckStatusLabel(status: AppiumReplayVisualCheck['status']) {
+  return status === 'passed' ? '有变化' : '无明显变化';
+}
+
+function visualCheckSection(check?: AppiumReplayVisualCheck) {
+  if (!check) return '';
+  const statusLabel = visualCheckStatusLabel(check.status);
+  const region = `${check.region.x}, ${check.region.y}, ${check.region.width} x ${check.region.height}`;
+  return [
+    '#### 画面变化检测',
+    '',
+    '| 项目 | 内容 |',
+    '| --- | --- |',
+    `| 检测结果 | **${statusLabel}** |`,
+    `| 开始节点 | ${markdownValue(check.startNodeLabel || check.startNodeId)} |`,
+    `| 结束节点 | ${markdownValue(check.endNodeLabel || check.endNodeId)} |`,
+    `| 检测区域 | ${markdownValue(region)} |`,
+    `| 对比方式 | ${check.durationMs ? markdownValue(`${check.durationMs}ms / 每 ${check.intervalMs}ms`) : '起止节点截图对比'} |`,
+    `| 采样次数 | ${check.sampleCount} |`,
+    `| 变化阈值 | ${check.changeRatioThreshold}% |`,
+    `| 最大变化比例 | ${check.maxChangeRatio.toFixed(2)}% |`,
+    `| 说明 | ${markdownValue(check.message)} |`,
+    '',
+    '| 基准帧 | 对比帧 | 差异图 |',
+    '| --- | --- | --- |',
+    `| ![基准帧](data:image/png;base64,${check.baselineBase64}) | ![对比帧](data:image/png;base64,${check.comparisonBase64}) | ![差异图](data:image/png;base64,${check.diffBase64}) |`,
+    '',
+  ].join('\n');
+}
+
+function stepSection(
+  step: AppiumRecordedStepRecord,
+  index: number,
+  outputLines: string[],
+  visualCheck?: AppiumReplayVisualCheck,
+) {
   const executionLines = stepExecutionLines(outputLines, index);
   const config = JSON.stringify(step, null, 2);
   return [
@@ -108,6 +169,7 @@ function stepSection(step: AppiumRecordedStepRecord, index: number, outputLines:
     executionLines.length ? executionLines.join('\n') : '该节点未进入执行路径，或在前序失败后未执行。',
     executionLines.length ? '```' : '',
     '',
+    visualCheckSection(visualCheck),
     '<details>',
     '<summary>完整节点配置</summary>',
     '',
@@ -127,6 +189,7 @@ function createReplayHtml(input: {
   startedAt: Date;
   completedAt: Date;
   frames: AppiumReplayFrame[];
+  visualChecks: AppiumReplayVisualCheck[];
   output: string;
 }) {
   const payload = jsonForHtml({
@@ -136,6 +199,15 @@ function createReplayHtml(input: {
       ...frame,
       imageUrl: `data:image/png;base64,${frame.imageBase64}`,
       imageBase64: undefined,
+    })),
+    visualChecks: input.visualChecks.map((check) => ({
+      ...check,
+      baselineImageUrl: `data:image/png;base64,${check.baselineBase64}`,
+      comparisonImageUrl: `data:image/png;base64,${check.comparisonBase64}`,
+      diffImageUrl: `data:image/png;base64,${check.diffBase64}`,
+      baselineBase64: undefined,
+      comparisonBase64: undefined,
+      diffBase64: undefined,
     })),
     output: input.output,
   });
@@ -199,6 +271,25 @@ function createReplayHtml(input: {
     details { margin: 4px 10px 16px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fff; }
     summary { padding: 12px 14px; cursor: pointer; font-weight: 600; }
     pre { max-height: 360px; margin: 0; overflow: auto; padding: 14px; border-top: 1px solid #e5e8ec; white-space: pre; font: 11px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .visual-check-list { display: grid; gap: 12px; padding: 0 12px 12px; border-top: 1px solid #e5e8ec; }
+    .visual-check { padding: 12px 0 0; border-top: 1px solid #eef1f5; }
+    .visual-check:first-child { border-top: 0; }
+    .visual-check h3 { margin: 0 0 8px; font-size: 13px; overflow-wrap: anywhere; }
+    .visual-check dl { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 5px 8px; margin: 0 0 10px; font-size: 12px; }
+    .visual-check dt { color: #8a9099; }
+    .visual-check dd { margin: 0; overflow-wrap: anywhere; }
+    .visual-check .passed { color: #237804; font-weight: 700; }
+    .visual-check .failed { color: #cf1322; font-weight: 700; }
+    .visual-images { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .visual-image span { display: block; margin-bottom: 4px; color: #646a73; font-size: 11px; text-align: center; }
+    .visual-image img { display: block; width: 100%; max-height: 120px; object-fit: contain; border: 1px solid #dfe3e8; border-radius: 3px; background: #101827; cursor: zoom-in; }
+    .visual-image img:hover { border-color: #1677ff; }
+    .image-preview { position: fixed; inset: 0; z-index: 20; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px; padding: 20px; background: rgba(16, 24, 39, .88); }
+    .image-preview[hidden] { display: none; }
+    .image-preview__bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #fff; }
+    .image-preview__title { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .image-preview__close { flex: 0 0 auto; border-color: rgba(255, 255, 255, .28); color: #fff; background: rgba(255, 255, 255, .1); }
+    .image-preview__image { place-self: center; max-width: 100%; max-height: calc(100vh - 88px); object-fit: contain; border-radius: 4px; background: #101827; box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
     @media (max-width: 860px) {
       body { overflow: auto; }
       main { grid-template-columns: 1fr; height: auto; }
@@ -237,6 +328,7 @@ function createReplayHtml(input: {
         </dl>
       </section>
       <nav id="step-list" class="step-list" aria-label="执行步骤"></nav>
+      <details><summary>视觉变化检测</summary><div id="visual-checks" class="visual-check-list"></div></details>
       <details><summary>完整回放日志</summary><pre id="log"></pre></details>
     </aside>
     <section class="workspace">
@@ -259,16 +351,37 @@ function createReplayHtml(input: {
       </section>
     </section>
   </main>
+  <div id="image-preview" class="image-preview" hidden>
+    <div class="image-preview__bar">
+      <span id="image-preview-title" class="image-preview__title"></span>
+      <button id="image-preview-close" class="image-preview__close" type="button">关闭</button>
+    </div>
+    <img id="image-preview-image" class="image-preview__image" alt="" />
+  </div>
   <script id="replay-data" type="application/json">${payload}</script>
   <script>
     const data = JSON.parse(document.querySelector('#replay-data').textContent || '{}');
+    const visualChecks = Array.isArray(data.visualChecks) ? data.visualChecks : [];
     const reportStartedAt = Date.parse(data.startedAt) || 0;
     const frames = (Array.isArray(data.frames) ? data.frames : []).map((frame) => ({
       ...frame,
       offsetMs: Math.max(0, (Date.parse(frame.capturedAt) || reportStartedAt) - reportStartedAt),
     }));
     const durationMs = Math.max(1000, Number(data.durationMs) || 0, frames.at(-1)?.offsetMs || 0);
-    const elements = Object.fromEntries(['screen','empty','previous','play','next','seek','clock','caption','title','script','node','phase','frame-status','note','selector','time','step-list','timeline-track','ruler','playhead','log'].map((id) => [id, document.querySelector('#' + id)]));
+    const elements = Object.fromEntries(['screen','empty','previous','play','next','seek','clock','caption','title','script','node','phase','frame-status','note','selector','time','step-list','timeline-track','ruler','playhead','visual-checks','log'].map((id) => [id, document.querySelector('#' + id)]));
+    const imagePreview = document.querySelector('#image-preview');
+    const imagePreviewImage = document.querySelector('#image-preview-image');
+    const imagePreviewTitle = document.querySelector('#image-preview-title');
+    const closeImagePreview = () => {
+      imagePreview.hidden = true;
+      imagePreviewImage.removeAttribute('src');
+    };
+    const openImagePreview = (url, title) => {
+      imagePreviewImage.src = url;
+      imagePreviewImage.alt = title;
+      imagePreviewTitle.textContent = title;
+      imagePreview.hidden = false;
+    };
     let currentFrame = frames.length ? 0 : -1;
     let currentMs = 0;
     let animationFrame = 0;
@@ -376,6 +489,62 @@ function createReplayHtml(input: {
       thumbnail.addEventListener('click', (event) => { event.stopPropagation(); pause(); seekTo(frame.offsetMs); });
       elements['timeline-track'].append(thumbnail);
     });
+    if (!visualChecks.length) {
+      elements['visual-checks'].textContent = '本次没有视觉变化检测节点';
+    }
+    visualChecks.forEach((check) => {
+      const article = document.createElement('article');
+      article.className = 'visual-check';
+      const title = document.createElement('h3');
+      title.textContent = check.nodeNumber + '. ' + check.nodeLabel;
+      const detail = document.createElement('dl');
+      [
+        ['结果', visualCheckStatusLabel(check.status), check.status],
+        ['开始节点', check.startNodeLabel || check.startNodeId || '-'],
+        ['结束节点', check.endNodeLabel || check.endNodeId || '-'],
+        ['区域', check.region.x + ', ' + check.region.y + ', ' + check.region.width + ' x ' + check.region.height],
+        ['对比', check.durationMs ? check.sampleCount + ' 次 / 每 ' + check.intervalMs + 'ms' : '起止节点截图对比'],
+        ['阈值', check.changeRatioThreshold + '%'],
+        ['最大变化', Number(check.maxChangeRatio || 0).toFixed(2) + '%'],
+        ['说明', check.message || '-'],
+      ].forEach(([label, value, className]) => {
+        const dt = document.createElement('dt');
+        const dd = document.createElement('dd');
+        dt.textContent = label;
+        dd.textContent = value;
+        if (className) dd.className = className;
+        detail.append(dt, dd);
+      });
+      const images = document.createElement('div');
+      images.className = 'visual-images';
+      [
+        ['基准帧', check.baselineImageUrl],
+        ['对比帧', check.comparisonImageUrl],
+        ['差异图', check.diffImageUrl],
+      ].forEach(([label, url]) => {
+        const figure = document.createElement('div');
+        figure.className = 'visual-image';
+        const caption = document.createElement('span');
+        caption.textContent = label;
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = label;
+        img.title = '点击放大 ' + label;
+        img.tabIndex = 0;
+        img.addEventListener('click', () => openImagePreview(url, check.nodeNumber + '. ' + check.nodeLabel + ' · ' + label));
+        img.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            openImagePreview(url, check.nodeNumber + '. ' + check.nodeLabel + ' · ' + label);
+          }
+        });
+        figure.append(caption, img);
+        images.append(figure);
+      });
+      article.append(title, detail, images);
+      elements['visual-checks'].append(article);
+    });
     elements.previous.addEventListener('click', () => { pause(); seekTo(frames[Math.max(0, currentFrame - 1)]?.offsetMs || 0); });
     elements.next.addEventListener('click', () => { pause(); seekTo(frames[Math.min(frames.length - 1, currentFrame + 1)]?.offsetMs || durationMs); });
     elements.play.addEventListener('click', () => {
@@ -393,10 +562,18 @@ function createReplayHtml(input: {
       seekTo((event.clientX - bounds.left) / bounds.width * durationMs);
     });
     document.addEventListener('keydown', (event) => {
+      if (!imagePreview.hidden) {
+        if (event.key === 'Escape') closeImagePreview();
+        return;
+      }
       if (event.key === 'ArrowLeft') elements.previous.click();
       if (event.key === 'ArrowRight') elements.next.click();
       if (event.key === ' ') { event.preventDefault(); elements.play.click(); }
     });
+    imagePreview.addEventListener('click', (event) => {
+      if (event.target === imagePreview) closeImagePreview();
+    });
+    document.querySelector('#image-preview-close').addEventListener('click', closeImagePreview);
     elements.log.textContent = data.output || '';
     seekTo(frames[0]?.offsetMs || 0, false);
   </script>
@@ -413,6 +590,7 @@ export async function createAppiumReplayReport(input: {
   startedAt: Date;
   completedAt: Date;
   frames?: AppiumReplayFrame[];
+  visualChecks?: AppiumReplayVisualCheck[];
 }) {
   const configuredOutputPath = loadConfig().runtime.reportOutputPath.trim();
   const outputDir = appDataPath(configuredOutputPath || 'output');
@@ -433,6 +611,9 @@ export async function createAppiumReplayReport(input: {
   const outputLines = persistedOutput.split(/\r?\n/);
   const durationMs = input.completedAt.getTime() - input.startedAt.getTime();
   const resultText = input.stopped ? '已终止' : input.success ? '成功' : '失败';
+  const visualChecks = input.visualChecks || [];
+  const visualCheckByStepId = new Map(visualChecks.map((check) => [check.nodeId, check]));
+  const visualFailureCount = visualChecks.filter((check) => check.status === 'failed').length;
   const html = createReplayHtml({
     script: input.script,
     deviceId: input.deviceId,
@@ -441,6 +622,7 @@ export async function createAppiumReplayReport(input: {
     startedAt: input.startedAt,
     completedAt: input.completedAt,
     frames: input.frames || [],
+    visualChecks,
     output: persistedOutput,
   });
   const markdown = [
@@ -459,11 +641,12 @@ export async function createAppiumReplayReport(input: {
     `| 执行结果 | **${resultText}** |`,
     `| 节点数量 | ${input.script.steps.length} |`,
     `| 截图帧数 | ${(input.frames || []).length} |`,
+    `| 视觉检测未达预期 | ${visualFailureCount} |`,
     `| 截图回放 | ${markdownValue(htmlReportPath)} |`,
     '',
     '## 节点明细',
     '',
-    ...input.script.steps.map((step, index) => stepSection(step, index, outputLines)),
+    ...input.script.steps.map((step, index) => stepSection(step, index, outputLines, visualCheckByStepId.get(step.id))),
     '## 完整回放日志',
     '',
     '```text',

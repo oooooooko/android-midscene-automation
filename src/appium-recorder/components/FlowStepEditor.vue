@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { AppiumRecordedStep, AppiumSelector } from '../types';
+import { normalizeVisualChangeConfig } from '../visual-change';
 
 type FlowKind = 'action' | 'condition' | 'assertion';
 type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
+type VisualChangeConfig = NonNullable<AppiumRecordedStep['visualChange']>;
 
 const props = defineProps<{
   step: AppiumRecordedStep;
@@ -14,9 +17,21 @@ const emit = defineEmits<{
   update: [payload: { index: number; step: AppiumRecordedStep }];
 }>();
 
+const visualChangeConfig = computed(() => normalizeVisualChangeConfig(props.step.visualChange));
+const visualChangeRoleLabel = computed(() => (
+  visualChangeConfig.value.role === 'start'
+    ? `${visualChangeConfig.value.pairLabel || '检测画面变化'} · 开始节点`
+    : visualChangeConfig.value.role === 'end'
+      ? `${visualChangeConfig.value.pairLabel || '检测画面变化'} · 结束节点`
+      : '起止节点截图对比'
+));
+const visualChangeConfigDisabled = computed(() => Boolean(
+  props.disabled || visualChangeConfig.value.role === 'end',
+));
+
 function defaultKind(): FlowKind {
   if (props.step.flow?.nodeKind) return props.step.flow.nodeKind;
-  if (props.step.type === 'assertExists' || props.step.type === 'assertText') return 'assertion';
+  if (props.step.type === 'assertExists' || props.step.type === 'assertText' || props.step.type === 'visualChange') return 'assertion';
   return 'action';
 }
 
@@ -51,6 +66,25 @@ function patchSwipe(patch: Partial<SwipeGesture>) {
       duration: 500,
       ...(props.step.swipe || {}),
       ...patch,
+    },
+  });
+}
+
+function patchVisualChange(patch: Partial<VisualChangeConfig>) {
+  patchStep({
+    visualChange: normalizeVisualChangeConfig({
+      ...normalizeVisualChangeConfig(props.step.visualChange),
+      ...patch,
+    }),
+  });
+}
+
+function patchVisualRegion(key: keyof VisualChangeConfig['region'], value: unknown) {
+  const current = normalizeVisualChangeConfig(props.step.visualChange);
+  patchVisualChange({
+    region: {
+      ...current.region,
+      [key]: Number(value),
     },
   });
 }
@@ -121,6 +155,91 @@ function patchTimeout(value: unknown) {
           @update:model-value="patchStep({ value: String($event) })"
         />
       </el-form-item>
+      <template v-if="step.type === 'visualChange'">
+        <div class="appium-flow-editor__grid">
+          <el-form-item label="检测标记">
+            <el-input :model-value="visualChangeRoleLabel" disabled />
+          </el-form-item>
+          <el-form-item label="检测目标">
+            <el-select
+              :model-value="visualChangeConfig.mode"
+              :disabled="visualChangeConfigDisabled"
+              @update:model-value="patchVisualChange({ mode: $event as VisualChangeConfig['mode'] })"
+            >
+              <el-option label="当前选中元素" value="selectedElement" />
+              <el-option label="手动区域" value="region" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="变化阈值 %">
+            <el-input-number
+              :model-value="visualChangeConfig.changeRatioThreshold"
+              :disabled="visualChangeConfigDisabled"
+              :min="0.01"
+              :max="100"
+              :step="0.1"
+              controls-position="right"
+              @update:model-value="patchVisualChange({ changeRatioThreshold: Number($event) })"
+            />
+          </el-form-item>
+        </div>
+        <div class="appium-flow-editor__grid appium-flow-editor__grid--visual">
+          <el-form-item label="X">
+            <el-input-number
+              :model-value="visualChangeConfig.region.x"
+              :disabled="visualChangeConfigDisabled"
+              :min="0"
+              :max="99999"
+              :precision="0"
+              controls-position="right"
+              @update:model-value="patchVisualRegion('x', $event)"
+            />
+          </el-form-item>
+          <el-form-item label="Y">
+            <el-input-number
+              :model-value="visualChangeConfig.region.y"
+              :disabled="visualChangeConfigDisabled"
+              :min="0"
+              :max="99999"
+              :precision="0"
+              controls-position="right"
+              @update:model-value="patchVisualRegion('y', $event)"
+            />
+          </el-form-item>
+          <el-form-item label="宽度">
+            <el-input-number
+              :model-value="visualChangeConfig.region.width"
+              :disabled="visualChangeConfigDisabled"
+              :min="1"
+              :max="99999"
+              :precision="0"
+              controls-position="right"
+              @update:model-value="patchVisualRegion('width', $event)"
+            />
+          </el-form-item>
+          <el-form-item label="高度">
+            <el-input-number
+              :model-value="visualChangeConfig.region.height"
+              :disabled="visualChangeConfigDisabled"
+              :min="1"
+              :max="99999"
+              :precision="0"
+              controls-position="right"
+              @update:model-value="patchVisualRegion('height', $event)"
+            />
+          </el-form-item>
+          <el-form-item label="像素容差">
+            <el-input-number
+              :model-value="visualChangeConfig.pixelmatchThreshold"
+              :disabled="visualChangeConfigDisabled"
+              :min="0"
+              :max="1"
+              :step="0.01"
+              controls-position="right"
+              @update:model-value="patchVisualChange({ pixelmatchThreshold: Number($event) })"
+            />
+          </el-form-item>
+        </div>
+      </template>
       <div v-if="step.type === 'swipe'" class="appium-flow-editor__grid appium-flow-editor__grid--swipe">
         <el-form-item label="起点 X">
           <el-input-number
@@ -222,7 +341,7 @@ function patchTimeout(value: unknown) {
           />
         </el-form-item>
       </div>
-      <el-form-item label="可选步骤">
+      <el-form-item v-if="step.type !== 'visualChange'" label="可选步骤">
         <el-switch
           :model-value="Boolean(step.optional)"
           :disabled="disabled"

@@ -118,7 +118,19 @@ function handlePaneReady() {
   void nextTick(() => scheduleResetView());
 }
 
-watch(() => props.steps.map((step) => step.id).join('|'), () => {
+function flowStructureKey() {
+  return props.steps.map((step) => [
+    step.id,
+    step.flow?.nodeKind || '',
+    step.flow?.parentConditionId || '',
+    step.flow?.parentBranch || '',
+    step.flow?.yesTargetId || '',
+    step.flow?.noTargetId || '',
+    step.flow?.successTargetId || '',
+  ].join(':')).join('|');
+}
+
+watch(flowStructureKey, () => {
   measuredNodeHeights.value = {};
   void nextTick(scheduleNodeInternalsUpdate);
 });
@@ -168,6 +180,7 @@ function handleInsert(payload: {
       :nodes-draggable="false"
       :nodes-connectable="false"
       :elements-selectable="false"
+      :only-render-visible-elements="false"
       :pan-on-drag="true"
       :zoom-on-scroll="true"
       zoom-activation-key-code="Control"

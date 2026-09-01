@@ -58,6 +58,33 @@ function wireContinuation(step: AppiumRecordedStep, targetId: string) {
   if (!step.flow.noTargetId) setFlowTarget(step, 'noTargetId', targetId);
 }
 
+function isVisualChangeStart(step: AppiumRecordedStep) {
+  return step.visualChange?.role === 'start';
+}
+
+function isVisualChangeEnd(step: AppiumRecordedStep) {
+  return step.visualChange?.role === 'end';
+}
+
+function visualChangePairKeys(step: AppiumRecordedStep) {
+  const config = step.visualChange;
+  if (!config) return [];
+  return [
+    config.pairId ? `pair:${config.pairId}` : '',
+    step.id ? `start:${step.id}` : '',
+    config.startStepId ? `start:${config.startStepId}` : '',
+    config.pairLabel ? `label:${config.pairLabel}` : '',
+  ].filter(Boolean);
+}
+
+function hasCopiedVisualChangeStartForEnd(copiedSteps: AppiumRecordedStep[], endStep: AppiumRecordedStep) {
+  const endKeys = new Set(visualChangePairKeys(endStep));
+  return copiedSteps.some((step) => (
+    isVisualChangeStart(step)
+      && visualChangePairKeys(step).some((key) => endKeys.has(key))
+  ));
+}
+
 function branchConditionForTarget(
   steps: AppiumRecordedStep[],
   target: PasteTarget,
@@ -65,10 +92,10 @@ function branchConditionForTarget(
   if (!target.branch) return undefined;
   const anchor = steps[target.afterIndex];
   if (!anchor) return undefined;
+  if (anchor.flow?.nodeKind === 'condition') return anchor;
   if (anchor.flow?.parentConditionId && anchor.flow.parentBranch === target.branch) {
     return steps.find((step) => step.id === anchor.flow?.parentConditionId);
   }
-  if (anchor.flow?.nodeKind === 'condition') return anchor;
   return undefined;
 }
 
@@ -123,6 +150,9 @@ export function createFlowClipboard(steps: AppiumRecordedStep[], indexes: number
   if (copiedSteps.some((step) => step.type === 'launchApp')) {
     throw new Error('启动 APP 节点不能复制');
   }
+  if (copiedSteps.some((step) => isVisualChangeEnd(step) && !hasCopiedVisualChangeStartForEnd(copiedSteps, step))) {
+    throw new Error('检测画面变化结束节点不能单独复制');
+  }
   return { steps: clone(copiedSteps), rootIds };
 }
 
@@ -141,6 +171,11 @@ export function pasteFlowClipboard(
     throw new Error('目标分支不存在');
   }
 
+  const pairMap = new Map<string, string>();
+  clipboard.steps.filter(isVisualChangeStart).forEach((step) => {
+    const pairId = createId();
+    visualChangePairKeys(step).forEach((key) => pairMap.set(key, pairId));
+  });
   const copies = clipboard.steps.map((source) => {
     const step = clone(source);
     step.id = idMap.get(source.id) || createId();
@@ -168,6 +203,17 @@ export function pasteFlowClipboard(
       }
     }
     step.flow = Object.keys(flow).length ? flow : undefined;
+    if (step.visualChange) {
+      const nextPairId = visualChangePairKeys(source)
+        .map((key) => pairMap.get(key))
+        .find(Boolean);
+      step.visualChange = {
+        ...step.visualChange,
+        pairId: nextPairId || step.visualChange.pairId,
+        startStepId: idMap.get(step.visualChange.startStepId || '') || step.visualChange.startStepId,
+        endStepId: idMap.get(step.visualChange.endStepId || '') || step.visualChange.endStepId,
+      };
+    }
     return step;
   });
 

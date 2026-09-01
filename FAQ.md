@@ -1,5 +1,19 @@
 # 常见问题
 
+## 更新后脚本或配置不见了怎么办
+
+通常不是数据被删除，而是旧版本把数据保存到了启动命令所在目录。新版 `npx android-midscene-automation` 会默认使用固定的系统用户数据目录，并在启动时尝试从当前目录自动迁移旧数据。
+
+默认数据目录：
+
+```text
+Windows: %LOCALAPPDATA%\android-midscene-automation
+macOS: ~/Library/Application Support/android-midscene-automation
+Linux: ~/.local/share/android-midscene-automation
+```
+
+如果迁移后仍看不到旧数据，请在之前启动过的目录里查找 `.midscene-app/script-cache.sqlite`，再把 `.midscene-app` 复制到上面的固定数据目录。也可以设置 `ANDROID_MIDSCENE_DATA_ROOT` 指向原来的数据目录继续使用。
+
 ## 同一个 id 定位到错误输入框怎么办
 
 如果账号框和密码框都是 `id/tg_edit`，只按 id 回放可能输入到第一个输入框。
