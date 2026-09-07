@@ -5,13 +5,16 @@ import { Aim, CopyDocument, FullScreen } from '@element-plus/icons-vue';
 import type { AppiumRecordedStep } from '../types';
 import { createFlowClipboard } from '../flow-copy';
 import FlowCanvas from './FlowCanvas.vue';
+import MergeBranchesDialog from './MergeBranchesDialog.vue';
 import { labelFlowStep } from '../flow-labels';
 import type { FlowActionGroup, FlowBranch, InsertAction } from '../flow-graph';
 
 const props = defineProps<{
+  aiRecognitionModelConfigured?: boolean;
   steps: AppiumRecordedStep[];
   disabled?: boolean;
   removeDisabled?: boolean;
+  mergeDisabled?: boolean;
   allowedLockedActions?: InsertAction[];
   launchingStepId?: string;
   clipboardCount?: number;
@@ -28,9 +31,11 @@ const emit = defineEmits<{
   previewLinkedScript: [index: number];
   executeStep: [index: number];
   updateStep: [index: number, step: AppiumRecordedStep];
+  replaceSteps: [steps: AppiumRecordedStep[]];
 }>();
 
 const expandedStepIndex = shallowRef<number | null>(null);
+const mergeConditionId = shallowRef('');
 const copyMode = shallowRef(false);
 const selectedCopyIndexes = shallowRef<number[]>([]);
 const flowDialogVisible = shallowRef(false);
@@ -46,6 +51,8 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'clearInput', label: '清空输入' },
       { type: 'coordinateTap', label: '点击坐标' },
       { type: 'longPress', label: '长按' },
+      { type: 'checkedState', label: '判断勾选' },
+      { type: 'textClick', label: '文字点击' },
     ],
   },
   {
@@ -57,9 +64,9 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'keyPower', label: '电源键' },
       { type: 'swipe', label: '滑动' },
       { type: 'pinch', label: '双指缩放' },
-      { type: 'noop', label: '空节点' },
       { type: 'clearAppData', label: '清理 App 缓存' },
       { type: 'launchApp', label: '启动 App' },
+      { type: 'openGallery', label: '启动相册' },
     ],
   },
   {
@@ -67,6 +74,7 @@ const insertActionGroups: FlowActionGroup[] = [
     actions: [
       { type: 'delay', label: '添加延时' },
       { type: 'popupCondition', label: '判断存在' },
+      { type: 'aiRecognition', label: 'AI 识别' },
       { type: 'tapIfExists', label: '存在则点击' },
       { type: 'inputIfExists', label: '存在则输入' },
       { type: 'clearIfExists', label: '存在则清空' },
@@ -82,7 +90,12 @@ const insertActionGroups: FlowActionGroup[] = [
   },
   {
     title: '流程控制',
-    actions: [{ type: 'runScript', label: '连接脚本' }],
+    actions: [
+      { type: 'noop', label: '空节点' },
+      { type: 'endFlow', label: '终止流程' },
+      { type: 'log', label: '输出日志' },
+      { type: 'runScript', label: '连接脚本' },
+    ],
   },
 ];
 
@@ -231,7 +244,6 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       <el-button
         size="small"
         :icon="Aim"
-        :disabled="!steps.length"
         @click="resetMainFlowPosition"
       >
         还原位置
@@ -239,7 +251,6 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       <el-button
         size="small"
         :icon="FullScreen"
-        :disabled="!steps.length"
         @click="flowDialogVisible = true"
       >
         放大
@@ -254,7 +265,9 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       :selected-copy-indexes="selectedCopyIndexes"
       :disabled="disabled"
       :remove-disabled="removeDisabled"
+      :merge-disabled="mergeDisabled"
       :launching-step-id="launchingStepId"
+      :ai-recognition-model-configured="aiRecognitionModelConfigured"
       :clipboard-count="clipboardCount"
       :reset-view-token="mainResetViewToken"
       :start-action-groups="startActionGroups"
@@ -275,6 +288,7 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       @preview-linked-script="(index) => emit('previewLinkedScript', index)"
       @execute-step="(index) => emit('executeStep', index)"
       @update-step="(index, step) => updateStep(index, step)"
+      @merge="mergeConditionId = steps[$event]?.id || ''"
     />
 
     <el-dialog
@@ -317,7 +331,9 @@ function updateStep(index: number, step: AppiumRecordedStep) {
         :selected-copy-indexes="selectedCopyIndexes"
         :disabled="disabled"
         :remove-disabled="removeDisabled"
+        :merge-disabled="mergeDisabled"
         :launching-step-id="launchingStepId"
+        :ai-recognition-model-configured="aiRecognitionModelConfigured"
         :clipboard-count="clipboardCount"
         :reset-view-token="dialogResetViewToken"
         :start-action-groups="startActionGroups"
@@ -338,7 +354,10 @@ function updateStep(index: number, step: AppiumRecordedStep) {
         @preview-linked-script="(index) => emit('previewLinkedScript', index)"
         @execute-step="(index) => emit('executeStep', index)"
         @update-step="(index, step) => updateStep(index, step)"
+        @merge="mergeConditionId = steps[$event]?.id || ''"
       />
     </el-dialog>
+    <MergeBranchesDialog :steps="steps" :condition-id="mergeConditionId" :disabled="mergeDisabled"
+      @close="mergeConditionId = ''" @confirm="expandedStepIndex = null; emit('replaceSteps', $event)" />
   </div>
 </template>

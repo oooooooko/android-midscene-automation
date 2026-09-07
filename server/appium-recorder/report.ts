@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { PNG } from 'pngjs';
 import { appDataPath } from '../paths';
 import { loadConfig } from '../config';
 import { saveAppiumReplayReport, type AppiumRecordedScriptRecord, type AppiumRecordedStepRecord } from './repository';
+import { flowBranchLabel } from '../../src/appium-recorder/flow-labels';
 
 export type AppiumReplayFrame = {
   sequence: number;
@@ -11,6 +13,7 @@ export type AppiumReplayFrame = {
   nodeNumber: number;
   nodeLabel: string;
   nodeType: string;
+  logContent?: string;
   note: string;
   selector: string;
   phase: 'before' | 'after' | 'error' | 'stopped';
@@ -44,6 +47,9 @@ export type AppiumReplayVisualCheck = {
   comparisonBase64: string;
   diffBase64: string;
 };
+
+const HTML_REPORT_IMAGE_MAX_WIDTH = 540;
+const HTML_REPORT_IMAGE_MAX_HEIGHT = 1200;
 
 function pad(value: number, length = 2) {
   return String(value).padStart(length, '0');
@@ -81,6 +87,54 @@ function jsonForHtml(value: unknown) {
     .replace(/&/g, '\\u0026');
 }
 
+function compressHtmlPngBase64(base64: string) {
+  if (!base64) return base64;
+
+  try {
+    const source = PNG.sync.read(Buffer.from(base64, 'base64'));
+    const scale = Math.min(
+      1,
+      HTML_REPORT_IMAGE_MAX_WIDTH / source.width,
+      HTML_REPORT_IMAGE_MAX_HEIGHT / source.height,
+    );
+
+    if (scale >= 1) return base64;
+
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
+    const target = new PNG({ width, height });
+    const scaleX = source.width / width;
+    const scaleY = source.height / height;
+
+    // HTML 回放只用于预览，降采样能明显降低报告体积，不影响实际检测结果。
+    for (let y = 0; y < height; y += 1) {
+      const sourceY = Math.min(source.height - 1, Math.floor(y * scaleY));
+      for (let x = 0; x < width; x += 1) {
+        const sourceX = Math.min(source.width - 1, Math.floor(x * scaleX));
+        const sourceIndex = (sourceY * source.width + sourceX) << 2;
+        const targetIndex = (y * width + x) << 2;
+        target.data[targetIndex] = source.data[sourceIndex];
+        target.data[targetIndex + 1] = source.data[sourceIndex + 1];
+        target.data[targetIndex + 2] = source.data[sourceIndex + 2];
+        target.data[targetIndex + 3] = source.data[sourceIndex + 3];
+      }
+    }
+
+    return PNG.sync.write(target).toString('base64');
+  } catch {
+    return base64;
+  }
+}
+
+function htmlImageUrl(base64: string, cache: Map<string, string>) {
+  const cached = cache.get(base64);
+  if (cached) return cached;
+
+  const imageUrl = `data:image/png;base64,${compressHtmlPngBase64(base64)}`;
+  cache.set(base64, imageUrl);
+  return imageUrl;
+}
+
 function markdownValue(value: unknown) {
   if (value === undefined || value === null || value === '') return '-';
   return String(value).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
@@ -99,10 +153,12 @@ function stepExecutionLines(outputLines: string[], index: number) {
 
 function executionStatus(lines: string[]) {
   if (!lines.length) return '未执行';
-  if (lines.some((line) => line.includes('失败：') || line.includes('失败分支：'))) return '失败';
-  if (lines.some((line) => line.includes('跳过：'))) return '跳过';
-  if (lines.some((line) => line.includes('判断：'))) return '判断完成';
-  if (lines.some((line) => line.includes('完成：'))) return '成功';
+  // 只识别执行器的状态前缀，用户日志中的“失败”等文字不是执行结果。
+  const messages = lines.map((line) => line.replace(/^\[(?:节点|步骤) \d+\] /, ''));
+  if (messages.some((line) => line.startsWith('失败：') || line.startsWith('失败分支：'))) return '失败';
+  if (messages.some((line) => line.startsWith('跳过：'))) return '跳过';
+  if (messages.some((line) => line.startsWith('判断：'))) return '判断完成';
+  if (messages.some((line) => line.startsWith('完成：'))) return '成功';
   return '中断';
 }
 
@@ -157,9 +213,8 @@ function stepSection(
     `| 上下文 Selector | ${markdownValue(selectorText(step.contextSelector))} |`,
     `| 输入/目标值 | ${markdownValue(step.value)} |`,
     `| 超时时间 | ${markdownValue(step.timeoutMs === undefined ? '-' : `${step.timeoutMs}ms`)} |`,
-    `| 可选步骤 | ${step.optional ? '是' : '否'} |`,
-    `| 是分支 | ${markdownValue(step.flow?.yesTargetId)} |`,
-    `| 否分支 | ${markdownValue(step.flow?.noTargetId)} |`,
+    `| ${flowBranchLabel(step, 'yes')} 分支 | ${markdownValue(step.flow?.yesTargetId)} |`,
+    `| ${flowBranchLabel(step, 'no')} 分支 | ${markdownValue(step.flow?.noTargetId)} |`,
     `| 成功后续节点 | ${markdownValue(step.flow?.successTargetId)} |`,
     `| 执行状态 | **${executionStatus(executionLines)}** |`,
     '',
@@ -192,19 +247,20 @@ function createReplayHtml(input: {
   visualChecks: AppiumReplayVisualCheck[];
   output: string;
 }) {
+  const imageCache = new Map<string, string>();
   const payload = jsonForHtml({
     startedAt: input.startedAt.toISOString(),
     durationMs: input.durationMs,
     frames: input.frames.map((frame) => ({
       ...frame,
-      imageUrl: `data:image/png;base64,${frame.imageBase64}`,
+      imageUrl: htmlImageUrl(frame.imageBase64, imageCache),
       imageBase64: undefined,
     })),
     visualChecks: input.visualChecks.map((check) => ({
       ...check,
-      baselineImageUrl: `data:image/png;base64,${check.baselineBase64}`,
-      comparisonImageUrl: `data:image/png;base64,${check.comparisonBase64}`,
-      diffImageUrl: `data:image/png;base64,${check.diffBase64}`,
+      baselineImageUrl: htmlImageUrl(check.baselineBase64, imageCache),
+      comparisonImageUrl: htmlImageUrl(check.comparisonBase64, imageCache),
+      diffImageUrl: htmlImageUrl(check.diffBase64, imageCache),
       baselineBase64: undefined,
       comparisonBase64: undefined,
       diffBase64: undefined,
@@ -246,6 +302,8 @@ function createReplayHtml(input: {
     .frame-title, .frame-subtitle { display: block; overflow-wrap: anywhere; }
     .frame-title { font-size: 13px; font-weight: 600; }
     .frame-subtitle, .frame-time { margin-top: 3px; color: #7a818b; font-size: 11px; }
+    .frame-log, #node-log { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .frame-log { display: block; margin-top: 6px; color: #4b515a; font-size: 12px; line-height: 1.5; }
     .workspace { display: grid; grid-template-rows: 178px minmax(0, 1fr); min-width: 0; min-height: 0; }
     .timeline-panel { min-width: 0; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid #dfe3e8; background: #fff; }
     .timeline-track { position: relative; height: 178px; min-width: 100%; cursor: pointer; user-select: none; }
@@ -322,6 +380,7 @@ function createReplayHtml(input: {
           <dt>节点</dt><dd id="node">-</dd>
           <dt>阶段</dt><dd id="phase">-</dd>
           <dt>结果</dt><dd id="frame-status">-</dd>
+          <dt id="node-log-label" hidden>日志内容</dt><dd id="node-log" hidden></dd>
           <dt>备注</dt><dd id="note">-</dd>
           <dt>定位</dt><dd id="selector">-</dd>
           <dt>时间</dt><dd id="time">-</dd>
@@ -368,6 +427,24 @@ function createReplayHtml(input: {
       offsetMs: Math.max(0, (Date.parse(frame.capturedAt) || reportStartedAt) - reportStartedAt),
     }));
     const durationMs = Math.max(1000, Number(data.durationMs) || 0, frames.at(-1)?.offsetMs || 0);
+    // 按一次执行配对，而不是按节点 ID 全局去重；连接脚本和重复执行仍保留独立步骤。
+    const steps = [];
+    const frameSteps = [];
+    const pendingSteps = new Map();
+    frames.forEach((frame, index) => {
+      const key = JSON.stringify([frame.scriptName, frame.nodeId, frame.nodeNumber]);
+      const pending = pendingSteps.get(key) || [];
+      let stepIndex = frame.phase === 'before' ? undefined : pending.pop();
+      if (stepIndex === undefined) {
+        stepIndex = steps.length;
+        steps.push({ firstIndex: index, lastIndex: index });
+      } else {
+        steps[stepIndex].lastIndex = index;
+      }
+      if (frame.phase === 'before') pending.push(stepIndex);
+      pendingSteps.set(key, pending);
+      frameSteps[index] = stepIndex;
+    });
     const elements = Object.fromEntries(['screen','empty','previous','play','next','seek','clock','caption','title','script','node','phase','frame-status','note','selector','time','step-list','timeline-track','ruler','playhead','visual-checks','log'].map((id) => [id, document.querySelector('#' + id)]));
     const imagePreview = document.querySelector('#image-preview');
     const imagePreviewImage = document.querySelector('#image-preview-image');
@@ -387,6 +464,7 @@ function createReplayHtml(input: {
     let animationFrame = 0;
     let playbackStartedAt = 0;
     const phaseLabels = { before: '执行前', after: '执行后', error: '失败', stopped: '已终止' };
+    const visualCheckStatusLabel = (status) => status === 'passed' ? '有变化' : '无明显变化';
     const formatTime = (milliseconds) => {
       const seconds = Math.max(0, Math.floor(milliseconds / 1000));
       return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
@@ -410,6 +488,10 @@ function createReplayHtml(input: {
         elements.node.textContent = String(frame.nodeNumber || '-');
         elements.phase.textContent = phaseLabels[frame.phase] || frame.phase || '-';
         elements['frame-status'].textContent = frame.status || '-';
+        const logContent = frames[steps[frameSteps[currentFrame]].lastIndex].logContent;
+        document.querySelector('#node-log-label').hidden = !logContent;
+        document.querySelector('#node-log').hidden = !logContent;
+        document.querySelector('#node-log').textContent = logContent || '';
         elements.note.textContent = frame.note || '-';
         elements.selector.textContent = frame.selector || '-';
         elements.time.textContent = new Date(frame.capturedAt).toLocaleString();
@@ -421,7 +503,8 @@ function createReplayHtml(input: {
       elements.seek.value = String(Math.round(currentMs / durationMs * 1000));
       elements.clock.textContent = formatTime(currentMs) + ' / ' + formatTime(durationMs);
       elements.playhead.style.left = (currentMs / durationMs * 100) + '%';
-      document.querySelectorAll('.frame-item, .thumbnail').forEach((item) => item.classList.toggle('active', Number(item.dataset.index) === currentFrame));
+      document.querySelectorAll('.frame-item').forEach((item) => item.classList.toggle('active', Number(item.dataset.step) === frameSteps[currentFrame]));
+      document.querySelectorAll('.thumbnail').forEach((item) => item.classList.toggle('active', Number(item.dataset.index) === currentFrame));
       if (scrollStep) document.querySelector('.frame-item.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     };
     const pause = () => {
@@ -453,11 +536,13 @@ function createReplayHtml(input: {
       tick.append(label);
       elements.ruler.append(tick);
     }
-    frames.forEach((frame, index) => {
+    steps.forEach((step, index) => {
+      const frame = frames[step.firstIndex];
+      const result = frames[step.lastIndex];
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'frame-item';
-      button.dataset.index = String(index);
+      button.dataset.step = String(index);
       const badge = document.createElement('span');
       badge.className = 'frame-index';
       badge.textContent = String(index + 1);
@@ -467,15 +552,28 @@ function createReplayHtml(input: {
       title.textContent = frame.nodeNumber + '. ' + frame.nodeLabel;
       const subtitle = document.createElement('span');
       subtitle.className = 'frame-subtitle';
-      subtitle.textContent = (phaseLabels[frame.phase] || frame.phase) + ' · ' + frame.status;
+      subtitle.textContent = result.phase === 'before' ? '未完成' : result.status;
       content.append(title, subtitle);
+      if (frame.nodeType === 'textClick') {
+        const text = document.createElement('span');
+        text.className = 'frame-log frame-click-text';
+        text.textContent = frame.selector || '未设置点击文字';
+        content.append(text);
+      }
+      if (result.logContent) {
+        const log = document.createElement('span');
+        log.className = 'frame-log';
+        log.textContent = result.logContent;
+        content.append(log);
+      }
       const time = document.createElement('span');
       time.className = 'frame-time';
       time.textContent = formatTime(frame.offsetMs);
       button.append(badge, content, time);
       button.addEventListener('click', () => { pause(); seekTo(frame.offsetMs); });
       elements['step-list'].append(button);
-
+    });
+    frames.forEach((frame, index) => {
       const thumbnail = document.createElement('button');
       thumbnail.type = 'button';
       thumbnail.className = 'thumbnail';

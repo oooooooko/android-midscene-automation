@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, shallowRef, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, shallowRef, watch } from 'vue';
+import { DEFAULT_FLOW_BACKGROUND, flowBackgroundKey } from '../flow-appearance';
 import { useVueFlow, VueFlow } from '@vue-flow/core';
 import FlowNodeCard from './FlowNodeCard.vue';
 import FlowRoundedEdge from './FlowRoundedEdge.vue';
@@ -12,7 +13,10 @@ import {
 } from '../flow-graph';
 import type { AppiumRecordedStep } from '../types';
 
+const flowBackground = inject(flowBackgroundKey, computed(() => DEFAULT_FLOW_BACKGROUND));
+
 const props = defineProps<{
+  aiRecognitionModelConfigured?: boolean;
   id: string;
   steps: AppiumRecordedStep[];
   expandedStepIndex: number | null;
@@ -20,6 +24,7 @@ const props = defineProps<{
   selectedCopyIndexes: number[];
   disabled?: boolean;
   removeDisabled?: boolean;
+  mergeDisabled?: boolean;
   readonly?: boolean;
   launchingStepId?: string;
   clipboardCount?: number;
@@ -36,6 +41,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   nodeClick: [index: number];
+  merge: [index: number];
   copy: [indexes: number[]];
   paste: [index: number, branch?: FlowBranch];
   remove: [index: number];
@@ -55,6 +61,8 @@ let resetViewFrame = 0;
 let pendingResetView = false;
 
 const graph = computed(() => buildFlowGraph(props.steps, {
+  mergeDisabled: props.mergeDisabled,
+  aiRecognitionModelConfigured: props.aiRecognitionModelConfigured,
   expandedStepIndex: props.expandedStepIndex,
   selectedCopyIndexes: props.selectedCopyIndexes,
   copyMode: props.copyMode,
@@ -168,7 +176,7 @@ function handleInsert(payload: {
 </script>
 
 <template>
-  <div class="appium-flow-canvas appium-flow-canvas--vue">
+  <div class="appium-flow-canvas appium-flow-canvas--vue" :style="{ '--flow-background': flowBackground }">
     <VueFlow
       :id="id"
       class="appium-vue-flow"
@@ -202,6 +210,7 @@ function handleInsert(payload: {
           @execute="emit('executeStep', $event)"
           @insert="handleInsert"
           @update-step="emit('updateStep', $event.index, $event.step)"
+          @merge="emit('merge', $event)"
           @preview-linked-script="emit('previewLinkedScript', $event)"
           @resize="handleNodeResize"
         />

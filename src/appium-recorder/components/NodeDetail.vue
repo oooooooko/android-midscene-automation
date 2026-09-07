@@ -21,6 +21,8 @@ defineProps<{
         <el-descriptions-item label="content-desc">{{ node.contentDesc || '-' }}</el-descriptions-item>
         <el-descriptions-item label="text">{{ node.text || '-' }}</el-descriptions-item>
         <el-descriptions-item label="class">{{ node.className || '-' }}</el-descriptions-item>
+        <el-descriptions-item v-if="node.checkable !== undefined" label="checkable">{{ String(node.checkable) }}</el-descriptions-item>
+        <el-descriptions-item v-if="node.checkable" label="checked">{{ node.checked === undefined ? '-' : String(node.checked) }}</el-descriptions-item>
         <el-descriptions-item label="当前 Activity">{{ currentActivity || '-' }}</el-descriptions-item>
         <el-descriptions-item label="selector">
           <span v-if="currentActivity">Activity {{ currentActivity }} · </span>

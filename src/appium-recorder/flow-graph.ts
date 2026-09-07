@@ -1,6 +1,7 @@
 import { Position, type Edge, type Node } from '@vue-flow/core';
 import * as dagre from '@dagrejs/dagre';
 import type { AppiumRecordedStep } from './types';
+import { defaultFlowKind as defaultKind, flowBranchLabel, isBooleanCondition } from './flow-labels';
 
 type DagreApi = typeof dagre;
 const dagreApi = ((dagre as DagreApi & { default?: DagreApi }).layout
@@ -23,8 +24,15 @@ export type InsertAction =
   | 'swipe'
   | 'pinch'
   | 'launchApp'
+  | 'openGallery'
+  | 'endFlow'
   | 'clearAppData'
   | 'popupCondition'
+  | 'checkboxState'
+  | 'checkedState'
+  | 'radioButtonState'
+  | 'aiRecognition'
+  | 'textClick'
   | 'tapIfExists'
   | 'inputIfExists'
   | 'clearIfExists'
@@ -36,6 +44,7 @@ export type InsertAction =
   | 'waitActivity'
   | 'runScript'
   | 'noop'
+  | 'log'
   | 'visualChangeStart'
   | 'visualChangeEnd'
   | 'visualChange';
@@ -83,16 +92,19 @@ export type FlowGraphNodeData =
       copyMode: boolean;
       disabled?: boolean;
       removeDisabled?: boolean;
+      mergeDisabled?: boolean;
       launching?: boolean;
       canCopy: boolean;
       canEditInput: boolean;
       canExecute: boolean;
+      missingAiModel?: boolean;
     }
   | {
       kind: 'insert';
       actionGroups: FlowActionGroup[];
       afterIndex: number;
       branch?: FlowBranch;
+      branchLabel?: string;
       conditionIndex?: number;
       clipboardCount?: number;
       canOpenInsertMenu: boolean;
@@ -101,6 +113,8 @@ export type FlowGraphNodeData =
   | {
       kind: 'branch';
       branch: FlowBranch;
+      label: string;
+      width: number;
       conditionIndex: number;
     }
   | {
@@ -116,11 +130,13 @@ type StepItem = {
 };
 
 type BuildFlowGraphOptions = {
+  aiRecognitionModelConfigured?: boolean;
   expandedStepIndex: number | null;
   selectedCopyIndexes: number[];
   copyMode: boolean;
   disabled?: boolean;
   removeDisabled?: boolean;
+  mergeDisabled?: boolean;
   launchingStepId?: string;
   clipboardCount?: number;
   canOpenInsertMenu: boolean;
@@ -148,12 +164,6 @@ type BranchLayout = {
   centerGap: number;
   totalWidth: number;
 };
-
-function defaultKind(step: AppiumRecordedStep): FlowKind {
-  if (step.flow?.nodeKind) return step.flow.nodeKind;
-  if (step.type === 'assertExists' || step.type === 'assertText' || step.type === 'visualChange') return 'assertion';
-  return 'action';
-}
 
 function nodeIdForStep(step: AppiumRecordedStep) {
   return `step:${step.id}`;
@@ -226,7 +236,7 @@ function branchConnectionTargetId(items: StepItem[], condition: AppiumRecordedSt
   }
   const targetId = branch === 'yes' ? condition.flow?.yesTargetId : condition.flow?.noTargetId;
   const target = items.find(({ step }) => step.id === targetId)?.step;
-  return target && !target.flow?.parentConditionId ? target.id : '';
+  return target && target.flow?.parentConditionId === condition.flow?.parentConditionId ? target.id : '';
 }
 
 function estimateTextLines(text: string | undefined, charsPerLine: number) {
@@ -372,6 +382,7 @@ export function buildFlowGraph(
             : options.mainActionGroups,
         afterIndex,
         branch,
+        branchLabel: branch && condition ? flowBranchLabel(condition.step, branch) : undefined,
         conditionIndex: condition?.index,
         clipboardCount: options.clipboardCount,
         canOpenInsertMenu: options.canOpenInsertMenu,
@@ -385,11 +396,13 @@ export function buildFlowGraph(
     const id = nodeIdForStep(item.step);
     const flowKind = defaultKind(item.step);
     const label = options.labelStep(item.step);
-    const cardMinHeight = estimateStepNodeHeight(label);
+    // 字数估算仅用于首次布局，不强制卡片高度；实际换行由浏览器决定。
+    const cardMinHeight = FLOW_STEP_NODE_HEIGHT;
+    const estimatedCardHeight = estimateStepNodeHeight(label);
     const estimatedNodeHeight = options.expandedStepIndex === item.index
-      ? cardMinHeight + FLOW_EXPANDED_NODE_HEIGHT
-      : cardMinHeight;
-    const nodeHeight = Math.max(estimatedNodeHeight, Math.ceil(options.measuredNodeHeights?.[id] || 0));
+      ? estimatedCardHeight + FLOW_EXPANDED_NODE_HEIGHT
+      : estimatedCardHeight;
+    const nodeHeight = Math.max(cardMinHeight, Math.ceil(options.measuredNodeHeights?.[id] || estimatedNodeHeight));
     addNode({
       id,
       type: 'flow-node',
@@ -415,32 +428,35 @@ export function buildFlowGraph(
         copyMode: options.copyMode,
         disabled: item.step.type === 'launchApp' || item.step.type === 'clearAppData'
           ? options.isAppExecutionDisabled(item.step.type)
-          : options.disabled,
+          : item.step.type === 'aiRecognition' ? options.isInsertActionDisabled('aiRecognition') : options.disabled,
         removeDisabled: options.removeDisabled,
+        mergeDisabled: options.mergeDisabled,
         launching: options.launchingStepId === item.step.id,
         canCopy: item.step.type !== 'launchApp'
           && item.step.type !== 'clearAppData'
           && item.step.visualChange?.role !== 'end',
         canEditInput: item.step.type === 'input' || item.step.type === 'inputIfExists',
-        canExecute: item.step.type === 'launchApp' || item.step.type === 'clearAppData',
+        canExecute: item.step.type === 'launchApp' || item.step.type === 'clearAppData' || item.step.type === 'aiRecognition',
+        missingAiModel: item.step.type === 'aiRecognition' && !options.aiRecognitionModelConfigured,
       },
     });
   };
 
   const addBranchNode = (condition: StepItem, branch: FlowBranch) => {
     const id = branchNodeId(condition.step, branch);
+    const width = condition.step.type === 'textClick' ? 116 : isBooleanCondition(condition.step) ? 56 : FLOW_BRANCH_NODE_WIDTH;
     addNode({
       id,
       type: 'flow-node',
       position: { x: 0, y: 0 },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
-      width: FLOW_BRANCH_NODE_WIDTH,
+      width,
       height: FLOW_BRANCH_NODE_HEIGHT,
       selectable: false,
       draggable: false,
       connectable: false,
-      data: { kind: 'branch', branch, conditionIndex: condition.index },
+      data: { kind: 'branch', branch, label: flowBranchLabel(condition.step, branch), width, conditionIndex: condition.index },
     });
     return id;
   };
@@ -532,7 +548,8 @@ export function buildFlowGraph(
 
     const targetId = item.step.flow?.successTargetId;
     const explicitTarget = targetId ? stepById.get(targetId) : undefined;
-    const explicitMainTarget = explicitTarget && !explicitTarget.step.flow?.parentConditionId
+    const explicitMainTarget = explicitTarget && (!explicitTarget.step.flow?.parentConditionId
+      || explicitTarget.step.flow.parentConditionId !== item.step.flow?.parentConditionId)
       ? explicitTarget
       : undefined;
     const target = explicitMainTarget || nextSibling;
@@ -610,22 +627,6 @@ export function buildFlowGraph(
   );
   const setCenterX = (node: FlowGraphNode, x: number) => {
     node.position.x = Math.round(x - nodeWidth(node) / 2);
-  };
-  const normalizeBranchPositions = () => {
-    positionedNodes
-      .filter((node) => node.data?.kind === 'split')
-      .forEach((splitNode) => {
-        const branchLinks = links.filter((link) => link.source === splitNode.id && link.branch);
-        const yesNode = nodeById.get(branchLinks.find((link) => link.branch === 'yes')?.target || '');
-        const noNode = nodeById.get(branchLinks.find((link) => link.branch === 'no')?.target || '');
-        const splitX = centerX(splitNode);
-        const conditionId = splitNode.id.startsWith('split:')
-          ? splitNode.id.slice('split:'.length)
-          : '';
-        const spread = (branchLayouts.get(conditionId)?.centerGap || FLOW_BRANCH_MIN_SPREAD * 2) / 2;
-        if (yesNode) setCenterX(yesNode, splitX - spread);
-        if (noNode) setCenterX(noNode, splitX + spread);
-      });
   };
   const canAlignStepAfterFlowPoint = (sourceNode: FlowGraphNode, stepNode: FlowGraphNode) => {
     if (stepNode.data?.kind !== 'step') return false;
@@ -730,42 +731,54 @@ export function buildFlowGraph(
       if (!moved) break;
     }
   };
-  const alignVisibleChainGeometry = () => {
-    for (let pass = 0; pass < 4; pass += 1) {
-      links.forEach((link) => {
-        const source = nodeById.get(link.source);
-        const target = nodeById.get(link.target);
-        if (!source || !target?.data) return;
-        if (!['branch', 'split'].includes(target.data.kind)) return;
-
-        const lineGap = target.data.kind === 'split'
-          ? FLOW_BRANCH_TRUNK_GAP
-          : FLOW_BRANCH_LABEL_GAP;
-        target.position.y = Math.round(source.position.y + nodeHeight(source) + lineGap);
-        if (target.data.kind === 'split') {
-          setCenterX(target, centerX(source));
-        }
-      });
-      normalizeBranchPositions();
-
-      links.forEach((link) => {
-        const source = nodeById.get(link.source);
-        const target = nodeById.get(link.target);
-        if (!source || target?.data?.kind !== 'insert') return;
-        target.position.y = Math.round(source.position.y + nodeHeight(source) + FLOW_STANDARD_LINE_GAP);
-        setCenterX(target, centerX(source));
-      });
-      alignableLinks.forEach((link) => {
-        const source = nodeById.get(link.source);
-        const target = nodeById.get(link.target);
-        if (!source || !target || !canAlignStepAfterFlowPoint(source, target)) return;
-        target.position.y = Math.round(source.position.y + nodeHeight(source) + FLOW_STANDARD_LINE_GAP);
-        setCenterX(target, centerX(source));
-      });
+  // 按依赖顺序传递坐标，避免固定轮数只对齐长分支的前半段。
+  // 旧脚本若含回边，保留 Dagre 的纵向顺序，避免拓扑排序抛错。
+  const orderedNodeIds = dagreApi.graphlib.alg.isAcyclic(dagreGraph)
+    ? dagreApi.graphlib.alg.topsort(dagreGraph)
+    : [...positionedNodes].sort((a, b) => a.position.y - b.position.y).map((node) => node.id);
+  const nodeOrder = new Map(orderedNodeIds.map((id, index) => [id, index]));
+  const orderedLinks = [...links].sort((a, b) => (
+    (nodeOrder.get(a.source) || 0) - (nodeOrder.get(b.source) || 0)
+  ));
+  // 公共起点从两侧汇入，不能被最后一条分支连线拉到左列或右列。
+  const joins = new Map<string, string>();
+  items.forEach(({ step }) => {
+    const target = step.flow?.successTargetId && stepById.get(step.flow.successTargetId);
+    if (defaultKind(step) === 'condition' && target && !joins.has(nodeIdForStep(target.step))) {
+      joins.set(nodeIdForStep(target.step), nodeIdForStep(step));
     }
-  };
+  });
+  const alignVisibleChainGeometry = () => {
+    orderedLinks.forEach((link) => {
+      const source = nodeById.get(link.source);
+      const target = nodeById.get(link.target);
+      if (!source || !target?.data) return;
+      const joinOwner = joins.get(target.id);
+      if (joinOwner && target.id !== joinOwner) {
+        const incoming = links.filter((edge) => edge.target === target.id).map((edge) => nodeById.get(edge.source)!).filter(Boolean);
+        const owner = nodeById.get(joinOwner);
+        if (owner && incoming.length) {
+          target.position.y = Math.round(Math.max(...incoming.map((node) => node.position.y + nodeHeight(node))) + FLOW_STANDARD_LINE_GAP * 2);
+          setCenterX(target, centerX(owner));
+        }
+        return;
+      }
+      const kind = target.data.kind;
+      if (!['branch', 'split', 'insert'].includes(kind) && !canAlignStepAfterFlowPoint(source, target)) return;
 
-  const alignableLinks = [...links, ...layoutLinks];
+      const lineGap = kind === 'split'
+        ? FLOW_BRANCH_TRUNK_GAP
+        : kind === 'branch' ? FLOW_BRANCH_LABEL_GAP : FLOW_STANDARD_LINE_GAP;
+      target.position.y = Math.round(source.position.y + nodeHeight(source) + lineGap);
+      let x = centerX(source);
+      if (target.data.kind === 'branch') {
+        const conditionId = steps[target.data.conditionIndex].id;
+        const spread = (branchLayouts.get(conditionId)?.centerGap || FLOW_BRANCH_MIN_SPREAD * 2) / 2;
+        x += target.data.branch === 'yes' ? -spread : spread;
+      }
+      setCenterX(target, x);
+    });
+  };
 
   alignVisibleChainGeometry();
 
@@ -789,7 +802,7 @@ export function buildFlowGraph(
     selectable: false,
     focusable: false,
     class: 'appium-vue-flow-edge',
-    data: { branch: link.branch },
+    data: { branch: link.branch, merge: joins.has(link.target) },
   }));
 
   return { nodes: positionedNodes, edges };

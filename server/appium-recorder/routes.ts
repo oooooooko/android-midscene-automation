@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { recognizeDeviceScreen } from './ai-recognition';
+import { readFreshWindowHierarchy } from './tree-dump';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   deleteAppiumRecordedScript,
@@ -14,6 +13,7 @@ import {
 import { clearAppDataOnDevice, launchAppOnDevice, replayAppiumScript } from './appium-runner';
 import { isRemoteDeviceId, sendRemoteCommand } from '../remote-agents/registry';
 import { getAdbCommand } from '../android-sdk';
+import { createAppiumScriptExport } from './script-export';
 
 const treeDumpTasks = new Map<string, Promise<string>>();
 const replayingDevices = new Set<string>();
@@ -23,13 +23,6 @@ function sendJson(res: ServerResponse, payload: unknown, statusCode = 200) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(payload));
-}
-
-function sendJsonDownload(res: ServerResponse, payload: unknown, fileName: string) {
-  res.statusCode = 200;
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="appium-script.json"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-  res.end(JSON.stringify(payload, null, 2));
 }
 
 function sendStreamEvent(res: ServerResponse, payload: unknown) {
@@ -64,17 +57,7 @@ async function dumpWindowHierarchy(deviceId: string) {
   const activeTask = treeDumpTasks.get(deviceId);
   if (activeTask) return activeTask;
 
-  const task = (async () => {
-    const localPath = path.join(os.tmpdir(), `midscene-appium-${deviceId.replace(/[^\w.-]/g, '_')}-${Date.now()}.xml`);
-    const remotePath = '/data/local/tmp/midscene_appium_uidump.xml';
-    await execFileText(getAdbCommand(), ['-s', deviceId, 'shell', 'uiautomator', 'dump', remotePath]);
-    await execFileText(getAdbCommand(), ['-s', deviceId, 'pull', remotePath, localPath]);
-    try {
-      return await fs.readFile(localPath, 'utf8');
-    } finally {
-      await fs.unlink(localPath).catch(() => undefined);
-    }
-  })();
+  const task = readFreshWindowHierarchy(deviceId, getAdbCommand(), execFileText);
   treeDumpTasks.set(deviceId, task);
   try {
     return await task;
@@ -134,6 +117,7 @@ export async function handleAppiumRecorderRequest(
     };
 
     if (pathname === '/api/appium-recorder/tree' && req.method === 'GET') {
+      res.setHeader('Cache-Control', 'no-store');
       const deviceId = requestUrl.searchParams.get('deviceId')?.trim() || selectedDeviceId;
       if (!deviceId) throw new Error('未检测到可用设备');
       assertDeviceAllowed(deviceId);
@@ -189,6 +173,24 @@ export async function handleAppiumRecorderRequest(
       }
       await pressDeviceKey(deviceId, keyCode);
       sendJson(res, { success: true });
+      return true;
+    }
+
+    if (pathname === '/api/appium-recorder/ai-recognition/test' && req.method === 'POST') {
+      const parsed = await readBody<{ deviceId?: string; prompt?: unknown; timeoutMs?: number }>(req);
+      const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
+      if (!deviceId) throw new Error('请选择设备');
+      assertDeviceAllowed(deviceId);
+      if (isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持 AI 识别测试');
+      if (replayingDevices.has(deviceId)) { sendJson(res, { message: '设备正在回放，请稍后测试' }, 409); return true; }
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      res.once('close', abort);
+      try {
+        sendJson(res, await recognizeDeviceScreen({ deviceId, prompt: parsed.prompt, timeoutMs: parsed.timeoutMs, signal: controller.signal }));
+      } finally {
+        res.off('close', abort);
+      }
       return true;
     }
 
@@ -277,17 +279,14 @@ export async function handleAppiumRecorderRequest(
     if (exportMatch && req.method === 'GET') {
       const script = getAppiumRecordedScript(decodeURIComponent(exportMatch[1]));
       if (!script) throw new Error('Appium 录制脚本不存在');
-      sendJsonDownload(res, {
-        schemaVersion: 1,
-        exportedAt: new Date().toISOString(),
-        script: {
-          name: script.name,
-          appPackage: script.appPackage,
-          appActivity: script.appActivity,
-          deviceId: script.deviceId,
-          steps: script.steps,
-        },
-      }, `${script.name}.json`);
+      const exported = await createAppiumScriptExport(script, getAppiumRecordedScript);
+      const fileName = encodeURIComponent(exported.fileName)
+        .replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', exported.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="appium-script.${exported.contentType === 'application/zip' ? 'zip' : 'json'}"; filename*=UTF-8''${fileName}`);
+      res.setHeader('Content-Length', exported.body.length);
+      res.end(exported.body);
       return true;
     }
 

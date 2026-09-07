@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
-import fs from 'node:fs/promises';
 import os from 'node:os';
-import path from 'node:path';
+import { readFreshWindowHierarchy } from '../server/appium-recorder/tree-dump';
 import type { RemoteAgentDevice, RemoteCommand } from '../server/remote-agents/protocol';
 import { replayAppiumScript } from '../server/appium-recorder/appium-runner';
 import type { AppiumRecordedScriptRecord } from '../server/appium-recorder/repository';
@@ -83,15 +82,7 @@ async function getDisplayInfo(deviceId: string) {
 }
 
 async function dumpWindowHierarchy(deviceId: string) {
-  const localPath = path.join(os.tmpdir(), `midscene-remote-agent-${deviceId.replace(/[^\w.-]/g, '_')}-${Date.now()}.xml`);
-  const remotePath = '/data/local/tmp/midscene_remote_agent_uidump.xml';
-  await execText('adb', ['-s', deviceId, 'shell', 'uiautomator', 'dump', remotePath]);
-  await execText('adb', ['-s', deviceId, 'pull', remotePath, localPath]);
-  try {
-    return await fs.readFile(localPath, 'utf8');
-  } finally {
-    await fs.unlink(localPath).catch(() => undefined);
-  }
+  return readFreshWindowHierarchy(deviceId, 'adb', execText);
 }
 
 async function getCurrentActivity(deviceId: string) {

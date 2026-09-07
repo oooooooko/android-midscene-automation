@@ -1,4 +1,9 @@
 import { execFile } from 'node:child_process';
+import { adbScreenshotBase64 } from './screenshot';
+import { recognizeDeviceScreen } from './ai-recognition';
+import { formatStageLog } from '../../src/appium-recorder/stage-log';
+import { openGalleryOnDevice } from './open-gallery';
+import { textClickSelector } from '../../src/appium-recorder/text-click';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -8,6 +13,9 @@ import { ensureAndroidSdkAvailable, getAdbCommand } from '../android-sdk';
 import { createAppiumReplayReport, type AppiumReplayFrame, type AppiumReplayVisualCheck } from './report';
 import { startManagedAppiumServer, usesManagedAppiumServer } from './managed-appium';
 import { compareVisualChangeFrames, type VisualChangeRegion } from './visual-change';
+import { longPressMode, validateLongPress } from '../../src/appium-recorder/long-press';
+import { defaultFlowKind, flowBranchLabel } from '../../src/appium-recorder/flow-labels';
+import { isNativeStateCondition, nativeControlName, matchesNativeControl, parseNativeBoolean } from '../../src/appium-recorder/native-control-state';
 
 type AppiumSessionResponse = {
   value?: {
@@ -50,6 +58,7 @@ const replayContext = new AsyncLocalStorage<{
   visualChecks: AppiumReplayVisualCheck[];
   pendingVisualChecks: PendingVisualChangeCheck[];
   softFailureCount: number;
+  flowEnded?: boolean;
 }>();
 
 const appiumServerUrl = () => replayContext.getStore()?.serverUrl || configuredAppiumServerUrl();
@@ -190,29 +199,6 @@ function adbText(deviceId: string, args: string[]) {
   });
 }
 
-function adbScreenshotBase64(deviceId: string) {
-  return new Promise<string>((resolve, reject) => {
-    execFile(
-      getAdbCommand(),
-      ['-s', deviceId, 'exec-out', 'screencap', '-p'],
-      { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024, timeout: 8000 },
-      (error, stdout, stderr) => {
-        if (error) {
-          const detail = Buffer.isBuffer(stderr) ? stderr.toString('utf8').trim() : String(stderr || '').trim();
-          reject(new Error(detail || error.message || 'ADB 截图失败'));
-          return;
-        }
-        const imageBuffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || '');
-        if (!imageBuffer.length) {
-          reject(new Error('ADB 未返回截图内容'));
-          return;
-        }
-        resolve(imageBuffer.toString('base64'));
-      },
-    );
-  });
-}
-
 async function getCurrentActivity(deviceId: string) {
   const output = await adbText(deviceId, ['shell', 'dumpsys', 'activity', 'activities']);
   const resumedLine = output
@@ -326,6 +312,7 @@ async function appiumRequest<T>(
 }
 
 function replayFrameSelector(step: AppiumRecordedStepRecord) {
+  if (step.type === 'textClick') return `${step.flow?.textMatch === 'exact' ? '精准匹配' : '模糊匹配'}：${step.value || ''}`;
   const selector = step.selector;
   if (!selector) return '-';
   if (selector.strategy === 'bounds') return `bounds (${selector.centerX ?? '-'}, ${selector.centerY ?? '-'})`;
@@ -339,6 +326,7 @@ async function captureReplayFrame(
   scriptName: string,
   phase: AppiumReplayFrame['phase'],
   status: string,
+  imageBase64?: string,
 ) {
   const context = replayContext.getStore();
   if (!context || !context.deviceId) return;
@@ -350,6 +338,7 @@ async function captureReplayFrame(
       nodeNumber,
       nodeLabel: step.label,
       nodeType: step.type,
+      logContent: step.type === 'log' && phase === 'after' ? formatStageLog(step) : undefined,
       note: step.note || '',
       selector: replayFrameSelector(step),
       phase,
@@ -367,7 +356,7 @@ async function captureReplayFrame(
 
   try {
     // Report screenshots use ADB so a slow capture cannot block Appium's command queue.
-    appendFrame(await adbScreenshotBase64(context.deviceId));
+    appendFrame(imageBase64 || await adbScreenshotBase64(context.deviceId));
   } catch (error) {
     context.appiumLog(`[节点 ${nodeNumber}] 截图失败：${errorDetail(error)}`);
   }
@@ -479,8 +468,7 @@ async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord)
   let lastError: unknown;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
-      await findElement(sessionId, step);
-      return;
+      return await findElement(sessionId, step);
     } catch (error) {
       throwIfReplayStopped(error);
       lastError = error;
@@ -537,6 +525,7 @@ type RunStepResult = string | {
 };
 
 function completedStepStatus(step: AppiumRecordedStepRecord, softFailed: boolean) {
+  if (step.type === 'endFlow') return '流程已结束';
   if (step.type === 'visualChange') {
     if (step.visualChange?.role === 'start') return '已记录基准帧';
     if (step.visualChange?.role === 'end') return '已记录对比帧';
@@ -742,6 +731,14 @@ async function runStep(
   if (step.type === 'noop') {
     return;
   }
+  if (step.type === 'log') return formatStageLog(step);
+  if (step.type === 'openGallery') return openGalleryOnDevice(deviceId, replayContext.getStore()?.signal);
+  if (step.type === 'endFlow') {
+    // 同一次回放的主脚本和连接脚本共享结束状态，不影响下一次回放。
+    const context = replayContext.getStore();
+    if (context) context.flowEnded = true;
+    return '流程已主动结束，后续节点不再执行';
+  }
 
   if (step.type === 'coordinateTap') {
     await tapFallback(deviceId, step);
@@ -755,13 +752,21 @@ async function runStep(
   }
 
   if (step.type === 'longPress') {
-    if (step.fallback?.strategy !== 'bounds' || !Number.isFinite(step.fallback.centerX) || !Number.isFinite(step.fallback.centerY)) {
-      throw new Error(`${step.label} 缺少长按坐标`);
+    const error = validateLongPress(step);
+    if (error) throw new Error(`${step.label}：${error}`);
+    const duration = step.timeoutMs ?? 800;
+    if (longPressMode(step) === 'element') {
+      const elementId = await findElement(sessionId, step);
+      await appiumRequest(`/session/${sessionId}/execute/sync`, {
+        method: 'POST',
+        body: JSON.stringify({ script: 'mobile: longClickGesture', args: [{ elementId, duration }] }),
+      });
+      return `已长按元素 ${duration}ms`;
     }
-    const x = Number(step.fallback.centerX);
-    const y = Number(step.fallback.centerY);
-    await adbSwipe(deviceId, { startX: x, startY: y, endX: x, endY: y, duration: step.timeoutMs || 800 });
-    return;
+    const x = Number(step.fallback!.centerX);
+    const y = Number(step.fallback!.centerY);
+    await adbSwipe(deviceId, { startX: x, startY: y, endX: x, endY: y, duration });
+    return `已长按坐标 ${x},${y} ${duration}ms`;
   }
 
   if (step.type === 'pinch') {
@@ -892,7 +897,48 @@ async function runStep(
   }
 }
 
+async function readNativeControlState(sessionId: string, step: AppiumRecordedStepRecord) {
+  if (!isNativeStateCondition(step)) throw new Error('不是原生控件状态判断节点');
+  const elementId = await waitForElement(sessionId, step);
+  const attribute = async (name: string) => (
+    await appiumRequest<AppiumValueResponse<unknown>>(`/session/${sessionId}/element/${elementId}/attribute/${name}`)
+  ).value;
+  const className = await attribute('className');
+  if (!matchesNativeControl(step.type, className)) {
+    throw new Error(`${step.label} 目标不是原生 ${nativeControlName(step.type)}，实际类型：${String(className ?? '未知')}`);
+  }
+  if (parseNativeBoolean(await attribute('checkable')) !== true) {
+    throw new Error(`${step.label} 目标不支持原生勾选状态（checkable 不为 true）`);
+  }
+  const checked = parseNativeBoolean(await attribute('checked'));
+  if (checked === undefined) throw new Error(`${step.label} 无法读取有效的 checked 属性`);
+  return checked;
+}
+
 async function evaluateCondition(sessionId: string, deviceId: string, step: AppiumRecordedStepRecord) {
+  if (step.type === 'textClick') {
+    const selector = textClickSelector(step);
+    const deadline = Date.now() + Math.max(0, step.timeoutMs ?? 10000);
+    // 查询空结果才是未匹配；通信错误、重复匹配和点击失败走现有异常处理。
+    do {
+      const payload = await appiumRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
+        method: 'POST', body: JSON.stringify(selector),
+      });
+      if (!Array.isArray(payload.value)) throw new Error('文字点击查询返回了无效结果');
+      if (payload.value.length > 1) throw new Error(`匹配到 ${payload.value.length} 个文字元素，请使用更精确的文字`);
+      if (payload.value.length === 1) {
+        const element = payload.value[0]!;
+        const id = element[ELEMENT_KEY] || element.ELEMENT;
+        if (!id) throw new Error('文字点击查询缺少元素 ID');
+        await appiumRequest(`/session/${sessionId}/element/${id}/click`, { method: 'POST', body: '{}' });
+        return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await wait(Math.max(0, Math.min(500, deadline - Date.now())));
+    } while (true);
+  }
+  // 未找到控件、类型错误和属性读取异常不等于未勾选，必须交给回放错误处理。
+  if (isNativeStateCondition(step)) return readNativeControlState(sessionId, step);
   try {
     if (step.type === 'waitActivity') {
       await waitForActivity(deviceId, step);
@@ -921,7 +967,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
 
 function hasFlowSteps(steps: AppiumRecordedStepRecord[]) {
   return steps.some((step) => (
-    step.flow?.nodeKind === 'condition'
+    defaultFlowKind(step) === 'condition'
     || Boolean(step.flow?.yesTargetId)
     || Boolean(step.flow?.noTargetId)
     || Boolean(step.flow?.successTargetId)
@@ -1031,6 +1077,7 @@ async function replayLinearSteps(
   options: ReplayStepOptions = {},
 ) {
   for (const [index, step] of steps.entries()) {
+    if (replayContext.getStore()?.flowEnded) return;
     throwIfReplayStopped();
     if (shouldSkipLinkedScriptInitStep(options, step)) {
       lines.push(`[节点 ${index + 1}] 跳过：${step.label}（${linkedScriptInitSkipReason(step)}）`);
@@ -1056,11 +1103,6 @@ async function replayLinearSteps(
         lines.push(`[节点 ${index + 1}] 已终止：${step.label}`);
         await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'stopped', '已终止');
         throw new ReplayStoppedError();
-      }
-      if (step.optional) {
-        lines.push(`[节点 ${index + 1}] 跳过：${errorDetail(error)}`);
-        await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'error', '已跳过');
-        continue;
       }
       lines.push(`[节点 ${index + 1}] 失败：${errorDetail(error)}`);
       await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'error', '失败');
@@ -1102,6 +1144,7 @@ async function replayFlowSteps(
   const maxVisits = Math.max(steps.length * 4, 20);
 
   while (typeof index === 'number' && index >= 0 && index < steps.length) {
+    if (replayContext.getStore()?.flowEnded) return;
     throwIfReplayStopped();
     guard += 1;
     if (guard > maxVisits) throw new Error('流程图可能存在循环，已终止回放');
@@ -1113,23 +1156,33 @@ async function replayFlowSteps(
       continue;
     }
     visitedPath.push(step.label);
-    const nodeKind = step.flow?.nodeKind || (step.type === 'assertExists' || step.type === 'assertText' ? 'assertion' : 'action');
+    const nodeKind = defaultFlowKind(step);
     lines.push(`[节点 ${index + 1}] 开始：${step.label}`);
     await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'before', '执行前');
 
     if (nodeKind === 'condition') {
       try {
-        const matched = await evaluateCondition(sessionId, deviceId, step);
+        // AI 节点使用本次执行前截图，并将同一张图片和识别依据写入结果帧。
+        const beforeFrame = replayContext.getStore()?.frames.at(-1);
+        const recognition = step.type === 'aiRecognition' ? await recognizeDeviceScreen({
+          deviceId, prompt: step.value, timeoutMs: step.timeoutMs,
+          signal: replayContext.getStore()?.signal,
+          imageBase64: beforeFrame?.nodeId === step.id && beforeFrame.phase === 'before' ? beforeFrame.imageBase64 : undefined,
+        }) : undefined;
+        const matched = recognition ? recognition.result : await evaluateCondition(sessionId, deviceId, step);
+        if (recognition) lines.push(`[节点 ${index + 1}] AI 识别：${recognition.result}，耗时 ${recognition.durationMs}ms${recognition.reason ? `，依据：${recognition.reason}` : ''}`);
         const branchTargetId = matched ? step.flow?.yesTargetId : step.flow?.noTargetId;
         const targetId = branchTargetId || step.flow?.successTargetId || '';
-        lines.push(`[节点 ${index + 1}] 判断：${matched ? '是' : '否'}${targetId ? `，进入 ${targetId}` : '，流程结束'}`);
+        const branchLabel = flowBranchLabel(step, matched ? 'yes' : 'no');
+        lines.push(`[节点 ${index + 1}] 判断：${branchLabel}${isNativeStateCondition(step) ? `（checked=${matched}）` : ''}${targetId ? `，进入 ${targetId}` : '，流程结束'}`);
         await captureReplayFrame(
           sessionId,
           step,
           index + 1,
           options.scriptName || '',
           'after',
-          `判断：${matched ? '是' : '否'}`,
+          `判断：${branchLabel}${recognition?.reason ? `；${recognition.reason}` : ''}`,
+          recognition?.imageBase64,
         );
         index = targetId ? idToIndex.get(targetId) : undefined;
       } catch (error) {
@@ -1138,6 +1191,9 @@ async function replayFlowSteps(
           await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'stopped', '已终止');
           throw new ReplayStoppedError();
         }
+        lines.push(`[节点 ${index + 1}] 失败：${errorDetail(error)}`);
+        await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'error', '失败');
+        await appendStepDiagnostics(lines, deviceId, step);
         throw error;
       }
       continue;
@@ -1162,12 +1218,6 @@ async function replayFlowSteps(
         lines.push(`[节点 ${index + 1}] 已终止：${step.label}`);
         await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'stopped', '已终止');
         throw new ReplayStoppedError();
-      }
-      if (step.optional) {
-        lines.push(`[节点 ${index + 1}] 跳过：${errorDetail(error)}`);
-        await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'error', '已跳过');
-        index = nextIndexAfterStep(index, step);
-        continue;
       }
       const failureTarget = step.flow?.failureTargetId;
       if (failureTarget && idToIndex.has(failureTarget)) {
@@ -1223,6 +1273,7 @@ async function replayScriptSteps(
   await replayStepGroup(sessionId, deviceId, mainSteps, lines, stack, options);
 
   for (const [offset, step] of trailingLinkedSteps.entries()) {
+    if (replayContext.getStore()?.flowEnded) return;
     const nodeNumber = trailingLinkIndex + offset + 1;
     lines.push(`当前脚本步骤完成，开始执行：${step.label}`);
     lines.push(`[节点 ${nodeNumber}] 开始：${step.label}`);

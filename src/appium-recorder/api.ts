@@ -1,5 +1,6 @@
 import { APP_BASE } from '../api';
 import type { AppiumRecordedScript, AppiumRecordedStep } from './types';
+import type { AiRecognitionResult } from './ai-recognition';
 
 async function readJson<T>(response: Response) {
   const payload = (await response.json().catch(() => ({}))) as T & {
@@ -22,7 +23,7 @@ function postJson<T>(url: string, body?: unknown) {
 }
 
 export async function getAppiumTree(deviceId: string) {
-  const response = await fetch(`${APP_BASE}/api/appium-recorder/tree?deviceId=${encodeURIComponent(deviceId)}`);
+  const response = await fetch(`${APP_BASE}/api/appium-recorder/tree?deviceId=${encodeURIComponent(deviceId)}`, { cache: 'no-store' });
   return readJson<{ deviceId: string; xml: string; activity: string; dumpedAt: string }>(response);
 }
 
@@ -47,6 +48,13 @@ export async function getAppiumScripts() {
   return readJson<{ scripts: AppiumRecordedScript[] }>(response);
 }
 
+export async function testAiRecognition(input: { deviceId: string; prompt: string; timeoutMs?: number }, signal?: AbortSignal) {
+  const response = await fetch(`${APP_BASE}/api/appium-recorder/ai-recognition/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
+  });
+  return readJson<AiRecognitionResult & { imageBase64: string }>(response);
+}
+
 export function saveAppiumScript(input: {
   id?: string;
   name: string;
@@ -68,8 +76,16 @@ export function importAppiumScript(input: unknown) {
   return postJson<{ script: AppiumRecordedScript }>(`${APP_BASE}/api/appium-recorder/scripts/import`, input);
 }
 
-export function appiumScriptDownloadUrl(id: string) {
-  return `${APP_BASE}/api/appium-recorder/scripts/${encodeURIComponent(id)}/export`;
+export async function downloadAppiumScript(id: string) {
+  const response = await fetch(`${APP_BASE}/api/appium-recorder/scripts/${encodeURIComponent(id)}/export`);
+  if (!response.ok) await readJson(response);
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const extension = response.headers.get('Content-Type')?.includes('application/zip') ? 'zip' : 'json';
+  return {
+    fileName: encodedName ? decodeURIComponent(encodedName) : `appium-script.${extension}`,
+    blob: await response.blob(),
+  };
 }
 
 type ReplayResult = {

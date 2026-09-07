@@ -1,4 +1,5 @@
 import type { AppiumRecordedStep } from './types';
+import { isBooleanCondition } from './flow-labels';
 
 type BranchName = 'yes' | 'no';
 
@@ -8,6 +9,8 @@ function isCondition(step: AppiumRecordedStep) {
 
 function isEmptyNestedCondition(step: AppiumRecordedStep) {
   return isCondition(step)
+    // 新类型不存在旧版分支数据，不应把后续同级节点迁入 true 分支。
+    && !isBooleanCondition(step)
     && Boolean(step.flow?.parentConditionId)
     && Boolean(step.flow?.parentBranch)
     && !step.flow?.yesTargetId
@@ -21,8 +24,14 @@ function sameParentBranch(step: AppiumRecordedStep, parentConditionId: string, p
 }
 
 export function normalizeLegacyNestedConditionBranches<T extends AppiumRecordedStep>(steps: T[]) {
-  const nextSteps = [...steps];
-  let changed = false;
+  // 清理旧脚本已移除的可选步骤设置，避免继续导出或保存失效字段。
+  const nextSteps = steps.map((step) => {
+    if (!('optional' in step)) return step;
+    const next = { ...step };
+    Reflect.deleteProperty(next, 'optional');
+    return next;
+  });
+  let changed = nextSteps.some((step, index) => step !== steps[index]);
 
   for (let index = 0; index < nextSteps.length; index += 1) {
     const condition = nextSteps[index];

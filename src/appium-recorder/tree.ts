@@ -1,4 +1,5 @@
 import type { AppiumBounds, AppiumNode, AppiumSelector } from './types';
+import { parseNativeBoolean } from './native-control-state';
 
 type SelectorCounts = {
   contentDesc: Map<string, number>;
@@ -112,6 +113,8 @@ function transformNode(
     contentDesc: attr(element, 'content-desc'),
     className,
     packageName: attr(element, 'package'),
+    checkable: parseNativeBoolean(attr(element, 'checkable')),
+    checked: parseNativeBoolean(attr(element, 'checked')),
     clickable: attr(element, 'clickable') === 'true',
     enabled: attr(element, 'enabled') !== 'false',
     xpath,

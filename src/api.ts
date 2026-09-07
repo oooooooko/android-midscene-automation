@@ -116,7 +116,7 @@ export function saveConfig(input: ConfigForm) {
 
 // 测试指定模型配置是否可用，通常用于保存前验证 baseUrl/apiKey/model。
 export function testModel(input: {
-  modelKey: 'midscene' | 'scriptOptimizer';
+  modelKey: 'midscene' | 'scriptOptimizer' | 'appium';
   model: {
     provider?: 'custom' | 'codex';
     baseUrl: string;

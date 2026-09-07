@@ -27,6 +27,12 @@ const path = computed(() => {
   const deltaX = target.x - source.x;
   const deltaY = target.y - source.y;
 
+  if (props.data?.merge && deltaY > 0) {
+    // 同一公共节点的入边共用横线高度，不能随各分支的长度变化。
+    const joinY = target.y - 24;
+    return linePath([source, { x: source.x, y: joinY }, { x: target.x, y: joinY }, target]);
+  }
+
   if (targetData.value?.kind === 'branch') {
     const direction = deltaY >= 0 ? 1 : -1;
     const branchY = source.y + direction * Math.min(Math.max(Math.abs(deltaY) * 0.45, 18), 34);

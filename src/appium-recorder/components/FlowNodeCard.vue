@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
-import { CopyDocument, Delete, Edit, Plus, VideoPlay, View } from '@element-plus/icons-vue';
+import { CopyDocument, Delete, Edit, Plus, VideoPlay, View, WarningFilled, Connection } from '@element-plus/icons-vue';
+import { AI_MODEL_CONFIG_HINT } from '../ai-recognition';
 import type { AppiumRecordedStep } from '../types';
 import {
   PASTE_COMMAND,
@@ -10,6 +11,7 @@ import {
   type InsertAction,
 } from '../flow-graph';
 import FlowStepEditor from './FlowStepEditor.vue';
+import FlowActionMenu from './FlowActionMenu.vue';
 
 const props = defineProps<{
   nodeId: string;
@@ -20,6 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   nodeClick: [index: number];
   copy: [index: number];
+  merge: [index: number];
   remove: [index: number];
   editInput: [index: number];
   previewLinkedScript: [index: number];
@@ -32,15 +35,9 @@ const emit = defineEmits<{
 const rootRef = shallowRef<HTMLElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 
-const branchLabel = computed(() => {
-  if (props.data.kind !== 'branch') return '';
-  return props.data.branch === 'yes' ? '是' : '否';
-});
-
 const insertTitle = computed(() => {
   if (props.data.kind !== 'insert') return '';
-  if (props.data.branch === 'yes') return '在“是”分支插入操作';
-  if (props.data.branch === 'no') return '在“否”分支插入操作';
+  if (props.data.branch) return `在“${props.data.branchLabel || (props.data.branch === 'yes' ? '是' : '否')}”分支插入操作`;
   return props.data.afterIndex < 0 ? '在开始后插入操作' : '插入操作';
 });
 
@@ -92,6 +89,7 @@ watch(() => props.data, () => {
     ref="rootRef"
     class="appium-flow-graph-node nodrag nopan"
     :class="`appium-flow-graph-node--${data.kind}`"
+    :style="data.kind === 'branch' ? { width: `${data.width}px` } : undefined"
     @pointerdown.stop
     @mousedown.stop
     @touchstart.stop
@@ -116,9 +114,10 @@ watch(() => props.data, () => {
       type="button"
       class="appium-flow-branch-pill nodrag nopan"
       :class="`appium-flow-branch-pill--${data.branch}`"
+      style="width: 100%"
       tabindex="-1"
     >
-      {{ branchLabel }}
+      {{ data.label }}
     </button>
 
     <span
@@ -134,11 +133,11 @@ watch(() => props.data, () => {
         aria-hidden="true"
       />
       <el-tooltip v-else content="添加操作" placement="top">
-        <el-dropdown
-          trigger="click"
+        <FlowActionMenu
+          :groups="data.actionGroups"
           :disabled="!data.canOpenInsertMenu"
-          max-height="320px"
-          popper-class="appium-action-dropdown"
+          :clipboard-count="data.clipboardCount"
+          :is-action-disabled="data.isActionDisabled"
           @command="emitInsert"
         >
           <el-button
@@ -148,29 +147,7 @@ watch(() => props.data, () => {
             :disabled="!data.canOpenInsertMenu"
             :aria-label="insertTitle"
           />
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item
-                v-if="data.clipboardCount"
-                :command="PASTE_COMMAND"
-                divided
-              >
-                粘贴 {{ data.clipboardCount }} 个节点
-              </el-dropdown-item>
-              <template v-for="group in data.actionGroups" :key="group.title">
-                <div class="appium-action-dropdown__group">{{ group.title }}</div>
-                <el-dropdown-item
-                  v-for="action in group.actions"
-                  :key="action.type"
-                  :command="action.type"
-                  :disabled="data.isActionDisabled(action.type)"
-                >
-                  {{ action.label }}
-                </el-dropdown-item>
-              </template>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        </FlowActionMenu>
       </el-tooltip>
     </div>
 
@@ -194,32 +171,48 @@ watch(() => props.data, () => {
         @click="handleStepClick"
       >
         <span class="appium-flow-step-card__content">
+          <el-tooltip v-if="data.missingAiModel" :content="AI_MODEL_CONFIG_HINT" placement="top">
+            <el-icon class="appium-ai-model-warning" color="var(--el-color-danger)" role="img" aria-label="AI 识别模型未配置" tabindex="0">
+              <WarningFilled />
+            </el-icon>
+          </el-tooltip>
           <strong :title="data.title">{{ data.title }}</strong>
           <small :title="data.meta">{{ data.meta }}</small>
           <em v-if="data.note" :title="data.note">{{ data.note }}</em>
         </span>
       </button>
       <span v-if="!props.readonly" class="appium-flow-step-card__actions nodrag nopan" @click.stop>
+        <el-tooltip v-if="data.flowKind === 'condition' && !data.copyMode" content="合并分支：将两侧后续节点汇入公共流程" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip"><el-button text size="small" :icon="Connection"
+          title="合并分支" aria-label="合并分支" :disabled="data.mergeDisabled || Boolean(data.step.flow?.successTargetId)"
+          @click="emit('merge', data.index)" />
+        </span></el-tooltip>
+        <el-tooltip v-if="!data.copyMode && data.canCopy" content="复制节点：复制后可在插入位置粘贴" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip">
         <el-button
-          v-if="!data.copyMode && data.canCopy"
           text
           size="small"
           :icon="CopyDocument"
           title="复制节点"
           @click="emit('copy', data.index)"
         />
+        </span></el-tooltip>
+        <el-tooltip v-if="data.canExecute" :content="data.step.type === 'aiRecognition' ? '测试 AI 识别：使用当前设备画面测试识别结果' : '立即执行：在当前设备上执行此操作'" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip">
         <el-button
-          v-if="data.canExecute"
           text
           size="small"
           :icon="VideoPlay"
           :loading="data.launching"
           :disabled="data.disabled"
-          title="立即执行"
+          :title="data.step.type === 'aiRecognition' ? '测试 AI 识别' : '立即执行'"
+          :aria-label="data.step.type === 'aiRecognition' ? '测试 AI 识别' : '立即执行'"
           @click="emit('execute', data.index)"
         />
+        </span></el-tooltip>
+        <el-tooltip v-if="data.canEditInput" content="修改输入内容：编辑此节点要输入的文字" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip">
         <el-button
-          v-if="data.canEditInput"
           text
           size="small"
           :icon="Edit"
@@ -227,14 +220,19 @@ watch(() => props.data, () => {
           title="修改输入内容"
           @click="emit('editInput', data.index)"
         />
+        </span></el-tooltip>
+        <el-tooltip v-if="data.step.type === 'runScript'" content="预览连接脚本：查看关联脚本的流程" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip">
         <el-button
-          v-if="data.step.type === 'runScript'"
           text
           size="small"
           :icon="View"
           title="预览连接脚本"
           @click="emit('previewLinkedScript', data.index)"
         />
+        </span></el-tooltip>
+        <el-tooltip :content="data.flowKind === 'condition' ? '删除节点：同时删除所属分支子节点，保留公共流程' : '删除节点：移除此操作并连接前后节点'" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip">
         <el-button
           text
           size="small"
@@ -243,6 +241,7 @@ watch(() => props.data, () => {
           title="删除节点"
           @click="emit('remove', data.index)"
         />
+        </span></el-tooltip>
       </span>
       <FlowStepEditor
         v-if="!props.readonly && data.expanded"
@@ -262,3 +261,8 @@ watch(() => props.data, () => {
     />
   </div>
 </template>
+
+<style scoped>
+.appium-node-action-tooltip { display: inline-flex; }
+.appium-ai-model-warning { float: left; margin: 2px 6px 0 0; font-size: 16px; }
+</style>

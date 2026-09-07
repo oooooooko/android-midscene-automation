@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { defaultFlowKind as defaultKind, flowBranchLabel, flowStepMeta } from '../flow-labels';
 import { computed } from 'vue';
 import { CopyDocument, Delete, Edit, Timer } from '@element-plus/icons-vue';
 import type { AppiumRecordedStep } from '../types';
 import { buildConditionLayouts, FLOW_BRANCH_GAP, FLOW_NODE_WIDTH } from '../flow-layout';
 import FlowStepEditor from './FlowStepEditor.vue';
+import FlowActionMenu from './FlowActionMenu.vue';
 
 type BranchName = 'yes' | 'no';
 type FlowKind = 'action' | 'condition' | 'assertion';
@@ -21,8 +23,15 @@ type InsertAction =
   | 'swipe'
   | 'pinch'
   | 'launchApp'
+  | 'openGallery'
+  | 'endFlow'
   | 'clearAppData'
   | 'popupCondition'
+  | 'checkboxState'
+  | 'checkedState'
+  | 'radioButtonState'
+  | 'aiRecognition'
+  | 'textClick'
   | 'tapIfExists'
   | 'inputIfExists'
   | 'clearIfExists'
@@ -34,6 +43,7 @@ type InsertAction =
   | 'waitActivity'
   | 'runScript'
   | 'noop'
+  | 'log'
   | 'visualChangeStart'
   | 'visualChangeEnd'
   | 'visualChange';
@@ -80,6 +90,8 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'clearInput', label: '清空输入' },
       { type: 'coordinateTap', label: '点击坐标' },
       { type: 'longPress', label: '长按' },
+      { type: 'checkedState', label: '判断勾选' },
+      { type: 'textClick', label: '文字点击' },
     ],
   },
   {
@@ -87,11 +99,11 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     actions: [
       { type: 'keyBack', label: '系统返回' },
       { type: 'keyHome', label: 'Home 键' },
+      { type: 'openGallery', label: '启动相册' },
       { type: 'keyRecent', label: '最近任务' },
       { type: 'keyPower', label: '电源键' },
       { type: 'swipe', label: '滑动' },
       { type: 'pinch', label: '双指缩放' },
-      { type: 'noop', label: '空节点' },
     ],
   },
   {
@@ -99,6 +111,7 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     actions: [
       { type: 'delay', label: '添加延时' },
       { type: 'popupCondition', label: '判断存在' },
+      { type: 'aiRecognition', label: 'AI 识别' },
       { type: 'tapIfExists', label: '存在则点击' },
       { type: 'inputIfExists', label: '存在则输入' },
       { type: 'clearIfExists', label: '存在则清空' },
@@ -112,14 +125,16 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'visualChangeEnd', label: '检测画面变化结束节点' },
     ],
   },
-  { title: '流程控制', actions: [{ type: 'runScript', label: '连接脚本' }] },
+  {
+    title: '流程控制',
+    actions: [
+      { type: 'noop', label: '空节点' },
+      { type: 'endFlow', label: '终止流程' },
+      { type: 'log', label: '输出日志' },
+      { type: 'runScript', label: '连接脚本' },
+    ],
+  },
 ];
-
-function defaultKind(step: AppiumRecordedStep): FlowKind {
-  if (step.flow?.nodeKind) return step.flow.nodeKind;
-  if (step.type === 'assertExists' || step.type === 'assertText' || step.type === 'visualChange') return 'assertion';
-  return 'action';
-}
 
 function kindLabel(kind: FlowKind) {
   return { action: '操作', condition: '判断', assertion: '校验' }[kind];
@@ -134,6 +149,14 @@ function typeLabel(step: AppiumRecordedStep) {
     coordinateTap: '坐标点击', swipe: '滑动', launchApp: '启动 APP', clearAppData: '清理 APP 缓存', longPress: '长按',
     pinch: '双指缩放', runScript: '连接脚本', screenshot: '截图', visualChange: '检测画面变化',
     noop: '空节点',
+    endFlow: '终止流程',
+    log: '输出日志',
+    checkboxState: 'Checkbox 状态',
+    checkedState: '判断勾选',
+    radioButtonState: 'RadioButton 状态',
+    aiRecognition: 'AI 识别',
+    openGallery: '启动相册',
+    textClick: '文字点击',
   };
   return labels[step.type] || step.type;
 }
@@ -141,7 +164,7 @@ function typeLabel(step: AppiumRecordedStep) {
 function stepMeta(step: AppiumRecordedStep) {
   if (step.type === 'delay') return `${step.timeoutMs || 1000}ms`;
   if (step.type === 'input' || step.type === 'inputIfExists') return `输入内容：${step.value || '空'}`;
-  if (step.type === 'longPress') return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''} · ${step.timeoutMs || 800}ms`;
+  if (step.type === 'longPress') return flowStepMeta(step);
   if (step.type === 'coordinateTap') return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''}`;
   if (step.type === 'swipe') {
     const swipe = step.swipe;
@@ -266,7 +289,7 @@ function branchSplitPath() {
         <svg class="appium-flow-line appium-flow-branch__line" viewBox="0 0 10 100" preserveAspectRatio="none" aria-hidden="true">
           <path d="M5 0 V100" />
         </svg>
-        <strong class="appium-flow-branch__label">{{ branch === 'yes' ? '是' : '否' }}</strong>
+        <strong class="appium-flow-branch__label">{{ flowBranchLabel(condition, branch) }}</strong>
         <div v-if="branchItems(branch).length" class="appium-flow-branch-steps">
           <div v-for="item in branchItems(branch)" :key="item.step.id" class="appium-flow-branch-step-group">
             <div
@@ -296,16 +319,19 @@ function branchSplitPath() {
                 </span>
               </button>
               <span class="appium-flow-node__actions" @click.stop>
+                <el-tooltip v-if="!copyMode && canCopyStep(item.step)" content="复制节点：复制后可在插入位置粘贴" placement="top" :show-after="200">
+                <span style="display: inline-flex">
                 <el-button
-                  v-if="!copyMode && canCopyStep(item.step)"
                   text
                   size="small"
                   :icon="CopyDocument"
                   title="复制节点"
                   @click="$emit('copy', [item.index])"
                 />
+                </span></el-tooltip>
+                <el-tooltip v-if="item.step.type === 'input' || item.step.type === 'inputIfExists'" content="修改输入内容：编辑此节点要输入的文字" placement="top" :show-after="200">
+                <span style="display: inline-flex">
                 <el-button
-                  v-if="item.step.type === 'input' || item.step.type === 'inputIfExists'"
                   text
                   size="small"
                   :icon="Edit"
@@ -313,6 +339,9 @@ function branchSplitPath() {
                   title="修改输入内容"
                   @click="$emit('editInput', item.index)"
                 />
+                </span></el-tooltip>
+                <el-tooltip content="删除节点：移除此操作；判断节点同时删除所属分支子节点" placement="top" :show-after="200">
+                <span style="display: inline-flex">
                 <el-button
                   text
                   size="small"
@@ -321,6 +350,7 @@ function branchSplitPath() {
                   title="删除节点"
                   @click="$emit('remove', item.index)"
                 />
+                </span></el-tooltip>
               </span>
             </div>
             <FlowStepEditor
@@ -354,11 +384,11 @@ function branchSplitPath() {
         </div>
         <span v-else class="appium-flow-branch__target">{{ targetLabel(branch) }}</span>
         <div class="appium-flow-branch__actions">
-          <el-dropdown
-            trigger="click"
+          <FlowActionMenu
+            :groups="actionGroups"
             :disabled="!canOpenInsertMenu()"
-            max-height="320px"
-            popper-class="appium-action-dropdown"
+            :clipboard-count="clipboardCount"
+            :is-action-disabled="isActionDisabled"
             @command="insert(branch, $event)"
           >
             <el-button
@@ -370,25 +400,7 @@ function branchSplitPath() {
             >
               插入操作
             </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item v-if="clipboardCount" :command="PASTE_COMMAND" divided>
-                  粘贴 {{ clipboardCount }} 个节点
-                </el-dropdown-item>
-                <template v-for="group in actionGroups" :key="group.title">
-                  <div class="appium-action-dropdown__group">{{ group.title }}</div>
-                  <el-dropdown-item
-                    v-for="action in group.actions"
-                    :key="action.type"
-                    :command="action.type"
-                    :disabled="isActionDisabled(action.type)"
-                  >
-                    {{ action.label }}
-                  </el-dropdown-item>
-                </template>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          </FlowActionMenu>
         </div>
       </div>
     </div>

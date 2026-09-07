@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAiRecognitionModelConfigured } from './appium-recorder/ai-recognition';
 import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -32,6 +33,7 @@ import {
 import * as api from './api';
 import AutomationPage from './pages/AutomationPage.vue';
 import AppiumPage from './appium-recorder/AppiumPage.vue';
+import { DEFAULT_FLOW_BACKGROUND, isHexColor } from './appium-recorder/flow-appearance';
 import ConfigPage from './pages/ConfigPage.vue';
 import GeneratorPage from './pages/GeneratorPage.vue';
 import type {
@@ -99,7 +101,9 @@ const appPresets = ref<AppPreset[]>([]);
 const modelTestStatus = reactive({
   midscene: '',
   scriptOptimizer: '',
+  appium: '',
 });
+const aiRecognitionModelConfigured = shallowRef(false);
 const actionDialog = reactive({
   visible: false,
   title: '',
@@ -149,6 +153,7 @@ const appPresetForm = reactive({
 });
 
 const configForm = reactive<ConfigForm>({
+  appium: { model: { baseUrl: '', apiKey: '', name: '' } },
   runtime: {
     androidSdkPath: '',
     reportOutputPath: '',
@@ -656,6 +661,8 @@ const loadConfig = async () => {
   });
   Object.assign(configForm.midscene.env, payload.midscene.env || {});
   Object.assign(configForm.scriptOptimizer.model, payload.scriptOptimizer.model);
+  Object.assign(configForm.appium.model, payload.appium?.model || { baseUrl: '', apiKey: '', name: '' });
+  aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(configForm.appium.model);
   if (configForm.midscene.model.provider !== 'codex') {
     rememberCustomMidsceneModel();
   }
@@ -692,15 +699,22 @@ const getMidsceneModelConfigError = () => {
   if (model.provider !== 'codex' && !model.apiKey.trim()) missing.push('API Key');
 
   if (!missing.length) return '';
-  return `Midscene 模型配置不完整：缺少 ${missing.join('、')}。请在“参数配置 > Midscene 模型”中选择“使用 Codex”，或补齐自定义提供方后保存。`;
+  return `Midscene 模型配置不完整：缺少 ${missing.join('、')}。请在“参数配置 > Midscene配置 > Midscene 模型”中选择“使用 Codex”，或补齐自定义提供方后保存。`;
 };
 
 const saveModelConfig = async () => {
+  if (!isHexColor(configForm.appium.flowBackgroundColor ?? DEFAULT_FLOW_BACKGROUND)) {
+    ElMessage.warning('流程背景色格式错误，请输入 #RGB 或 #RRGGBB');
+    return;
+  }
   isSavingModelConfig.value = true;
   errorMessage.value = '';
   openActionDialog('保存参数配置');
   try {
-    await api.saveConfig(configForm);
+    // 保存的是本次提交快照，不能把请求期间尚未保存的改动标记为已配置。
+    const snapshot = JSON.parse(JSON.stringify(configForm)) as ConfigForm;
+    await api.saveConfig(snapshot);
+    aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(snapshot.appium.model);
     closeActionDialog();
     ElMessage.success('参数配置已保存');
   } catch (error) {
@@ -776,14 +790,11 @@ const removeAppPreset = async (id: string) => {
   }
 };
 
-const testModel = async (key: 'midscene' | 'scriptOptimizer') => {
+const testModel = async (key: 'midscene' | 'scriptOptimizer' | 'appium') => {
   testingModelKey.value = key;
   errorMessage.value = '';
   modelTestStatus[key] = '';
-  const model =
-    key === 'midscene'
-      ? configForm.midscene.model
-      : configForm.scriptOptimizer.model;
+  const model = configForm[key].model;
 
   try {
     const payload = await api.testModel({ modelKey: key, model });
@@ -1557,6 +1568,8 @@ onUnmounted(() => {
           v-show="activeMenu === 'appium'"
           :active="activeMenu === 'appium'"
           :app-presets="appPresets"
+          :ai-recognition-model-configured="aiRecognitionModelConfigured"
+          :flow-background-color="configForm.appium.flowBackgroundColor"
           :device-actions="deviceActions"
           :playground-available="playgroundAvailable"
           :playground-device-id="playgroundDeviceId"

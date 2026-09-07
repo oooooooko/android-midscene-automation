@@ -19,6 +19,11 @@ export type AppiumRecordedStepRecord = {
     | 'backIfExists'
     | 'waitFor'
     | 'assertExists'
+    | 'checkboxState'
+    | 'checkedState'
+    | 'radioButtonState'
+    | 'aiRecognition'
+    | 'textClick'
     | 'key'
     | 'waitActivity'
     | 'delay'
@@ -27,6 +32,8 @@ export type AppiumRecordedStepRecord = {
     | 'swipe'
     | 'screenshot'
     | 'launchApp'
+    | 'openGallery'
+    | 'endFlow'
     | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
@@ -34,6 +41,7 @@ export type AppiumRecordedStepRecord = {
     | 'pinch'
     | 'runScript'
     | 'noop'
+    | 'log'
     | 'visualChange';
   label: string;
   note?: string;
@@ -74,9 +82,10 @@ export type AppiumRecordedStepRecord = {
     source?: 'node' | 'ancestor' | 'fallback';
   };
   value?: string;
-  optional?: boolean;
+  logPrefix?: string;
   keyCode?: number;
   timeoutMs?: number;
+  longPressMode?: 'element' | 'coordinates';
   flow?: {
     nodeKind?: 'action' | 'condition' | 'assertion';
     yesTargetId?: string;

@@ -342,6 +342,11 @@ body {
   padding: 16px;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-control);
+}
+
+.config-model-grid > section,
+.config-page .config-grid > .config-module-card > .el-card__body,
+.config-appium-card > .el-card__body {
   background: var(--ui-bg-soft);
 }
 

@@ -1,34 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Delete, Edit, QuestionFilled } from '@element-plus/icons-vue';
-import {
-  codexMidsceneModelOptions,
-  midsceneModelPresets,
-  type MidsceneModelProvider,
-} from '../config/midscene-model-presets';
+import { shallowRef } from 'vue';
+import BaseConfigPanel from '../components/config/BaseConfigPanel.vue';
+import MidsceneConfigPanel from '../components/config/MidsceneConfigPanel.vue';
+import AppiumConfigPanel from '../components/config/AppiumConfigPanel.vue';
+import type { MidsceneModelProvider } from '../config/midscene-model-presets';
 import type { AppPreset, ConfigForm } from '../types';
 
-type AppPresetForm = {
-  id: string;
-  name: string;
-  packageName: string;
-};
-
-const props = defineProps<{
+defineProps<{
   configForm: ConfigForm;
   appPresets: AppPreset[];
-  appPresetForm: AppPresetForm;
+  appPresetForm: Pick<AppPreset, 'id' | 'name' | 'packageName'>;
   testingModelKey: string;
   isSavingModelConfig: boolean;
   isSavingAppPreset: boolean;
-  modelTestStatus: {
-    midscene: string;
-    scriptOptimizer: string;
-  };
+  modelTestStatus: { midscene: string; scriptOptimizer: string; appium?: string };
 }>();
 
-const emit = defineEmits<{
-  testModel: [key: 'midscene' | 'scriptOptimizer'];
+defineEmits<{
+  testModel: [key: 'midscene' | 'scriptOptimizer' | 'appium'];
   saveModelConfig: [];
   saveAppPreset: [];
   editAppPreset: [app: AppPreset];
@@ -36,256 +25,109 @@ const emit = defineEmits<{
   updateMidsceneModelProvider: [provider: MidsceneModelProvider];
 }>();
 
-const activeMidsceneProvider = computed<MidsceneModelProvider>(() =>
-  props.configForm.midscene.model.provider === 'codex' ? 'codex' : 'custom',
-);
-const modelConfigGuideUrl = 'https://midscenejs.com/zh/model-common-config.html';
+const tabs = [
+  { name: 'basic', label: '基础配置' },
+  { name: 'midscene', label: 'Midscene配置' },
+  { name: 'appium', label: 'Appium配置' },
+] as const;
+const activeTab = shallowRef<(typeof tabs)[number]['name']>('basic');
 
-const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
-
-const updateMidsceneModelName = (value: string) => {
-  props.configForm.midscene.model.name = value;
-  const option = codexMidsceneModelOptions.find((item) => item.value === value);
-  if (option) {
-    props.configForm.midscene.model.family = option.family;
-  }
-};
-
-const updateCustomMidsceneBaseUrl = (value: string) => {
-  props.configForm.midscene.model.baseUrl = value;
-  const preset = midsceneModelPresets.find((item) => normalizeBaseUrl(item.baseUrl) === normalizeBaseUrl(value));
-  if (preset) {
-    props.configForm.midscene.model.name = preset.modelName;
-    props.configForm.midscene.model.family = preset.modelFamily;
-  }
-};
-
-const updateMidsceneProvider = (value: string) => {
-  if (value === 'custom' || value === 'codex') {
-    emit('updateMidsceneModelProvider', value);
-  }
-};
-
-const openModelConfigGuide = () => {
-  window.open(modelConfigGuideUrl, '_blank', 'noopener,noreferrer');
-};
+function handleTabKeydown(event: KeyboardEvent, index: number) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+    : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  activeTab.value = tabs[nextIndex].name;
+  (event.currentTarget as HTMLElement).parentElement
+    ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+}
 </script>
 
 <template>
   <div class="config-page">
-    <section class="config-grid">
-      <el-card shadow="never" class="config-module-card">
-        <template #header>
-          <div class="panel-header">
-            <span>运行配置</span>
-            <el-button type="primary" :loading="isSavingModelConfig" @click="$emit('saveModelConfig')">
-              保存运行配置
-            </el-button>
-          </div>
-        </template>
+    <div class="subnav config-tabs" role="tablist" aria-label="参数配置分类">
+      <button
+        v-for="(tab, index) in tabs"
+        :id="`config-tab-${tab.name}`"
+        :key="tab.name"
+        type="button"
+        role="tab"
+        class="subnav__item"
+        :class="{ 'subnav__item--active': activeTab === tab.name }"
+        :aria-selected="activeTab === tab.name"
+        :aria-controls="`config-panel-${tab.name}`"
+        :tabindex="activeTab === tab.name ? 0 : -1"
+        @click="activeTab = tab.name"
+        @keydown="handleTabKeydown($event, index)"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
 
-        <el-form label-position="top">
-          <el-form-item label="Android SDK 路径">
-            <el-input
-              v-model="configForm.runtime.androidSdkPath"
-              clearable
-              placeholder="留空时读取 ANDROID_SDK_ROOT、ANDROID_HOME 或系统默认路径"
-            />
-          </el-form-item>
-          <el-form-item label="回放报告目录">
-            <el-input
-              v-model="configForm.runtime.reportOutputPath"
-              clearable
-              placeholder="留空时保存到启动目录下的 output"
-            />
-          </el-form-item>
-        </el-form>
-      </el-card>
+    <!-- 保留表单实例，切换分类时不重置编辑状态和正在进行的模型测试。 -->
+    <section
+      v-show="activeTab === 'basic'"
+      id="config-panel-basic"
+      role="tabpanel"
+      aria-labelledby="config-tab-basic"
+    >
+      <BaseConfigPanel
+        :config-form="configForm"
+        :app-presets="appPresets"
+        :app-preset-form="appPresetForm"
+        :is-saving-model-config="isSavingModelConfig"
+        :is-saving-app-preset="isSavingAppPreset"
+        @save-model-config="$emit('saveModelConfig')"
+        @save-app-preset="$emit('saveAppPreset')"
+        @edit-app-preset="$emit('editAppPreset', $event)"
+        @delete-app-preset="$emit('deleteAppPreset', $event)"
+      />
+    </section>
 
-      <el-card shadow="never" class="config-module-card">
-        <template #header>
-          <div class="panel-header">
-            <div class="panel-header__title">
-              <span>预设 App 参数</span>
-              <el-tag v-if="appPresetForm.id" size="small" type="warning">编辑中</el-tag>
-            </div>
-            <div class="panel-header__actions">
-              <el-button type="primary" :loading="isSavingAppPreset" @click="$emit('saveAppPreset')">
-                {{ appPresetForm.id ? '保存修改' : '保存 App' }}
-              </el-button>
-            </div>
-          </div>
-        </template>
+    <section
+      v-show="activeTab === 'midscene'"
+      id="config-panel-midscene"
+      role="tabpanel"
+      aria-labelledby="config-tab-midscene"
+    >
+      <MidsceneConfigPanel
+        :config-form="configForm"
+        :testing-model-key="testingModelKey"
+        :is-saving-model-config="isSavingModelConfig"
+        :model-test-status="modelTestStatus"
+        @test-model="$emit('testModel', $event)"
+        @save-model-config="$emit('saveModelConfig')"
+        @update-midscene-model-provider="$emit('updateMidsceneModelProvider', $event)"
+      />
+    </section>
 
-        <el-form label-position="top">
-          <el-form-item label="App 名称">
-            <el-input v-model="appPresetForm.name" placeholder="例如：示例 App" />
-          </el-form-item>
-          <el-form-item label="App 包名">
-            <el-input v-model="appPresetForm.packageName" placeholder="例如：com.example.app" />
-          </el-form-item>
-        </el-form>
-
-        <div class="app-preset-list">
-          <div v-for="app in appPresets" :key="app.id" class="app-preset-row">
-            <div class="app-preset-row__main">
-              <strong>{{ app.name }}</strong>
-              <span>{{ app.packageName }}</span>
-            </div>
-            <div class="script-row__actions">
-              <el-button text size="small" :icon="Edit" @click="$emit('editAppPreset', app)" />
-              <el-button text size="small" :icon="Delete" @click="$emit('deleteAppPreset', app.id)" />
-            </div>
-          </div>
-          <el-empty v-if="!appPresets.length" description="暂无预设 App" />
-        </div>
-      </el-card>
-
-      <el-card shadow="never" class="config-module-card">
-        <template #header>
-          <div class="panel-header">
-            <span>模型配置</span>
-            <el-button type="primary" :loading="isSavingModelConfig" @click="$emit('saveModelConfig')">
-              保存模型配置
-            </el-button>
-          </div>
-        </template>
-
-        <div class="config-model-grid">
-          <section>
-            <div class="panel-header panel-header--sub">
-              <span>Midscene 模型</span>
-              <el-button
-                :loading="testingModelKey === 'midscene'"
-                @click="$emit('testModel', 'midscene')"
-              >
-                测试模型
-              </el-button>
-            </div>
-            <el-form label-position="top">
-              <el-form-item label="接入方式">
-                <el-select
-                  :model-value="activeMidsceneProvider"
-                  @change="updateMidsceneProvider"
-                >
-                  <el-option label="自定义提供方" value="custom" />
-                  <el-option label="使用 Codex" value="codex" />
-                </el-select>
-              </el-form-item>
-
-              <template v-if="activeMidsceneProvider === 'custom'">
-                <el-form-item label="Base URL">
-                  <el-input
-                    :model-value="configForm.midscene.model.baseUrl"
-                    placeholder="输入 Base URL，匹配已知提供方时自动填充模型"
-                    @input="updateCustomMidsceneBaseUrl"
-                  />
-                </el-form-item>
-                <el-form-item label="API Key">
-                  <el-input v-model="configForm.midscene.model.apiKey" show-password />
-                </el-form-item>
-                <el-form-item>
-                  <template #label>
-                    <span class="config-field-label">
-                      <span>Model Name</span>
-                      <el-tooltip content="查看模型填写参考" placement="top">
-                        <el-button
-                          class="config-field-help"
-                          text
-                          size="small"
-                          :icon="QuestionFilled"
-                          aria-label="查看 Model Name 填写参考"
-                          @click.stop="openModelConfigGuide"
-                        />
-                      </el-tooltip>
-                    </span>
-                  </template>
-                  <el-input v-model="configForm.midscene.model.name" placeholder="例如：gpt-5.5" />
-                </el-form-item>
-                <el-form-item>
-                  <template #label>
-                    <span class="config-field-label">
-                      <span>Model Family</span>
-                      <el-tooltip content="查看模型填写参考" placement="top">
-                        <el-button
-                          class="config-field-help"
-                          text
-                          size="small"
-                          :icon="QuestionFilled"
-                          aria-label="查看 Model Family 填写参考"
-                          @click.stop="openModelConfigGuide"
-                        />
-                      </el-tooltip>
-                    </span>
-                  </template>
-                  <el-input v-model="configForm.midscene.model.family" placeholder="例如：gpt-5" />
-                </el-form-item>
-              </template>
-
-              <template v-else>
-                <el-alert
-                  class="config-form-alert"
-                  type="info"
-                  :closable="false"
-                  title="复用 Codex 登录态，无需 API Key。请确保 codex 在 PATH 中可用，并已完成 codex login。"
-                />
-                <el-form-item label="Base URL">
-                  <el-input :model-value="configForm.midscene.model.baseUrl" readonly />
-                </el-form-item>
-                <el-form-item label="Model Name">
-                  <el-select
-                    :model-value="configForm.midscene.model.name"
-                    @change="updateMidsceneModelName"
-                  >
-                    <el-option
-                      v-for="option in codexMidsceneModelOptions"
-                      :key="option.value"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="Model Family">
-                  <el-select v-model="configForm.midscene.model.family" disabled>
-                    <el-option label="gpt-5" value="gpt-5" />
-                  </el-select>
-                </el-form-item>
-              </template>
-              <el-form-item v-if="modelTestStatus.midscene" label="测试结果">
-                <el-input :model-value="modelTestStatus.midscene" readonly />
-              </el-form-item>
-            </el-form>
-          </section>
-
-          <section>
-            <div class="panel-header panel-header--sub">
-              <span>脚本优化模型</span>
-              <el-button
-                :loading="testingModelKey === 'scriptOptimizer'"
-                @click="$emit('testModel', 'scriptOptimizer')"
-              >
-                测试模型
-              </el-button>
-            </div>
-            <el-form label-position="top">
-              <el-form-item label="Base URL">
-                <el-input v-model="configForm.scriptOptimizer.model.baseUrl" />
-              </el-form-item>
-              <el-form-item label="API Key">
-                <el-input v-model="configForm.scriptOptimizer.model.apiKey" show-password />
-              </el-form-item>
-              <el-form-item label="Model Name">
-                <el-input v-model="configForm.scriptOptimizer.model.name" />
-              </el-form-item>
-              <el-form-item v-if="modelTestStatus.scriptOptimizer" label="测试结果">
-                <el-input :model-value="modelTestStatus.scriptOptimizer" readonly />
-              </el-form-item>
-            </el-form>
-          </section>
-        </div>
-
-      </el-card>
-
+    <section
+      v-show="activeTab === 'appium'"
+      id="config-panel-appium"
+      role="tabpanel"
+      aria-labelledby="config-tab-appium"
+    >
+      <AppiumConfigPanel
+        :config-form="configForm"
+        :testing-model-key="testingModelKey"
+        :is-saving-model-config="isSavingModelConfig"
+        :test-status="modelTestStatus.appium"
+        @test-model="$emit('testModel', 'appium')"
+        @save-model-config="$emit('saveModelConfig')"
+      />
     </section>
   </div>
 </template>
+
+<style scoped>
+.config-tabs {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  :deep(.config-model-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

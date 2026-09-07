@@ -1070,7 +1070,7 @@ export function createApiMiddleware() {
     if (req.url === '/api/test-model' && req.method === 'POST') {
       try {
         const parsed = await readBody<{
-          modelKey?: 'midscene' | 'scriptOptimizer';
+          modelKey?: 'midscene' | 'scriptOptimizer' | 'appium';
           model?: {
             provider?: 'custom' | 'codex';
             baseUrl?: string;

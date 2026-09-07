@@ -1,11 +1,14 @@
 import fs from 'node:fs';
+import { isHexColor, normalizeFlowBackground } from '../src/appium-recorder/flow-appearance';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import { appDataPath } from './paths';
 import { loadModelConfigFromDb, saveModelConfigToDb } from './config-store';
+import type { AiRecognitionModel } from '../src/appium-recorder/ai-recognition';
 
 export type AppConfig = {
+  appium: { model: AiRecognitionModel; flowBackgroundColor?: string };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;
@@ -43,6 +46,7 @@ export class ConfigValidationError extends Error {
 
 function defaultConfig(): AppConfig {
   return {
+    appium: { model: { baseUrl: '', apiKey: '', name: '' } },
     runtime: {
       androidSdkPath: '',
       reportOutputPath: '',
@@ -78,6 +82,14 @@ function normalizeEnv(env: unknown): Record<string, string> {
 function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConfig {
   const fallback = defaultConfig();
   return {
+    // 旧配置没有 Appium 模型时保留空值，不借用其他模型或改变已有配置。
+    appium: {
+      flowBackgroundColor: normalizeFlowBackground(config?.appium?.flowBackgroundColor),
+      model: Object.fromEntries(['baseUrl', 'apiKey', 'name'].map((key) => {
+        const value = config?.appium?.model?.[key as keyof AiRecognitionModel];
+        return [key, typeof value === 'string' ? value.trim() : ''];
+      })) as AiRecognitionModel,
+    },
     runtime: {
       androidSdkPath: config?.runtime?.androidSdkPath?.trim() || fallback.runtime.androidSdkPath,
       reportOutputPath: config?.runtime?.reportOutputPath?.trim() || fallback.runtime.reportOutputPath,
@@ -194,6 +206,9 @@ export function loadConfig(): AppConfig {
 }
 
 export function saveConfig(config: AppConfig) {
+  if (config.appium?.flowBackgroundColor !== undefined && !isHexColor(config.appium.flowBackgroundColor)) {
+    throw new ConfigValidationError('流程背景色必须是有效的十六进制颜色（#RGB 或 #RRGGBB）');
+  }
   const normalized = normalizeConfig(config);
   validateRuntimeConfig(normalized);
   cachedConfig = normalized;

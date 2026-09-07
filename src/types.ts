@@ -1,5 +1,6 @@
 import type { ScriptStep } from './script-generator';
 import type { MidsceneModelProvider } from './config/midscene-model-presets';
+import type { AiRecognitionModel } from './appium-recorder/ai-recognition';
 
 export type MenuKey = 'generator' | 'automation' | 'config' | 'appium';
 export type GeneratorMode = 'ai' | 'manual';
@@ -11,6 +12,7 @@ export type GeneratorForm = {
 };
 
 export type ConfigForm = {
+  appium: { model: AiRecognitionModel; flowBackgroundColor?: string };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;

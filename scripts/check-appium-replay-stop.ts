@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { createServer, type ServerResponse } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PNG } from 'pngjs';
 
 const dataRoot = await mkdtemp(join(tmpdir(), 'appium-replay-check-'));
+const savedEnv = { ...process.env };
+const originalExecFile = childProcess.execFile;
 let elementRequestReceived = false;
 let pendingElementResponse: ServerResponse | null = null;
 let pendingDeleteResponse: ServerResponse | null = null;
@@ -13,12 +18,6 @@ const server = createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
   if (req.method === 'POST' && req.url === '/session') {
     res.end(JSON.stringify({ value: { sessionId: 'check-session' } }));
-    return;
-  }
-  if (req.method === 'GET' && req.url === '/session/check-session/screenshot') {
-    res.end(JSON.stringify({
-      value: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-    }));
     return;
   }
   if (req.method === 'POST' && req.url === '/session/check-session/element') {
@@ -40,6 +39,21 @@ process.env.APPIUM_SERVER_URL = `http://127.0.0.1:${address.port}`;
 process.env.ANDROID_MIDSCENE_DATA_ROOT = dataRoot;
 
 try {
+  // Report frames use ADB now; keep this test independent of any local SDK or device.
+  const sdk = join(dataRoot, 'sdk');
+  const adb = join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
+  await mkdir(join(sdk, 'platform-tools'), { recursive: true });
+  await writeFile(adb, '');
+  process.env.ANDROID_SDK_ROOT = sdk;
+  process.env.ANDROID_HOME = sdk;
+  const screenshot = PNG.sync.write(new PNG({ width: 2, height: 2 }));
+  childProcess.execFile = ((command, args, optionsOrCallback, callback) => {
+    assert.equal(command, adb);
+    const done = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+    queueMicrotask(() => done(null, args.includes('screencap') ? screenshot : '', ''));
+    return {};
+  }) as typeof childProcess.execFile;
+  syncBuiltinESMExports();
   const { replayAppiumScript } = await import('../server/appium-recorder/appium-runner');
   const controller = new AbortController();
   const startedAt = Date.now();
@@ -90,6 +104,12 @@ try {
   new Function(runnableScripts.at(-1)?.[1] || '');
   console.log('Appium 回放终止、报告、日志和截图回放检查通过');
 } finally {
+  childProcess.execFile = originalExecFile;
+  syncBuiltinESMExports();
+  for (const key of ['ANDROID_MIDSCENE_DATA_ROOT', 'ANDROID_SDK_ROOT', 'ANDROID_HOME', 'APPIUM_SERVER_URL', 'PATH']) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
   pendingElementResponse?.destroy();
   pendingDeleteResponse?.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -55,6 +55,8 @@ export type AppiumNode = {
   packageName: string;
   clickable: boolean;
   enabled: boolean;
+  checkable?: boolean;
+  checked?: boolean;
   xpath: string;
   bounds?: AppiumBounds;
   selector: AppiumSelector;
@@ -73,6 +75,11 @@ export type AppiumRecordedStep = {
     | 'backIfExists'
     | 'waitFor'
     | 'assertExists'
+    | 'checkboxState'
+    | 'checkedState'
+    | 'radioButtonState'
+    | 'aiRecognition'
+    | 'textClick'
     | 'key'
     | 'waitActivity'
     | 'delay'
@@ -81,6 +88,8 @@ export type AppiumRecordedStep = {
     | 'swipe'
     | 'screenshot'
     | 'launchApp'
+    | 'openGallery'
+    | 'endFlow'
     | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
@@ -88,6 +97,7 @@ export type AppiumRecordedStep = {
     | 'pinch'
     | 'runScript'
     | 'noop'
+    | 'log'
     | 'visualChange';
   label: string;
   note?: string;
@@ -96,9 +106,10 @@ export type AppiumRecordedStep = {
   selectorChain?: AppiumSelector[];
   fallback?: AppiumSelector;
   value?: string;
-  optional?: boolean;
+  logPrefix?: string;
   keyCode?: number;
   timeoutMs?: number;
+  longPressMode?: 'element' | 'coordinates';
   flow?: {
     nodeKind?: 'action' | 'condition' | 'assertion';
     yesTargetId?: string;

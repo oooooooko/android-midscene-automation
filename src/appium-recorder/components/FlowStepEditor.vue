@@ -2,6 +2,12 @@
 import { computed } from 'vue';
 import type { AppiumRecordedStep, AppiumSelector } from '../types';
 import { normalizeVisualChangeConfig } from '../visual-change';
+import { longPressMode } from '../long-press';
+import { defaultFlowKind, isBooleanCondition } from '../flow-labels';
+import TextClickSettings from './TextClickSettings.vue';
+import { isNativeStateCondition } from '../native-control-state';
+import LongPressSettings from './LongPressSettings.vue';
+import StageLogSettings from './StageLogSettings.vue';
 
 type FlowKind = 'action' | 'condition' | 'assertion';
 type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
@@ -30,9 +36,7 @@ const visualChangeConfigDisabled = computed(() => Boolean(
 ));
 
 function defaultKind(): FlowKind {
-  if (props.step.flow?.nodeKind) return props.step.flow.nodeKind;
-  if (props.step.type === 'assertExists' || props.step.type === 'assertText' || props.step.type === 'visualChange') return 'assertion';
-  return 'action';
+  return defaultFlowKind(props.step);
 }
 
 function patchStep(patch: Partial<AppiumRecordedStep>) {
@@ -89,17 +93,21 @@ function patchVisualRegion(key: keyof VisualChangeConfig['region'], value: unkno
   });
 }
 
-function timeoutLabel() {
-  return props.step.type === 'longPress' ? '长按时间 ms' : '超时时间 ms';
-}
-
-function timeoutMin() {
-  return props.step.type === 'longPress' ? 80 : 0;
-}
-
 function patchTimeout(value: unknown) {
-  const timeout = Math.max(timeoutMin(), toInteger(value, props.step.timeoutMs || 0));
+  const timeout = Math.max(0, toInteger(value, props.step.timeoutMs || 0));
   patchStep({ timeoutMs: timeout || undefined });
+}
+
+const showSelector = computed(() => props.step.selector && (
+  props.step.type !== 'longPress' || longPressMode(props.step) === 'element'
+));
+
+function patchSelector(patch: Partial<AppiumSelector>) {
+  patchStep({
+    selector: { ...props.step.selector!, ...patch },
+    // 修改元素目标后，不能继续优先使用录制时的备用 XPath。
+    ...(props.step.type === 'longPress' || isNativeStateCondition(props.step) ? { selectorChain: undefined } : {}),
+  });
 }
 </script>
 
@@ -126,7 +134,7 @@ function patchTimeout(value: unknown) {
         <el-form-item label="节点类型">
           <el-select
             :model-value="defaultKind()"
-            :disabled="disabled"
+            :disabled="disabled || isBooleanCondition(step) || step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow'"
             @update:model-value="patchFlow({ nodeKind: $event as FlowKind })"
           >
             <el-option label="操作" value="action" />
@@ -134,17 +142,26 @@ function patchTimeout(value: unknown) {
             <el-option label="校验" value="assertion" />
           </el-select>
         </el-form-item>
-        <el-form-item :label="timeoutLabel()">
+        <el-form-item v-if="step.type !== 'longPress' && step.type !== 'log' && step.type !== 'openGallery' && step.type !== 'endFlow'" label="超时时间 ms">
           <el-input-number
             :model-value="step.timeoutMs || undefined"
             :disabled="disabled"
-            :min="timeoutMin()"
+            :min="0"
             :max="999999"
             controls-position="right"
             @update:model-value="patchTimeout($event)"
           />
         </el-form-item>
       </div>
+      <LongPressSettings v-if="step.type === 'longPress'" :step="step" :disabled="disabled" @update="patchStep" />
+      <StageLogSettings v-if="step.type === 'log'" :step="step" :disabled="disabled" @update="patchStep" />
+      <TextClickSettings v-if="step.type === 'textClick'" :step="step" :disabled="disabled" @update="patchStep" />
+      <el-form-item v-if="step.type === 'aiRecognition'" label="识别内容">
+        <el-input
+          :model-value="step.value || ''" type="textarea" :rows="3" maxlength="4000"
+          :disabled="disabled" @update:model-value="patchStep({ value: String($event) })"
+        />
+      </el-form-item>
       <el-form-item
         v-if="step.type === 'input' || step.type === 'inputIfExists' || step.type === 'assertText'"
         label="文本内容"
@@ -297,12 +314,12 @@ function patchTimeout(value: unknown) {
           />
         </el-form-item>
       </div>
-      <div v-if="step.selector" class="appium-flow-editor__grid">
+      <div v-if="showSelector && step.selector" class="appium-flow-editor__grid">
         <el-form-item label="Selector 类型">
           <el-select
             :model-value="step.selector.strategy"
             :disabled="disabled"
-            @update:model-value="patchStep({ selector: { ...step.selector!, strategy: $event as AppiumSelector['strategy'] } })"
+            @update:model-value="patchSelector({ strategy: $event as AppiumSelector['strategy'] })"
           >
             <el-option label="accessibility id" value="accessibilityId" />
             <el-option label="id" value="id" />
@@ -314,11 +331,11 @@ function patchTimeout(value: unknown) {
           <el-input
             :model-value="step.selector.value || ''"
             :disabled="disabled"
-            @update:model-value="patchStep({ selector: { ...step.selector!, value: String($event) } })"
+            @update:model-value="patchSelector({ value: String($event) })"
           />
         </el-form-item>
       </div>
-      <div v-if="step.selector" class="appium-flow-editor__grid">
+      <div v-if="showSelector" class="appium-flow-editor__grid">
         <el-form-item label="父级上下文类型">
           <el-select
             :model-value="step.contextSelector?.strategy || ''"
@@ -341,16 +358,7 @@ function patchTimeout(value: unknown) {
           />
         </el-form-item>
       </div>
-      <el-form-item v-if="step.type !== 'visualChange'" label="可选步骤">
-        <el-switch
-          :model-value="Boolean(step.optional)"
-          :disabled="disabled"
-          active-text="找不到时跳过"
-          inactive-text="找不到时失败"
-          @update:model-value="patchStep({ optional: Boolean($event) })"
-        />
-      </el-form-item>
-      <div v-if="defaultKind() === 'condition'" class="appium-flow-editor__grid">
+      <div v-if="defaultKind() === 'condition' && !isBooleanCondition(step)" class="appium-flow-editor__grid">
         <el-form-item label="指定文本（可选）">
           <el-input
             :model-value="step.value || ''"
