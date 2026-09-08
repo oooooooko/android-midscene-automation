@@ -4,6 +4,12 @@ type FlowTargetKey = 'yesTargetId' | 'noTargetId' | 'successTargetId' | 'failure
 
 const FLOW_TARGET_KEYS: FlowTargetKey[] = ['yesTargetId', 'noTargetId', 'successTargetId', 'failureTargetId'];
 
+export function removeFlowSteps(steps: AppiumRecordedStep[], indexes: number[]) {
+  const ids = [...new Set(indexes)].sort((a, b) => b - a).map((index) => steps[index]?.id).filter(Boolean);
+  // 使用稳定 ID 逐个删除，避免前一次删除导致后续索引错位。
+  return ids.reduce((current, id) => removeFlowStep(current, current.findIndex((step) => step.id === id)), steps);
+}
+
 function sameBranch(step: AppiumRecordedStep, removed: AppiumRecordedStep) {
   return Boolean(
     removed.flow?.parentConditionId

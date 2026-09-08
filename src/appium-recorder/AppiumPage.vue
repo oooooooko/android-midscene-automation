@@ -2095,14 +2095,11 @@ watch(
                     />
                   </el-select>
                 </div>
-                <el-alert
+                <details
                   v-if="scriptActivityMismatch"
-                  class="appium-activity-lock-alert"
-                  title="当前脚本已锁定"
-                  type="warning"
-                  show-icon
-                  :closable="false"
+                  class="appium-activity-summary"
                 >
+                  <summary>当前页面与脚本不一致，部分录制操作不可用</summary>
                   <div class="appium-activity-lock-alert__details">
                     <div>
                       <strong>脚本绑定</strong>
@@ -2114,7 +2111,7 @@ watch(
                     </div>
                     <p>请在录制流程中添加或执行“启动 APP”节点；Activity 匹配后会自动解除编辑锁定。</p>
                   </div>
-                </el-alert>
+                </details>
                 <NodeDetail
                   :node="selectedNode"
                   :current-activity="currentActivity"
@@ -2122,7 +2119,7 @@ watch(
                 />
               </section>
 
-              <section class="appium-workbench__section">
+              <section class="appium-workbench__section appium-workbench__flow">
                 <h3>录制步骤</h3>
                 <RecordedSteps
                   :key="newScriptRevision"
@@ -2403,3 +2400,18 @@ watch(
     </el-tooltip>
   </section>
 </template>
+
+<style scoped>
+.appium-activity-summary { margin: 8px 0; color: #946000; font-size: 12px; }
+.appium-activity-summary summary { cursor: pointer; line-height: 20px; }
+.appium-activity-summary[open] .appium-activity-lock-alert__details { max-height: 110px; overflow: auto; margin-top: 6px; }
+:deep(.appium-recorder-card--workbench > .el-card__body) { overflow: hidden; }
+:deep(.appium-workbench-tabs > .el-tabs__content) { overflow: hidden; }
+:deep(.appium-workbench-tabs .el-tab-pane) { height: 100%; overflow: auto; }
+.appium-workbench { height: 100%; box-sizing: border-box; grid-template-rows: auto minmax(180px, 1fr); gap: 10px; overflow: auto; }
+.appium-workbench__flow { display: flex; flex-direction: column; min-height: 0; }
+.appium-workbench__flow h3 { margin-bottom: 6px; }
+.appium-workbench__flow :deep(.appium-recorded-steps-panel) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.appium-workbench__flow :deep(.appium-flow-toolbar) { flex: none; margin-bottom: 8px; }
+.appium-workbench__flow :deep(.appium-flow-canvas--vue:not(.appium-flow-canvas--dialog)) { flex: 1; height: auto; min-height: 120px; }
+</style>

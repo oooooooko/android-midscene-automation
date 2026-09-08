@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mergeBranches } from '../src/appium-recorder/flow-merge';
 import { buildFlowGraph } from '../src/appium-recorder/flow-graph';
 import { labelFlowStep } from '../src/appium-recorder/flow-labels';
-import { removeFlowStep } from '../src/appium-recorder/flow-remove';
+import { removeFlowStep, removeFlowSteps } from '../src/appium-recorder/flow-remove';
 import { createFlowClipboard, pasteFlowClipboard } from '../src/appium-recorder/flow-copy';
 import { normalizeLegacyNestedConditionBranches } from '../src/appium-recorder/flow-normalize';
 import type { AppiumRecordedStep } from '../src/appium-recorder/types';
@@ -29,6 +29,8 @@ for (const type of ['assertExists', 'checkedState', 'textClick', 'aiRecognition'
   assert.deepEqual(normalizeLegacyNestedConditionBranches(steps), steps);
   assert.deepEqual(removeFlowStep(steps, 1).map((step) => step.id), ['c', 'common', 'last']);
   assert.deepEqual(removeFlowStep(steps, 0).map((step) => step.id), ['common', 'last']);
+  assert.deepEqual(removeFlowSteps(steps, [0, 1]).map((step) => step.id), ['common', 'last']);
+  assert.deepEqual(removeFlowSteps(steps, [2, 3]).map((step) => step.id), ['c', 'a']);
   const deletedCommon = removeFlowStep(steps, 2);
   assert.equal(deletedCommon[0].flow?.successTargetId, 'last');
   assert.equal(deletedCommon[1].flow?.successTargetId, 'last');

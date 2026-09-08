@@ -90,6 +90,7 @@ export type FlowGraphNodeData =
       expanded: boolean;
       selected: boolean;
       copyMode: boolean;
+      deleteMode?: boolean;
       disabled?: boolean;
       removeDisabled?: boolean;
       mergeDisabled?: boolean;
@@ -134,6 +135,7 @@ type BuildFlowGraphOptions = {
   expandedStepIndex: number | null;
   selectedCopyIndexes: number[];
   copyMode: boolean;
+  deleteMode?: boolean;
   disabled?: boolean;
   removeDisabled?: boolean;
   mergeDisabled?: boolean;
@@ -426,6 +428,7 @@ export function buildFlowGraph(
         expanded: options.expandedStepIndex === item.index,
         selected: options.isCopySelected(item.index),
         copyMode: options.copyMode,
+        deleteMode: options.deleteMode,
         disabled: item.step.type === 'launchApp' || item.step.type === 'clearAppData'
           ? options.isAppExecutionDisabled(item.step.type)
           : item.step.type === 'aiRecognition' ? options.isInsertActionDisabled('aiRecognition') : options.disabled,

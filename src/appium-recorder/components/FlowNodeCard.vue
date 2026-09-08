@@ -159,6 +159,7 @@ watch(() => props.data, () => {
         {
           'appium-flow-step-shell--expanded': data.expanded,
           'appium-flow-step-shell--selected': data.selected,
+          'appium-flow-step-shell--delete-selected': data.selected && data.deleteMode,
           'appium-flow-step-shell--copying': data.copyMode,
           'appium-flow-step-shell--readonly': props.readonly,
         },
@@ -181,7 +182,7 @@ watch(() => props.data, () => {
           <em v-if="data.note" :title="data.note">{{ data.note }}</em>
         </span>
       </button>
-      <span v-if="!props.readonly" class="appium-flow-step-card__actions nodrag nopan" @click.stop>
+      <span v-if="!props.readonly && !data.deleteMode" class="appium-flow-step-card__actions nodrag nopan" @click.stop>
         <el-tooltip v-if="data.flowKind === 'condition' && !data.copyMode" content="合并分支：将两侧后续节点汇入公共流程" placement="top" :show-after="200">
         <span class="appium-node-action-tooltip"><el-button text size="small" :icon="Connection"
           title="合并分支" aria-label="合并分支" :disabled="data.mergeDisabled || Boolean(data.step.flow?.successTargetId)"
@@ -263,6 +264,10 @@ watch(() => props.data, () => {
 </template>
 
 <style scoped>
+.appium-flow-step-shell--delete-selected .appium-flow-step-card { background: #b83232; border-color: #a52a2a; }
+.appium-flow-step-shell--delete-selected .appium-flow-step-card__content strong,
+.appium-flow-step-shell--delete-selected .appium-flow-step-card__content em { color: #fff; }
+.appium-flow-step-shell--delete-selected .appium-flow-step-card__content small { color: #fee2e2; }
 .appium-node-action-tooltip { display: inline-flex; }
 .appium-ai-model-warning { float: left; margin: 2px 6px 0 0; font-size: 16px; }
 </style>

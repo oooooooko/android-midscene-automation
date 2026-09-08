@@ -21,6 +21,7 @@ const props = defineProps<{
   steps: AppiumRecordedStep[];
   expandedStepIndex: number | null;
   copyMode: boolean;
+  deleteMode?: boolean;
   selectedCopyIndexes: number[];
   disabled?: boolean;
   removeDisabled?: boolean;
@@ -61,6 +62,7 @@ let resetViewFrame = 0;
 let pendingResetView = false;
 
 const graph = computed(() => buildFlowGraph(props.steps, {
+  deleteMode: props.deleteMode,
   mergeDisabled: props.mergeDisabled,
   aiRecognitionModelConfigured: props.aiRecognitionModelConfigured,
   expandedStepIndex: props.expandedStepIndex,
