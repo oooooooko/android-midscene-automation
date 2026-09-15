@@ -7,6 +7,8 @@ import type { AppiumRecordedStep } from '../types';
 import { createFlowClipboard } from '../flow-copy';
 import FlowCanvas from './FlowCanvas.vue';
 import MergeBranchesDialog from './MergeBranchesDialog.vue';
+import FlowNodeSearch from './FlowNodeSearch.vue';
+import { searchFlowNodes } from '../flow-search';
 import { labelFlowStep } from '../flow-labels';
 import type { FlowActionGroup, FlowBranch, InsertAction } from '../flow-graph';
 
@@ -24,9 +26,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   remove: [index: number];
   copy: [indexes: number[]];
-  paste: [index: number, branch?: FlowBranch];
+  paste: [index: number, branch?: FlowBranch, beforeStepId?: string];
   addDelay: [index?: number];
-  insertAction: [index: number, action: InsertAction];
+  insertAction: [index: number, action: InsertAction, beforeStepId?: string];
   insertBranchAction: [index: number, branch: FlowBranch, action: InsertAction];
   editInput: [index: number];
   previewLinkedScript: [index: number];
@@ -44,6 +46,14 @@ const selectedCopyIndexes = shallowRef<number[]>([]);
 const flowDialogVisible = shallowRef(false);
 const mainResetViewToken = shallowRef(0);
 const dialogResetViewToken = shallowRef(0);
+const searchQuery = shallowRef('');
+const searchTargetId = shallowRef('');
+const searchFocusToken = shallowRef(0);
+const searchResults = computed(() => searchFlowNodes(props.steps, searchQuery.value));
+function focusSearchResult(id: string) { searchTargetId.value = id; searchFocusToken.value++; }
+watch(searchResults, (results) => {
+  if (!results.some((result) => result.id === searchTargetId.value)) focusSearchResult(results[0]?.id || '');
+});
 
 const insertActionGroups: FlowActionGroup[] = [
   {
@@ -51,6 +61,7 @@ const insertActionGroups: FlowActionGroup[] = [
     actions: [
       { type: 'tap', label: '录制点击' },
       { type: 'input', label: '录制输入' },
+      { type: 'extractVariable', label: '提取变量' },
       { type: 'clearInput', label: '清空输入' },
       { type: 'coordinateTap', label: '点击坐标' },
       { type: 'longPress', label: '长按' },
@@ -78,13 +89,12 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'delay', label: '添加延时' },
       { type: 'popupCondition', label: '判断存在' },
       { type: 'aiRecognition', label: 'AI 识别' },
+      { type: 'imageCheck', label: '图像判断' },
       { type: 'tapIfExists', label: '存在则点击' },
       { type: 'inputIfExists', label: '存在则输入' },
       { type: 'clearIfExists', label: '存在则清空' },
       { type: 'backIfExists', label: '存在则返回' },
       { type: 'waitFor', label: '等待出现' },
-      { type: 'assertExists', label: '断言存在' },
-      { type: 'assertText', label: '断言文本' },
       { type: 'waitDisappear', label: '等待元素消失' },
       { type: 'waitActivity', label: '等待 Activity' },
       { type: 'visualChangeStart', label: '检测画面变化开始节点' },
@@ -96,6 +106,8 @@ const insertActionGroups: FlowActionGroup[] = [
     actions: [
       { type: 'noop', label: '空节点' },
       { type: 'endFlow', label: '终止流程' },
+      { type: 'loop', label: '有界循环' },
+      { type: 'breakLoop', label: '退出循环' },
       { type: 'log', label: '输出日志' },
       { type: 'runScript', label: '连接脚本' },
     ],
@@ -104,10 +116,9 @@ const insertActionGroups: FlowActionGroup[] = [
 
 const mainActionGroups = insertActionGroups.map((group) => ({
   ...group,
-  actions: group.actions.filter((action) => action.type !== 'launchApp' && action.type !== 'clearAppData'),
+  actions: group.actions.filter((action) => action.type !== 'clearAppData'),
 }));
 const startActionGroups = insertActionGroups;
-const hasLaunchAppStep = computed(() => props.steps.some((step) => step.type === 'launchApp'));
 const hasClearAppDataStep = computed(() => props.steps.some((step) => step.type === 'clearAppData'));
 
 function isDescendantStep(descendantIndex: number, ancestorIndex: number) {
@@ -235,8 +246,7 @@ function isInsertActionDisabled(action: InsertAction) {
 }
 
 function isStartActionDisabled(action: InsertAction) {
-  return (action === 'launchApp' && hasLaunchAppStep.value)
-    || (action === 'clearAppData' && hasClearAppDataStep.value)
+  return (action === 'clearAppData' && hasClearAppDataStep.value)
     || isInsertActionDisabled(action);
 }
 
@@ -252,6 +262,7 @@ function updateStep(index: number, step: AppiumRecordedStep) {
 <template>
   <div class="appium-recorded-steps-panel">
     <div class="appium-flow-toolbar">
+      <FlowNodeSearch v-model:query="searchQuery" :results="searchResults" :selected-id="searchTargetId" @select="focusSearchResult" />
       <template v-if="copyMode">
         <span class="appium-flow-toolbar__status">已选择 {{ selectedCopyIndexes.length }} 个节点</span>
         <el-tooltip :content="deleteMode ? '删除选中' : '复制选中'" placement="top" :show-after="200"><span class="flow-toolbar-icon">
@@ -295,6 +306,9 @@ function updateStep(index: number, step: AppiumRecordedStep) {
 
     <FlowCanvas
       id="appium-flow-main"
+      :search-target-id="searchTargetId"
+      :search-focus-token="searchFocusToken"
+      :search-active="!flowDialogVisible"
       :steps="steps"
       :expanded-step-index="expandedStepIndex"
       :copy-mode="copyMode"
@@ -317,9 +331,9 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       :is-copy-selected="isCopySelected"
       @node-click="handleNodeClick"
       @copy="(indexes) => emit('copy', indexes)"
-      @paste="(index, branch) => emit('paste', index, branch)"
+      @paste="(index, branch, beforeStepId) => emit('paste', index, branch, beforeStepId)"
       @remove="(index) => emit('remove', index)"
-      @insert-action="(index, action) => emit('insertAction', index, action)"
+      @insert-action="(index, action, beforeStepId) => emit('insertAction', index, action, beforeStepId)"
       @insert-branch-action="(index, branch, action) => emit('insertBranchAction', index, branch, action)"
       @edit-input="(index) => emit('editInput', index)"
       @preview-linked-script="(index) => emit('previewLinkedScript', index)"
@@ -331,11 +345,14 @@ function updateStep(index: number, step: AppiumRecordedStep) {
     <el-dialog
       v-model="flowDialogVisible"
       title="流程总览"
+      @opened="searchTargetId && focusSearchResult(searchTargetId)"
       width="86vw"
       class="appium-flow-dialog"
+      align-center
       append-to-body
     >
       <div class="appium-flow-toolbar appium-flow-dialog__toolbar">
+        <FlowNodeSearch v-model:query="searchQuery" :results="searchResults" :selected-id="searchTargetId" @select="focusSearchResult" />
         <template v-if="copyMode">
           <span class="appium-flow-toolbar__status">已选择 {{ selectedCopyIndexes.length }} 个节点</span>
           <el-tooltip :content="deleteMode ? '删除选中' : '复制选中'" placement="top" :show-after="200"><span class="flow-toolbar-icon">
@@ -364,6 +381,9 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       </div>
       <FlowCanvas
         id="appium-flow-dialog"
+        :search-target-id="searchTargetId"
+        :search-focus-token="searchFocusToken"
+        :search-active="flowDialogVisible"
         class="appium-flow-canvas--dialog"
         :steps="steps"
         :expanded-step-index="expandedStepIndex"
@@ -387,9 +407,9 @@ function updateStep(index: number, step: AppiumRecordedStep) {
         :is-copy-selected="isCopySelected"
         @node-click="handleNodeClick"
         @copy="(indexes) => emit('copy', indexes)"
-        @paste="(index, branch) => emit('paste', index, branch)"
+        @paste="(index, branch, beforeStepId) => emit('paste', index, branch, beforeStepId)"
         @remove="(index) => emit('remove', index)"
-        @insert-action="(index, action) => emit('insertAction', index, action)"
+        @insert-action="(index, action, beforeStepId) => emit('insertAction', index, action, beforeStepId)"
         @insert-branch-action="(index, branch, action) => emit('insertBranchAction', index, branch, action)"
         @edit-input="(index) => emit('editInput', index)"
         @preview-linked-script="(index) => emit('previewLinkedScript', index)"

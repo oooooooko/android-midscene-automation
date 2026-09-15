@@ -1,6 +1,8 @@
 import { buffer } from 'node:stream/consumers';
 import archiver from 'archiver';
 import type { AppiumRecordedScriptRecord } from './repository';
+import { VariableScope } from './variables';
+import { sensitiveVariableName } from '../../src/appium-recorder/variables';
 
 function safeExportName(name: string) {
   const base = Array.from(name.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_'))
@@ -29,7 +31,11 @@ export async function createAppiumScriptExport(
   }
 
   const exportedAt = new Date().toISOString();
-  const serialize = (script: AppiumRecordedScriptRecord) => JSON.stringify({
+  const serialize = (script: AppiumRecordedScriptRecord) => {
+    const scope = new VariableScope([], script.variables || []);
+    script.steps.forEach(step => step.parameters?.forEach(item => scope.track(item)));
+    const clearSecrets = (items: typeof script.variables = []) => items.map(item => item.sensitive || sensitiveVariableName(item.name) ? { ...item, value: '', sensitive: true } : item);
+    return JSON.stringify(scope.scrub({
     schemaVersion: 1,
     exportedAt,
     script: {
@@ -38,9 +44,11 @@ export async function createAppiumScriptExport(
       appPackage: script.appPackage,
       appActivity: script.appActivity,
       deviceId: script.deviceId,
-      steps: script.steps,
+      variables: clearSecrets(script.variables),
+      steps: script.steps.map(step => ({ ...step, mergeUndo: undefined, ...(step.parameters ? { parameters: clearSecrets(step.parameters) } : {}) })),
     },
-  }, null, 2);
+  }), null, 2);
+  };
   const baseName = safeExportName(root.name);
   if (!root.steps.some((step) => step.type === 'runScript')) {
     return {

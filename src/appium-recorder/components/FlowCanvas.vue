@@ -30,6 +30,9 @@ const props = defineProps<{
   launchingStepId?: string;
   clipboardCount?: number;
   resetViewToken?: number;
+  searchTargetId?: string;
+  searchFocusToken?: number;
+  searchActive?: boolean;
   startActionGroups: FlowActionGroup[];
   mainActionGroups: FlowActionGroup[];
   canOpenInsertMenu: boolean;
@@ -44,9 +47,9 @@ const emit = defineEmits<{
   nodeClick: [index: number];
   merge: [index: number];
   copy: [indexes: number[]];
-  paste: [index: number, branch?: FlowBranch];
+  paste: [index: number, branch?: FlowBranch, beforeStepId?: string];
   remove: [index: number];
-  insertAction: [index: number, action: InsertAction];
+  insertAction: [index: number, action: InsertAction, beforeStepId?: string];
   insertBranchAction: [index: number, branch: FlowBranch, action: InsertAction];
   editInput: [index: number];
   previewLinkedScript: [index: number];
@@ -55,11 +58,23 @@ const emit = defineEmits<{
 }>();
 
 const measuredNodeHeights = shallowRef<Record<string, number>>({});
-const { fitView, updateNodeInternals } = useVueFlow(props.id);
+const { fitView, updateNodeInternals, findNode, setCenter, viewport } = useVueFlow(props.id);
 const paneReady = shallowRef(false);
 let internalsFrame = 0;
 let resetViewFrame = 0;
 let pendingResetView = false;
+let searchFrame = 0;
+watch(() => [props.searchFocusToken, props.searchTargetId, props.searchActive, paneReady.value], async () => {
+  if (searchFrame) cancelAnimationFrame(searchFrame);
+  if (!props.searchActive || !props.searchTargetId || !paneReady.value) return;
+  await nextTick();
+  searchFrame = requestAnimationFrame(() => {
+    const node = findNode(`step:${props.searchTargetId}`);
+    if (!node || !props.searchActive) return;
+    // Move only the viewport; search never rewrites graph positions or selection state.
+    void setCenter(node.position.x + node.dimensions.width / 2, node.position.y + node.dimensions.height / 2, { zoom: viewport.value.zoom, duration: 0 });
+  });
+});
 
 const graph = computed(() => buildFlowGraph(props.steps, {
   deleteMode: props.deleteMode,
@@ -154,6 +169,7 @@ watch(() => props.resetViewToken, () => {
 });
 
 onBeforeUnmount(() => {
+  if (searchFrame) cancelAnimationFrame(searchFrame);
   if (internalsFrame) window.cancelAnimationFrame(internalsFrame);
   if (resetViewFrame) window.cancelAnimationFrame(resetViewFrame);
   pendingResetView = false;
@@ -164,16 +180,17 @@ function handleInsert(payload: {
   action: InsertAction | typeof PASTE_COMMAND;
   branch?: FlowBranch;
   conditionIndex?: number;
+  beforeStepId?: string;
 }) {
   if (payload.action === PASTE_COMMAND) {
-    emit('paste', payload.afterIndex, payload.branch);
+    emit('paste', payload.afterIndex, payload.branch, payload.beforeStepId);
     return;
   }
   if (payload.branch && payload.conditionIndex !== undefined) {
     emit('insertBranchAction', payload.afterIndex, payload.branch, payload.action);
     return;
   }
-  emit('insertAction', payload.afterIndex, payload.action);
+  emit('insertAction', payload.afterIndex, payload.action, payload.beforeStepId);
 }
 </script>
 
@@ -202,9 +219,11 @@ function handleInsert(payload: {
     >
       <template #node-flow-node="{ id: nodeId, data }">
         <FlowNodeCard
+          :steps="steps"
           :node-id="nodeId"
           :data="data"
           :readonly="props.readonly"
+          :search-highlighted="nodeId === `step:${searchTargetId}`"
           @node-click="emit('nodeClick', $event)"
           @copy="emit('copy', [$event])"
           @remove="emit('remove', $event)"

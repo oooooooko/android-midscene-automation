@@ -530,6 +530,28 @@ body {
   background: #111827;
 }
 
+.el-button.recorder-panel-tool {
+  --el-button-text-color: #606266;
+  --el-button-border-color: #dcdfe6;
+  --el-button-disabled-text-color: #a8abb2;
+  --el-button-disabled-border-color: #e4e7ed;
+  --el-color-primary: #409eff;
+  --el-color-primary-light-3: #79bbff;
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #337ecc;
+  width: 30px;
+  min-width: 30px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  margin: 0;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 /* Keep the Appium flow editor on its original Element Plus theme. */
 .appium-recorded-steps-panel,
 .appium-flow-dialog,
@@ -559,6 +581,10 @@ body {
 }
 
 .appium-flow-dialog.el-dialog {
+  display: flex;
+  flex-direction: column;
+  height: 86dvh;
+  max-height: calc(100dvh - 32px);
   overflow: visible;
   padding: 16px;
   border: 0;
@@ -567,6 +593,7 @@ body {
 }
 
 .appium-flow-dialog .el-dialog__header {
+  flex: none;
   padding: 0 0 16px;
   border-bottom: 0;
 }
@@ -577,7 +604,20 @@ body {
 }
 
 .appium-flow-dialog .el-dialog__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   padding: 8px 0 0;
+}
+
+.appium-flow-dialog__toolbar { flex: none; }
+
+/* Keep the canvas within the centered dialog even on short viewports. */
+.appium-flow-dialog .appium-flow-canvas--dialog.appium-flow-canvas--vue {
+  flex: 1;
+  height: auto;
+  min-height: 0;
 }
 
 .appium-flow-dialog .el-dialog__footer {

@@ -5,6 +5,9 @@ import { appDataPath } from '../paths';
 import { loadConfig } from '../config';
 import { saveAppiumReplayReport, type AppiumRecordedScriptRecord, type AppiumRecordedStepRecord } from './repository';
 import { flowBranchLabel } from '../../src/appium-recorder/flow-labels';
+import type { ImageCheckResult } from '../../src/appium-recorder/image-check';
+
+type ReportImageCheck = ImageCheckResult & { nodeId: string; nodeNumber: number; nodeLabel: string; scriptName: string; settings: string };
 
 export type AppiumReplayFrame = {
   sequence: number;
@@ -126,7 +129,7 @@ function compressHtmlPngBase64(base64: string) {
   }
 }
 
-function htmlImageUrl(base64: string, cache: Map<string, string>) {
+export function htmlImageUrl(base64: string, cache: Map<string, string>) {
   const cached = cache.get(base64);
   if (cached) return cached;
 
@@ -245,6 +248,7 @@ function createReplayHtml(input: {
   completedAt: Date;
   frames: AppiumReplayFrame[];
   visualChecks: AppiumReplayVisualCheck[];
+  imageChecks?: ReportImageCheck[];
   output: string;
 }) {
   const imageCache = new Map<string, string>();
@@ -266,6 +270,9 @@ function createReplayHtml(input: {
       diffBase64: undefined,
     })),
     output: input.output,
+    imageChecks: (input.imageChecks || []).map(check => ({ ...check,
+      images: check.images.map(image => ({ label: image.label, url: htmlImageUrl(image.base64, imageCache) })),
+    })),
   });
   const resultClass = input.resultText === '成功' ? 'success' : input.resultText === '已终止' ? 'stopped' : 'failed';
   return `<!doctype html>
@@ -387,6 +394,7 @@ function createReplayHtml(input: {
         </dl>
       </section>
       <nav id="step-list" class="step-list" aria-label="执行步骤"></nav>
+      <details open><summary>图像判断</summary><div id="image-checks" class="visual-check-list"></div></details>
       <details><summary>视觉变化检测</summary><div id="visual-checks" class="visual-check-list"></div></details>
       <details><summary>完整回放日志</summary><pre id="log"></pre></details>
     </aside>
@@ -587,6 +595,37 @@ function createReplayHtml(input: {
       thumbnail.addEventListener('click', (event) => { event.stopPropagation(); pause(); seekTo(frame.offsetMs); });
       elements['timeline-track'].append(thumbnail);
     });
+    const imageChecksElement = document.querySelector('#image-checks');
+    if (!(data.imageChecks || []).length) imageChecksElement.parentElement.hidden = true;
+    (data.imageChecks || []).forEach(check => {
+      const article = document.createElement('article');
+      article.className = 'visual-check';
+      const title = document.createElement('h3');
+      title.textContent = check.scriptName + ' · ' + check.nodeNumber + '. ' + check.nodeLabel;
+      article.append(title);
+      const detail = document.createElement('dl');
+      const region = check.region || {};
+      const entries = [['结果', check.result === null ? '无法判定' : String(check.result)], ['配置', check.settings],
+        ['区域', [region.x, region.y, region.width, region.height].join(', ')],
+        ['采样', check.sampleCount + ' 帧'], ['耗时', check.durationMs + 'ms'], ['说明', check.message], ...Object.entries(check.metrics)];
+      entries.forEach(([key, value]) => {
+        const dt = document.createElement('dt'), dd = document.createElement('dd');
+        dt.textContent = key; dd.textContent = String(value); detail.append(dt, dd);
+      });
+      article.append(detail);
+      const images = document.createElement('div'); images.className = 'visual-images';
+      check.images.forEach(image => {
+        if (!image.url) return;
+        const figure = document.createElement('div'); figure.className = 'visual-image';
+        const caption = document.createElement('span'); caption.textContent = image.label;
+        const img = document.createElement('img'); img.src = image.url; img.alt = image.label; img.title = '点击放大'; img.tabIndex = 0;
+        const open = () => openImagePreview(image.url, check.nodeLabel + ' · ' + image.label);
+        img.addEventListener('click', open);
+        img.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+        figure.append(caption, img); images.append(figure);
+      });
+      article.append(images); imageChecksElement.append(article);
+    });
     if (!visualChecks.length) {
       elements['visual-checks'].textContent = '本次没有视觉变化检测节点';
     }
@@ -689,6 +728,7 @@ export async function createAppiumReplayReport(input: {
   completedAt: Date;
   frames?: AppiumReplayFrame[];
   visualChecks?: AppiumReplayVisualCheck[];
+  imageChecks?: ReportImageCheck[];
 }) {
   const configuredOutputPath = loadConfig().runtime.reportOutputPath.trim();
   const outputDir = appDataPath(configuredOutputPath || 'output');
@@ -721,6 +761,7 @@ export async function createAppiumReplayReport(input: {
     completedAt: input.completedAt,
     frames: input.frames || [],
     visualChecks,
+    imageChecks: input.imageChecks,
     output: persistedOutput,
   });
   const markdown = [

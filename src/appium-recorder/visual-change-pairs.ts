@@ -1,6 +1,7 @@
 import type { AppiumRecordedStep } from './types';
 
 export type VisualChangeBranchTarget = {
+  beforeStepId?: string;
   stepId: string;
   branch: 'yes' | 'no';
 };
@@ -85,16 +86,13 @@ export function branchPathForInsert(
   branchTarget?: VisualChangeBranchTarget,
 ) {
   if (branchTarget) {
+    if (branchTarget.beforeStepId) return branchPathForStep(steps, steps.find(step => step.id === branchTarget.beforeStepId));
     const condition = steps.find((step) => step.id === branchTarget.stepId);
     return [...branchPathForStep(steps, condition), `${branchTarget.stepId}:${branchTarget.branch}`];
   }
   return typeof index === 'number' && index >= 0
     ? branchPathForStep(steps, steps[index])
     : [];
-}
-
-function sameBranchPath(left: string[], right: string[]) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function branchPathContains(parent: string[], child: string[]) {
@@ -118,19 +116,21 @@ function isEndForStart(endStep: AppiumRecordedStep, startStep: AppiumRecordedSte
   );
 }
 
-export function findOpenVisualChangeStart(
+export function findOpenVisualChangeStarts(
   steps: AppiumRecordedStep[],
   index?: number,
   branchTarget?: VisualChangeBranchTarget,
 ) {
   const insertPath = branchPathForInsert(steps, index, branchTarget);
   const insertIndex = typeof index === 'number' ? index : steps.length - 1;
-  // A start marker may be closed once per concrete branch path. This allows a
-  // root start before a condition to have independent yes/no end markers, while
-  // preventing a yes-branch start from pairing with a no-branch end.
+  // 祖先或子分支中的结束节点可能与新节点在同一路径执行，不能重复关闭。
+  // 互斥的兄弟分支不包含彼此，仍允许分别结束同一个开始节点。
   const hasEndInInsertBranch = (startStep: AppiumRecordedStep) => steps.some((step) => (
     isEndForStart(step, startStep)
-    && sameBranchPath(branchPathForStep(steps, step), insertPath)
+    && (
+      branchPathContains(branchPathForStep(steps, step), insertPath)
+      || branchPathContains(insertPath, branchPathForStep(steps, step))
+    )
   ));
 
   return steps
@@ -143,5 +143,13 @@ export function findOpenVisualChangeStart(
     ))
     .sort((left, right) => (
       right.path.length - left.path.length || right.stepIndex - left.stepIndex
-    ))[0]?.step;
+    )).map(({ step }) => step);
+}
+
+export function findOpenVisualChangeStart(
+  steps: AppiumRecordedStep[],
+  index?: number,
+  branchTarget?: VisualChangeBranchTarget,
+) {
+  return findOpenVisualChangeStarts(steps, index, branchTarget)[0];
 }

@@ -25,12 +25,15 @@ type InsertAction =
   | 'launchApp'
   | 'openGallery'
   | 'endFlow'
+  | 'loop'
+  | 'breakLoop'
   | 'clearAppData'
   | 'popupCondition'
   | 'checkboxState'
   | 'checkedState'
   | 'radioButtonState'
   | 'aiRecognition'
+  | 'imageCheck'
   | 'textClick'
   | 'tapIfExists'
   | 'inputIfExists'
@@ -42,6 +45,7 @@ type InsertAction =
   | 'waitDisappear'
   | 'waitActivity'
   | 'runScript'
+  | 'extractVariable'
   | 'noop'
   | 'log'
   | 'visualChangeStart'
@@ -87,6 +91,7 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     actions: [
       { type: 'tap', label: '录制点击' },
       { type: 'input', label: '录制输入' },
+      { type: 'extractVariable', label: '提取变量' },
       { type: 'clearInput', label: '清空输入' },
       { type: 'coordinateTap', label: '点击坐标' },
       { type: 'longPress', label: '长按' },
@@ -97,6 +102,7 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
   {
     title: '设备操作',
     actions: [
+      { type: 'launchApp', label: '启动 App' },
       { type: 'keyBack', label: '系统返回' },
       { type: 'keyHome', label: 'Home 键' },
       { type: 'openGallery', label: '启动相册' },
@@ -112,17 +118,16 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'delay', label: '添加延时' },
       { type: 'popupCondition', label: '判断存在' },
       { type: 'aiRecognition', label: 'AI 识别' },
+      { type: 'imageCheck', label: '图像判断' },
       { type: 'tapIfExists', label: '存在则点击' },
       { type: 'inputIfExists', label: '存在则输入' },
       { type: 'clearIfExists', label: '存在则清空' },
       { type: 'backIfExists', label: '存在则返回' },
       { type: 'waitFor', label: '等待出现' },
-      { type: 'assertExists', label: '断言存在' },
-      { type: 'assertText', label: '断言文本' },
       { type: 'waitDisappear', label: '等待元素消失' },
       { type: 'waitActivity', label: '等待 Activity' },
-      { type: 'visualChangeStart', label: '检测画面变化开始节点' },
-      { type: 'visualChangeEnd', label: '检测画面变化结束节点' },
+      { type: 'visualChangeStart', label: '检测画面变化开始' },
+      { type: 'visualChangeEnd', label: '检测画面变化结束' },
     ],
   },
   {
@@ -130,6 +135,8 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     actions: [
       { type: 'noop', label: '空节点' },
       { type: 'endFlow', label: '终止流程' },
+      { type: 'loop', label: '有界循环' },
+      { type: 'breakLoop', label: '退出循环' },
       { type: 'log', label: '输出日志' },
       { type: 'runScript', label: '连接脚本' },
     ],
@@ -150,11 +157,14 @@ function typeLabel(step: AppiumRecordedStep) {
     pinch: '双指缩放', runScript: '连接脚本', screenshot: '截图', visualChange: '检测画面变化',
     noop: '空节点',
     endFlow: '终止流程',
+    loop: '有界循环',
+    breakLoop: '退出循环',
     log: '输出日志',
     checkboxState: 'Checkbox 状态',
     checkedState: '判断勾选',
     radioButtonState: 'RadioButton 状态',
     aiRecognition: 'AI 识别',
+    imageCheck: '图像判断',
     openGallery: '启动相册',
     textClick: '文字点击',
   };
@@ -162,6 +172,7 @@ function typeLabel(step: AppiumRecordedStep) {
 }
 
 function stepMeta(step: AppiumRecordedStep) {
+  if (step.type === 'imageCheck') return flowStepMeta(step);
   if (step.type === 'delay') return `${step.timeoutMs || 1000}ms`;
   if (step.type === 'input' || step.type === 'inputIfExists') return `输入内容：${step.value || '空'}`;
   if (step.type === 'longPress') return flowStepMeta(step);
@@ -310,7 +321,7 @@ function branchSplitPath() {
                 @click.stop="$emit('nodeClick', item.index)"
               >
                 <span class="appium-flow-node__body">
-                  <span class="appium-flow-node__title">{{ item.step.label }}</span>
+                  <span class="appium-flow-node__title"><span class="appium-flow-node-number">{{ item.index + 1 }}.</span> {{ item.step.label }}</span>
                   <span class="appium-flow-node__meta">
                     {{ kindLabel(defaultKind(item.step)) }} · {{ typeLabel(item.step) }}
                     <template v-if="stepMeta(item.step)"> · {{ stepMeta(item.step) }}</template>
@@ -329,14 +340,14 @@ function branchSplitPath() {
                   @click="$emit('copy', [item.index])"
                 />
                 </span></el-tooltip>
-                <el-tooltip v-if="item.step.type === 'input' || item.step.type === 'inputIfExists'" content="修改输入内容：编辑此节点要输入的文字" placement="top" :show-after="200">
+                <el-tooltip v-if="['input', 'inputIfExists', 'imageCheck', 'runScript'].includes(item.step.type)" :content="item.step.type === 'runScript' ? '修改连接脚本' : item.step.type === 'imageCheck' ? '修改图像判断配置' : '修改输入内容：编辑此节点要输入的文字'" placement="top" :show-after="200">
                 <span style="display: inline-flex">
                 <el-button
                   text
                   size="small"
                   :icon="Edit"
                   :disabled="disabled"
-                  title="修改输入内容"
+                  :title="item.step.type === 'runScript' ? '修改连接脚本' : item.step.type === 'imageCheck' ? '修改图像判断配置' : '修改输入内容'"
                   @click="$emit('editInput', item.index)"
                 />
                 </span></el-tooltip>
@@ -356,6 +367,7 @@ function branchSplitPath() {
             <FlowStepEditor
               v-if="expandedStepIndex === item.index"
               :step="item.step"
+              :steps="steps"
               :index="item.index"
               :disabled="disabled"
               @update="updateStep"

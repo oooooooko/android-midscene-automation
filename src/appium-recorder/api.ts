@@ -1,6 +1,31 @@
 import { APP_BASE } from '../api';
 import type { AppiumRecordedScript, AppiumRecordedStep } from './types';
 import type { AiRecognitionResult } from './ai-recognition';
+import type { TestVariable } from './variables';
+import type { AppiumVisualChangeRegion } from './types';
+
+export function captureImageCheckRegion(deviceId: string, region: AppiumVisualChangeRegion, screenWidth: number, screenHeight: number) {
+  return postJson<{ base64: string; screenWidth: number; screenHeight: number }>(`${APP_BASE}/api/appium-recorder/image-check/capture`, { deviceId, region, screenWidth, screenHeight });
+}
+
+// 队列跨组件挂载保留，切换脚本或清空草稿时仍按编辑顺序写入。
+const variableWrites = new Map<string, Promise<unknown>>();
+export function saveVariables(url: string, variables: TestVariable[]) {
+  const body = JSON.stringify({ variables });
+  const task = (variableWrites.get(url) || Promise.resolve()).catch(() => {}).then(async () => {
+    return readJson<{ variables: TestVariable[] }>(await fetch(url, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, keepalive: true,
+    }));
+  });
+  variableWrites.set(url, task);
+  void task.finally(() => { if (variableWrites.get(url) === task) variableWrites.delete(url); }).catch(() => {});
+  return task;
+}
+
+export async function loadVariables(url: string) {
+  await variableWrites.get(url)?.catch(() => {});
+  return readJson<{ variables: TestVariable[] }>(await fetch(url));
+}
 
 async function readJson<T>(response: Response) {
   const payload = (await response.json().catch(() => ({}))) as T & {
@@ -56,6 +81,7 @@ export async function testAiRecognition(input: { deviceId: string; prompt: strin
 }
 
 export function saveAppiumScript(input: {
+  variables?: import('./variables').TestVariable[];
   id?: string;
   name: string;
   appPackage: string;
@@ -105,7 +131,7 @@ type ReplayStreamEvent =
   | { type: 'error'; message: string };
 
 export async function replayAppiumScript(
-  input: { id: string; deviceId?: string },
+  input: { id: string; deviceId?: string; parameters?: import('./variables').TestVariable[] },
   onOutput?: (line: string) => void,
 ) {
   const response = await fetch(`${APP_BASE}/api/appium-recorder/scripts/${encodeURIComponent(input.id)}/replay`, {
@@ -114,7 +140,7 @@ export async function replayAppiumScript(
       'Content-Type': 'application/json',
       Accept: 'application/x-ndjson',
     },
-    body: JSON.stringify({ deviceId: input.deviceId }),
+    body: JSON.stringify({ deviceId: input.deviceId, parameters: input.parameters }),
   });
   if (!response.ok || !response.body) return readJson<ReplayResult>(response);
 

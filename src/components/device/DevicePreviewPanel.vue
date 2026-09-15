@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue';
-import { Cpu, Refresh } from '@element-plus/icons-vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { Close, Cpu, FullScreen, Refresh } from '@element-plus/icons-vue';
 import type { AndroidDevice, DeviceAction } from '../../types';
 
 type DeviceOverlayBounds = {
@@ -33,6 +33,8 @@ const props = defineProps<{
   regionDrawMode?: boolean;
   deviceWidth?: number;
   deviceHeight?: number;
+  compact?: boolean;
+  interactionDisabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -53,6 +55,20 @@ const emit = defineEmits<{
 }>();
 
 const imageSize = shallowRef({ width: 0, height: 0 });
+const previewRef = ref<HTMLElement>();
+const previewSize = ref({ width: 0, height: 0 });
+const enlarged = ref(false);
+let observer: ResizeObserver | undefined;
+function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') enlarged.value = false; }
+onMounted(() => {
+  if (!props.compact) return;
+  observer = new ResizeObserver(([entry]) => {
+    if (entry) previewSize.value = { width: entry.contentRect.width, height: entry.contentRect.height };
+  });
+  if (previewRef.value) observer.observe(previewRef.value);
+  window.addEventListener('keydown', closeOnEscape);
+});
+onBeforeUnmount(() => { observer?.disconnect(); window.removeEventListener('keydown', closeOnEscape); });
 let pointerSession: {
   mode: 'gesture' | 'region-draw' | 'region-move';
   pointerId: number;
@@ -64,9 +80,14 @@ let pointerSession: {
 const draftRegion = shallowRef<DeviceOverlayBounds | null>(null);
 const hasPreview = computed(() => Boolean(props.frameUrl || props.imageUrl));
 const imageBoxStyle = computed(() => {
-  if (props.frameUrl) return {};
   const width = props.deviceWidth || imageSize.value.width;
   const height = props.deviceHeight || imageSize.value.height;
+  if (props.compact) {
+    const ratio = width && height ? width / height : 9 / 20;
+    const fittedWidth = Math.min(previewSize.value.width, previewSize.value.height * ratio);
+    return { width: `${fittedWidth}px`, height: `${fittedWidth / ratio}px` };
+  }
+  if (props.frameUrl) return {};
   return { aspectRatio: width && height ? `${width} / ${height}` : '9 / 20' };
 });
 const overlayViewBox = computed(() => {
@@ -184,6 +205,7 @@ function emitRegion(bounds: DeviceOverlayBounds) {
 }
 
 function handlePointerDown(event: PointerEvent) {
+  if (props.interactionDisabled && !props.regionSelection) return;
   if (event.pointerType === 'mouse' && event.button !== 0) return;
   const target = event.currentTarget as HTMLElement;
   const point = getDevicePoint(target, event.clientX, event.clientY);
@@ -268,22 +290,28 @@ function handlePointerCancel(event: PointerEvent) {
 </script>
 
 <template>
-  <el-card shadow="never" class="automation-card device-preview-card">
+  <el-card shadow="never" class="automation-card device-preview-card" :class="{ 'device-preview-card--compact': compact, 'device-preview-card--enlarged': enlarged }">
     <template #header>
       <div class="panel-header">
         <span>设备预览</span>
         <div class="device-status">
+          <el-tag v-if="compact" :type="available ? 'success' : 'info'">
+            {{ available ? '已连接' : '未连接' }}
+          </el-tag>
+          <el-tooltip v-if="compact" :content="enlarged ? '退出设备放大' : '放大设备预览'" placement="top" :show-after="200"><el-button class="recorder-panel-tool" size="small" :icon="enlarged ? Close : FullScreen" :aria-label="enlarged ? '退出设备放大' : '放大设备预览'" @click="enlarged = !enlarged" /></el-tooltip>
+          <el-tooltip content="刷新画面" placement="top" :show-after="200">
           <el-button
-            text
-            circle
+            :text="!compact"
+            :circle="!compact"
+            :class="{ 'recorder-panel-tool': compact }"
+            :size="compact ? 'small' : 'default'"
             :icon="Refresh"
             :disabled="!selectedDeviceId"
-            title="刷新画面"
+            aria-label="刷新画面"
             @click="emit('refreshPreview')"
           />
-          <el-tag :type="available ? 'success' : 'info'">
-            {{ available ? 'ADB 已连接' : '未检测到设备' }}
-          </el-tag>
+          </el-tooltip>
+          <el-tag v-if="!compact" :type="available ? 'success' : 'info'">{{ available ? 'ADB 已连接' : '未检测到设备' }}</el-tag>
         </div>
       </div>
     </template>
@@ -310,6 +338,8 @@ function handlePointerCancel(event: PointerEvent) {
         :key="action.key"
         type="button"
         class="device-action-button"
+        :disabled="interactionDisabled || regionSelection"
+        :aria-label="action.label"
         @click="emit('triggerKey', action.keyCode)"
       >
         <img :src="action.icon" :alt="action.label" class="device-action-button__icon" />
@@ -318,6 +348,7 @@ function handlePointerCancel(event: PointerEvent) {
     </div>
 
     <div
+      ref="previewRef"
       class="device-preview"
       :class="{
         'device-preview--image': imageUrl && !frameUrl,
@@ -411,3 +442,24 @@ function handlePointerCancel(event: PointerEvent) {
     </div>
   </el-card>
 </template>
+
+<style scoped>
+.device-preview-card--compact { display: flex; flex-direction: column; min-height: 0; }
+.device-preview-card--compact :deep(> .el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; gap: 8px; }
+.device-preview-card--compact .panel-header { flex-wrap: wrap; gap: 8px; font-size: 14px; }
+.device-preview-card--compact .device-status { gap: 8px; margin-left: auto; }
+.device-preview-card--compact .device-status .el-tag { font-size: 11px; padding: 0 4px; }
+.device-preview-card--compact .device-toolbar, .device-preview-card--compact .device-actions { flex: none; margin: 0; }
+.device-preview-card--compact .device-toolbar { display: flex; padding: 0; }
+.device-preview-card--compact .device-select { width: 100%; min-width: 0; }
+.device-preview-card--compact .device-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; padding: 0; }
+.device-preview-card--compact .device-actions::before { display: none; }
+.device-preview-card--compact .device-action-button { margin: 0; width: 30px; height: 30px; }
+.device-preview-card--compact .device-action-button:disabled { opacity: .45; cursor: not-allowed; }
+.device-preview-card--compact .device-preview { flex: 1; height: auto; min-height: 0; }
+.device-preview-card--compact .device-preview__empty { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; }
+.device-preview-card--compact.device-preview-card--enlarged { position: fixed; inset: 24px; z-index: 2100; margin: 0; box-shadow: 0 0 0 100vmax #0007; }
+.device-preview-card--enlarged :deep(.el-card__header) { padding-right: 12px; }
+.device-preview-card--enlarged .device-toolbar { max-width: 420px; align-self: center; width: 100%; }
+@media (max-width: 600px) { .device-preview-card--compact.device-preview-card--enlarged { inset: 12px; } }
+</style>

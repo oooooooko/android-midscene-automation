@@ -43,10 +43,19 @@ export async function openGalleryOnDevice(deviceId: string, signal?: AbortSignal
     }
   }
   if (!component) throw new Error('未找到可启动的相册应用，请检查手机是否安装并启用了相册');
+  // 仅停止已解析出的目标相册，避免复用后台页面；不清除应用数据。
+  const packageName = component.split('/')[0]!;
+  try {
+    const stopped = await run(['am', 'force-stop', '--user', 'current', packageName]);
+    if (/Error:|Exception|Permission Denial/i.test(stopped)) throw new Error(stopped);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(`停止相册失败（${packageName}）：${error instanceof Error ? error.message : String(error)}`);
+  }
   const output = await run(['am', 'start', '-W', '--user', 'current', '-a', MAIN, '-n', component]);
   // am start 某些错误仍返回 0，不能只检查进程退出码。
   if (!/^Status:\s*ok\s*$/im.test(output) || /Error:|Exception|Permission Denial/i.test(output)) {
     throw new Error(`启动相册失败：${output || component}`);
   }
-  return `已启动相册：${component}`;
+  return `已启动相册：${component}（启动前已停止相册进程）`;
 }

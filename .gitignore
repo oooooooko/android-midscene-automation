@@ -10,12 +10,22 @@ coverage/
 *.aab
 
 # Local configuration and credentials
+/scripts/
 .env
 .env.*
 !.env.example
 .npmrc
 config.json
 config.yaml
+config.yml
+config.json.*
+config.yaml.*
+config.yml.*
+chats.yaml
+chats.yml
+chats.yaml.*
+chats.yml.*
+.npmrc.*
 local.properties
 *.pem
 *.key

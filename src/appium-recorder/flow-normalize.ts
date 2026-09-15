@@ -11,6 +11,7 @@ function isEmptyNestedCondition(step: AppiumRecordedStep) {
   return isCondition(step)
     // 新类型不存在旧版分支数据，不应把后续同级节点迁入 true 分支。
     && !isBooleanCondition(step)
+    && step.type !== 'loop'
     && Boolean(step.flow?.parentConditionId)
     && Boolean(step.flow?.parentBranch)
     && !step.flow?.yesTargetId

@@ -2,6 +2,7 @@
 import { nextTick, shallowRef } from 'vue';
 import type { MenuInstance, PopoverInstance } from 'element-plus';
 import { PASTE_COMMAND, type FlowActionGroup, type InsertAction } from '../flow-graph';
+import { actionDescriptions } from '../action-descriptions';
 
 const props = defineProps<{
   groups: FlowActionGroup[];
@@ -118,14 +119,25 @@ function selectAction(value: string) {
             @click="openGroupOnClick($event, group.title)"
           >
             <template #title>{{ group.title }}</template>
-            <el-menu-item
+            <el-tooltip
               v-for="action in group.actions"
               :key="action.type"
-              :index="action.type"
-              :disabled="isActionDisabled(action.type)"
+              :content="actionDescriptions[action.type]"
+              placement="right"
+              effect="dark"
+              :show-after="350"
+              :hide-after="0"
+              :enterable="false"
+              :popper-options="{ modifiers: [{ name: 'preventOverflow', options: { altAxis: true, padding: 8 } }] }"
+              popper-class="appium-action-description"
             >
-              {{ action.label }}
-            </el-menu-item>
+              <el-menu-item
+                :index="action.type"
+                :disabled="isActionDisabled(action.type)"
+              >
+                {{ action.label }}
+              </el-menu-item>
+            </el-tooltip>
           </el-sub-menu>
           <el-menu-item v-if="clipboardCount" :index="PASTE_COMMAND" class="appium-action-paste">
             粘贴 {{ clipboardCount }} 个节点
@@ -137,6 +149,15 @@ function selectAction(value: string) {
 </template>
 
 <style>
+.appium-action-description.el-popper {
+  max-width: min(300px, calc(100vw - 32px));
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
 .appium-action-menu-trigger {
   display: inline-flex;
 }

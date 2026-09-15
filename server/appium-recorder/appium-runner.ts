@@ -1,13 +1,21 @@
 import { execFile } from 'node:child_process';
+import { VariableScope, variableContext, resolveVariableStep } from './variables';
+import { getPresetVariables } from './variable-store';
+import { validateExtraction, validateVariables, type TestVariable } from '../../src/appium-recorder/variables';
+import { captureHistoryFrames, readAppVersion } from './history-capture';
+import { BoundedLoopTraversal } from './bounded-loop';
+import { validateLoopSteps } from '../../src/appium-recorder/bounded-loop';
 import { adbScreenshotBase64 } from './screenshot';
 import { recognizeDeviceScreen } from './ai-recognition';
+import { checkImage } from './image-check';
+import { IMAGE_CHECK_MODES, type ImageCheckResult } from '../../src/appium-recorder/image-check';
 import { formatStageLog } from '../../src/appium-recorder/stage-log';
 import { openGalleryOnDevice } from './open-gallery';
 import { textClickSelector } from '../../src/appium-recorder/text-click';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getAppiumRecordedScript, type AppiumRecordedScriptRecord, type AppiumRecordedStepRecord } from './repository';
+import { linkedScriptSnapshot, type AppiumRecordedScriptRecord, type AppiumRecordedStepRecord } from './repository';
 import { appDataPath } from '../paths';
 import { ensureAndroidSdkAvailable, getAdbCommand } from '../android-sdk';
 import { createAppiumReplayReport, type AppiumReplayFrame, type AppiumReplayVisualCheck } from './report';
@@ -47,6 +55,8 @@ type PendingVisualChangeCheck = {
   step: AppiumRecordedStepRecord;
   nodeNumber: number;
   scriptName: string;
+  frameStart: number;
+  endFrameStart: number;
 };
 
 const replayContext = new AsyncLocalStorage<{
@@ -54,9 +64,13 @@ const replayContext = new AsyncLocalStorage<{
   appiumLog: (line: string) => void;
   serverUrl: string;
   deviceId: string;
+  scripts: Map<string, AppiumRecordedScriptRecord>;
   frames: AppiumReplayFrame[];
+  historyEvents: AppiumReplayFrame[];
   visualChecks: AppiumReplayVisualCheck[];
+  imageChecks: Array<ImageCheckResult & { nodeId: string; nodeNumber: number; nodeLabel: string; scriptName: string; settings: string }>;
   pendingVisualChecks: PendingVisualChangeCheck[];
+  visualStartOffsets: Map<string, number>;
   softFailureCount: number;
   flowEnded?: boolean;
 }>();
@@ -330,6 +344,10 @@ async function captureReplayFrame(
 ) {
   const context = replayContext.getStore();
   if (!context || !context.deviceId) return;
+  // 执行记录独立于截图，设备截图失败不能让失败节点从统计中消失。
+  context.historyEvents.push({ sequence: context.historyEvents.length + 1, scriptName, nodeId: step.id,
+    nodeNumber, nodeLabel: step.label, nodeType: step.type, note: step.note || '',
+    selector: replayFrameSelector(step), phase, status, capturedAt: new Date().toISOString(), imageBase64: '' });
   const appendFrame = (imageBase64: string) => {
     context.frames.push({
       sequence: context.frames.length + 1,
@@ -338,7 +356,7 @@ async function captureReplayFrame(
       nodeNumber,
       nodeLabel: step.label,
       nodeType: step.type,
-      logContent: step.type === 'log' && phase === 'after' ? formatStageLog(step) : undefined,
+      logContent: step.type === 'log' && phase === 'after' ? formatStageLog(resolveVariableStep(step)) : undefined,
       note: step.note || '',
       selector: replayFrameSelector(step),
       phase,
@@ -455,6 +473,26 @@ async function findElement(sessionId: string, step: AppiumRecordedStepRecord) {
   }
 }
 
+// 图像判断不能使用通用定位的“第一个匹配”及坐标回退，父级和子级均须唯一。
+async function imageCheckRegion(sessionId: string, step: AppiumRecordedStepRecord) {
+  async function unique(selector: AppiumRecordedStepRecord['selector'], parent?: string) {
+    if (!selector || selector.strategy === 'bounds') throw new Error('缺少可唯一定位的组件信息');
+    const path = parent ? `/session/${sessionId}/element/${parent}/elements` : `/session/${sessionId}/elements`;
+    const payload = await appiumRequest<AppiumValueResponse<Array<Record<string, string>>>>(path, {
+      method: 'POST', body: JSON.stringify(toAppiumUsing(selector)),
+    });
+    if (payload.value?.length !== 1) throw new Error(`目标组件匹配 ${payload.value?.length || 0} 个，请限定父级或条目文字`);
+    const id = payload.value[0]?.[ELEMENT_KEY] || payload.value[0]?.ELEMENT;
+    if (!id) throw new Error('目标组件缺少元素标识');
+    return id;
+  }
+  const parent = step.contextSelector ? await unique(step.contextSelector) : undefined;
+  const id = await unique(step.selector, parent);
+  const rect = await appiumRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${id}/rect`);
+  if (!rect.value) throw new Error('无法读取组件实时区域');
+  return rect.value;
+}
+
 async function tapFallback(deviceId: string, step: AppiumRecordedStepRecord) {
   if (step.fallback?.strategy !== 'bounds' || !Number.isFinite(step.fallback.centerX) || !Number.isFinite(step.fallback.centerY)) {
     throw new Error(`${step.label} 未找到元素，且没有可用坐标兜底`);
@@ -508,6 +546,7 @@ async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRec
 }
 
 async function saveScreenshot(deviceId: string) {
+  if (variableContext.getStore()?.privacy.enabled) return;
   const dir = appDataPath('.midscene-app', 'screenshots');
   await mkdir(dir, { recursive: true });
   const file = join(dir, `appium-${Date.now()}.png`);
@@ -517,6 +556,7 @@ async function saveScreenshot(deviceId: string) {
 type RunStepMeta = {
   nodeNumber: number;
   scriptName: string;
+  frameStart?: number;
 };
 
 type RunStepResult = string | {
@@ -558,10 +598,9 @@ function findVisualFrame(
 ) {
   const matches = frames.filter((frame) => frame.nodeId === nodeId && frame.scriptName === scriptName);
   if (!matches.length) return undefined;
-  const preferred = preferredPhase === 'before'
-    ? matches.find((frame) => frame.phase === preferredPhase)
-    : [...matches].reverse().find((frame) => frame.phase === preferredPhase);
-  return preferred || (preferredPhase === 'before' ? matches[0] : matches[matches.length - 1]);
+  const frame = preferredPhase === 'before' ? matches[0] : matches[matches.length - 1];
+  // A failed capture must not fall back to an older round or a before/error image.
+  return frame?.phase === preferredPhase ? frame : undefined;
 }
 
 const EMPTY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -572,12 +611,14 @@ function registerVisualChangeStep(
 ): RunStepResult {
   const config = step.visualChange;
   if (!config) throw new Error(`${step.label} 缺少画面变化检测配置`);
+  const context = replayContext.getStore();
   if (config.role === 'start') {
+    // Invalidate the previous capture even when this start's after screenshot fails.
+    context?.visualStartOffsets.set(JSON.stringify([meta.frameStart || 0, step.id]), context.frames.length);
     return {
       message: `已记录画面变化基准点：${config.pairLabel || step.label}`,
     };
   }
-  const context = replayContext.getStore();
   const endStep = {
     ...step,
     visualChange: {
@@ -585,7 +626,9 @@ function registerVisualChangeStep(
       endStepId: config.endStepId || step.id,
     },
   };
-  context?.pendingVisualChecks.push({ step: endStep, nodeNumber: meta.nodeNumber, scriptName: meta.scriptName });
+  context?.pendingVisualChecks.push({ step: endStep, nodeNumber: meta.nodeNumber, scriptName: meta.scriptName,
+    frameStart: context.visualStartOffsets.get(JSON.stringify([meta.frameStart || 0, config.startStepId])) ?? meta.frameStart ?? 0,
+    endFrameStart: context.frames.length });
   return {
     message: `已记录画面变化对比点：${config.pairLabel || step.label}`,
   };
@@ -622,16 +665,16 @@ function processPendingVisualChecks(lines: string[]) {
   const context = replayContext.getStore();
   if (!context || !context.pendingVisualChecks.length) return;
 
-  // Visual checks compare captured replay frames after the path finishes, so
-  // they never block or mutate the device state for downstream nodes.
+  // Resolve each pair immediately after its end capture, before later rounds
+  // or linked-script calls can replace the images associated with these IDs.
   context.pendingVisualChecks.forEach((check) => {
     const config = check.step.visualChange;
     if (!config?.startStepId || !config.endStepId) {
       appendVisualCheckFailure(lines, check, `${check.step.label} 缺少开始节点或结束节点`);
       return;
     }
-    const baselineFrame = findVisualFrame(context.frames, config.startStepId, check.scriptName, 'after');
-    const comparisonFrame = findVisualFrame(context.frames, config.endStepId, check.scriptName, 'after');
+    const baselineFrame = findVisualFrame(context.frames.slice(check.frameStart, check.endFrameStart), config.startStepId, check.scriptName, 'after');
+    const comparisonFrame = findVisualFrame(context.frames.slice(check.endFrameStart), config.endStepId, check.scriptName, 'after');
     if (!baselineFrame || !comparisonFrame) {
       const missing = [
         baselineFrame ? '' : '开始节点截图',
@@ -686,6 +729,18 @@ async function runStep(
   meta: RunStepMeta,
 ): Promise<RunStepResult | void> {
   throwIfReplayStopped();
+  step = resolveVariableStep(step);
+  if (step.type === 'extractVariable') {
+    const config = validateExtraction(step.extractVariable);
+    const scope = variableContext.getStore();
+    if (!scope) throw new Error('变量作用域未初始化');
+    const elementId = await findElement(sessionId, step);
+    const endpoint = config.attribute === 'text' ? 'text' : `attribute/${encodeURIComponent(config.attribute)}`;
+    const payload = await appiumRequest<AppiumValueResponse<unknown>>(`/session/${sessionId}/element/${elementId}/${endpoint}`);
+    if (payload.value === null || payload.value === undefined) throw new Error(`组件不存在属性：${config.attribute}`);
+    scope.set({ name: config.name, value: String(payload.value), sensitive: config.sensitive }, true);
+    return `已提取变量：${config.name}`;
+  }
   if (step.type === 'delay') {
     await wait(Math.max(0, step.timeoutMs || 1000));
     return;
@@ -916,6 +971,16 @@ async function readNativeControlState(sessionId: string, step: AppiumRecordedSte
 }
 
 async function evaluateCondition(sessionId: string, deviceId: string, step: AppiumRecordedStepRecord) {
+  step = resolveVariableStep(step);
+  if (step.type === 'loop') {
+    if (step.loop?.exitWhen === 'never') return false;
+    const selector = toAppiumUsing(step.selector!);
+    const payload = await appiumRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
+      method: 'POST', body: JSON.stringify(selector),
+    });
+    if (!Array.isArray(payload.value)) throw new Error('循环退出条件查询返回了无效结果');
+    return step.loop?.exitWhen === 'exists' ? payload.value.length > 0 : payload.value.length === 0;
+  }
   if (step.type === 'textClick') {
     const selector = textClickSelector(step);
     const deadline = Date.now() + Math.max(0, step.timeoutMs ?? 10000);
@@ -994,12 +1059,17 @@ async function appendStepDiagnostics(lines: string[], deviceId: string, step: Ap
 }
 
 type ReplayStepOptions = {
+  frameStart?: number;
   skipAppInitialization?: boolean;
   scriptName?: string;
 };
 
-function shouldSkipLinkedScriptInitStep(options: ReplayStepOptions, step: AppiumRecordedStepRecord) {
-  return Boolean(options.skipAppInitialization && (step.type === 'launchApp' || step.type === 'clearAppData'));
+function shouldSkipLinkedScriptInitStep(options: ReplayStepOptions, step: AppiumRecordedStepRecord, steps: AppiumRecordedStepRecord[]) {
+  if (!options.skipAppInitialization) return false;
+  // Only the leading initialization sequence is redundant in a linked script.
+  // Launches inside branches or after other operations are intentional actions.
+  return steps.slice(0, steps.indexOf(step) + 1).every(item =>
+    !item.flow?.parentConditionId && (item.type === 'launchApp' || item.type === 'clearAppData'));
 }
 
 function linkedScriptInitSkipReason(step: AppiumRecordedStepRecord) {
@@ -1019,7 +1089,7 @@ async function replayLinkedScript(
   const scriptId = step.value || '';
   if (!scriptId) throw new Error(`${step.label} 缺少连接脚本 ID`);
   if (stack.includes(scriptId)) throw new Error(`${step.label} 检测到循环连接脚本`);
-  const linkedScript = getAppiumRecordedScript(scriptId);
+  const linkedScript = replayContext.getStore()?.scripts.get(scriptId);
   if (!linkedScript) throw new Error(`${step.label} 指向的脚本不存在`);
 
   if (linkedScript.appActivity) {
@@ -1047,10 +1117,12 @@ async function replayLinkedScript(
 
   lines.push(`连接脚本开始：${linkedScript.name}`);
   const nextStack = [...stack, linkedScript.id];
-  await replayScriptSteps(sessionId, deviceId, linkedScript.steps, lines, nextStack, {
-    skipAppInitialization: true,
-    scriptName: linkedScript.name,
-  });
+  const parent = variableContext.getStore()!;
+  const child = parent.child(linkedScript.variables || [], step.parameters);
+  await variableContext.run(child, () => replayScriptSteps(sessionId, deviceId, linkedScript.steps, lines, nextStack, {
+    skipAppInitialization: true, scriptName: linkedScript.name,
+  }));
+  if (!replayContext.getStore()?.flowEnded) parent.acceptReturns(child, step.returns);
   lines.push(`连接脚本完成：${linkedScript.name}`);
 }
 
@@ -1079,7 +1151,7 @@ async function replayLinearSteps(
   for (const [index, step] of steps.entries()) {
     if (replayContext.getStore()?.flowEnded) return;
     throwIfReplayStopped();
-    if (shouldSkipLinkedScriptInitStep(options, step)) {
+    if (shouldSkipLinkedScriptInitStep(options, step, steps)) {
       lines.push(`[节点 ${index + 1}] 跳过：${step.label}（${linkedScriptInitSkipReason(step)}）`);
       continue;
     }
@@ -1093,11 +1165,13 @@ async function replayLinearSteps(
         const result = await runStep(sessionId, deviceId, step, {
           nodeNumber: index + 1,
           scriptName: options.scriptName || '',
+          frameStart: options.frameStart,
         });
         softFailed = appendRunStepResult(lines, index + 1, result);
       }
       lines.push(`[节点 ${index + 1}] 完成：${step.label}${softFailed ? '（存在软失败，已继续）' : ''}`);
       await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'after', completedStepStatus(step, softFailed));
+      processPendingVisualChecks(lines);
     } catch (error) {
       if (isReplayStopped(error)) {
         lines.push(`[节点 ${index + 1}] 已终止：${step.label}`);
@@ -1121,47 +1195,47 @@ async function replayFlowSteps(
   options: ReplayStepOptions = {},
 ) {
   const idToIndex = new Map(steps.map((step, index) => [step.id, index]));
-  const conditionContinuationIndex = (conditionId: string) => {
-    const conditionIndex = idToIndex.get(conditionId);
-    if (conditionIndex === undefined) return undefined;
-    const explicitTargetId = steps[conditionIndex]?.flow?.successTargetId;
-    return explicitTargetId ? idToIndex.get(explicitTargetId) : undefined;
-  };
-  const nextIndexAfterStep = (currentIndex: number, step: AppiumRecordedStepRecord) => {
-    const explicitTargetId = step.flow?.successTargetId;
-    if (explicitTargetId) return idToIndex.get(explicitTargetId);
-    if (!step.flow?.parentConditionId || !step.flow.parentBranch) return currentIndex + 1;
-    const nextStep = steps[currentIndex + 1];
-    const staysInBranch = nextStep?.flow?.parentConditionId === step.flow.parentConditionId
-      && nextStep.flow.parentBranch === step.flow.parentBranch;
-    return staysInBranch
-      ? currentIndex + 1
-      : conditionContinuationIndex(step.flow.parentConditionId);
-  };
+  const traversal = new BoundedLoopTraversal(steps);
+  const nextIndexAfterStep = (index: number, step: AppiumRecordedStepRecord) => traversal.next(step, index);
   const visitedPath: string[] = [];
   let index: number | undefined = 0;
-  let guard = 0;
-  const maxVisits = Math.max(steps.length * 4, 20);
 
   while (typeof index === 'number' && index >= 0 && index < steps.length) {
     if (replayContext.getStore()?.flowEnded) return;
     throwIfReplayStopped();
-    guard += 1;
-    if (guard > maxVisits) throw new Error('流程图可能存在循环，已终止回放');
-
     const step = steps[index];
-    if (shouldSkipLinkedScriptInitStep(options, step)) {
+    traversal.visit(step);
+    const loopContext = traversal.context(step);
+    const frameStep = loopContext ? { ...step, label: `${step.label}（${loopContext}）` } : step;
+    if (shouldSkipLinkedScriptInitStep(options, step, steps)) {
       lines.push(`[节点 ${index + 1}] 跳过：${step.label}（${linkedScriptInitSkipReason(step)}）`);
       index = nextIndexAfterStep(index, step);
       continue;
     }
     visitedPath.push(step.label);
     const nodeKind = defaultFlowKind(step);
-    lines.push(`[节点 ${index + 1}] 开始：${step.label}`);
-    await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'before', '执行前');
+    lines.push(`[节点 ${index + 1}] 开始：${frameStep.label}`);
+    await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'before', '执行前');
 
     if (nodeKind === 'condition') {
       try {
+        if (step.type === 'loop') {
+          const iterations = traversal.iteration(step);
+          const atLimit = iterations >= step.loop!.maxIterations;
+          const exitMatched = !atLimit && await evaluateCondition(sessionId, deviceId, step);
+          if (atLimit || exitMatched) {
+            const reason = atLimit ? '达到最大次数' : '满足退出条件';
+            lines.push(`[循环 ${step.label}] 结束：${reason}，已执行 ${iterations} 轮`);
+            await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', `${reason}，已执行 ${iterations} 轮`);
+            index = traversal.exit(step);
+          } else {
+            const entered = traversal.enter(step);
+            lines.push(`[循环 ${step.label}] 第 ${entered.iteration}/${step.loop!.maxIterations} 轮开始`);
+            await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', `第 ${entered.iteration}/${step.loop!.maxIterations} 轮`);
+            index = entered.next;
+          }
+          continue;
+        }
         // AI 节点使用本次执行前截图，并将同一张图片和识别依据写入结果帧。
         const beforeFrame = replayContext.getStore()?.frames.at(-1);
         const recognition = step.type === 'aiRecognition' ? await recognizeDeviceScreen({
@@ -1169,22 +1243,36 @@ async function replayFlowSteps(
           signal: replayContext.getStore()?.signal,
           imageBase64: beforeFrame?.nodeId === step.id && beforeFrame.phase === 'before' ? beforeFrame.imageBase64 : undefined,
         }) : undefined;
-        const matched = recognition ? recognition.result : await evaluateCondition(sessionId, deviceId, step);
+        let imageResult: ImageCheckResult | undefined;
+        if (step.type === 'imageCheck') {
+          const resolved = resolveVariableStep(step);
+          imageResult = await checkImage({ config: resolved.imageCheck!,
+            capture: async () => Buffer.from(await adbScreenshotBase64(deviceId, replayContext.getStore()?.signal), 'base64'),
+            resolveRegion: () => imageCheckRegion(sessionId, resolved), wait,
+            signal: replayContext.getStore()?.signal, saveImages: !variableContext.getStore()?.privacy.enabled });
+          const config = resolved.imageCheck;
+          const settings = config ? `${IMAGE_CHECK_MODES[config.mode]}；条件 ${config.expectation}；模板阈值 ${config.threshold}；最小得分差 ${config.minScoreGap}；RGB/亮度容差 ${config.tolerance}；目标色 ${config.color}；像素占比 ${config.ratio}%；观察 ${config.durationMs}ms；间隔 ${config.intervalMs}ms；连续 ${config.consecutive} 帧` : '缺少配置';
+          replayContext.getStore()?.imageChecks.push({ ...imageResult, nodeId: step.id, nodeNumber: index + 1, nodeLabel: frameStep.label, scriptName: options.scriptName || '', settings });
+          lines.push(`[节点 ${index + 1}] 图像判断：${imageResult.result === null ? '无法判定' : imageResult.result}，${imageResult.message}；${settings}；采样 ${imageResult.sampleCount} 帧，耗时 ${imageResult.durationMs}ms；指标 ${JSON.stringify(imageResult.metrics)}`);
+          if (imageResult.result === null) throw new Error(imageResult.message);
+        }
+        const matched = imageResult ? imageResult.result! : recognition ? recognition.result : await evaluateCondition(sessionId, deviceId, step);
         if (recognition) lines.push(`[节点 ${index + 1}] AI 识别：${recognition.result}，耗时 ${recognition.durationMs}ms${recognition.reason ? `，依据：${recognition.reason}` : ''}`);
         const branchTargetId = matched ? step.flow?.yesTargetId : step.flow?.noTargetId;
-        const targetId = branchTargetId || step.flow?.successTargetId || '';
+        const next = traversal.branch(step, matched);
+        const targetId = branchTargetId || (next === undefined ? '' : steps[next]?.id) || '';
         const branchLabel = flowBranchLabel(step, matched ? 'yes' : 'no');
         lines.push(`[节点 ${index + 1}] 判断：${branchLabel}${isNativeStateCondition(step) ? `（checked=${matched}）` : ''}${targetId ? `，进入 ${targetId}` : '，流程结束'}`);
         await captureReplayFrame(
           sessionId,
-          step,
+          frameStep,
           index + 1,
           options.scriptName || '',
           'after',
           `判断：${branchLabel}${recognition?.reason ? `；${recognition.reason}` : ''}`,
           recognition?.imageBase64,
         );
-        index = targetId ? idToIndex.get(targetId) : undefined;
+        index = next;
       } catch (error) {
         if (isReplayStopped(error)) {
           lines.push(`[节点 ${index + 1}] 已终止：${step.label}`);
@@ -1201,17 +1289,25 @@ async function replayFlowSteps(
 
     try {
       let softFailed = false;
-      if (step.type === 'runScript') {
+      if (step.type === 'breakLoop') {
+        const exited = traversal.break(step);
+        lines.push(`[循环 ${exited.loop.label}] 第 ${exited.iteration} 轮主动退出`);
+        await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', `已退出循环：${exited.loop.label}`);
+        index = exited.next;
+        continue;
+      } else if (step.type === 'runScript') {
         await replayLinkedScript(sessionId, deviceId, step, lines, stack);
       } else {
         const result = await runStep(sessionId, deviceId, step, {
           nodeNumber: index + 1,
           scriptName: options.scriptName || '',
+          frameStart: options.frameStart,
         });
         softFailed = appendRunStepResult(lines, index + 1, result);
       }
       lines.push(`[节点 ${index + 1}] 完成：${step.label}${softFailed ? '（存在软失败，已继续）' : ''}`);
-      await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'after', completedStepStatus(step, softFailed));
+      await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', completedStepStatus(step, softFailed));
+      processPendingVisualChecks(lines);
       index = nextIndexAfterStep(index, step);
     } catch (error) {
       if (isReplayStopped(error)) {
@@ -1259,6 +1355,8 @@ async function replayScriptSteps(
   stack: string[],
   options: ReplayStepOptions = {},
 ) {
+  validateLoopSteps(steps);
+  options = { ...options, frameStart: replayContext.getStore()?.frames.length || 0 };
   let trailingLinkIndex = steps.length;
   while (
     trailingLinkIndex > 0
@@ -1300,30 +1398,58 @@ export async function replayAppiumScript(
   deviceId: string,
   onOutput?: (line: string) => void,
   signal?: AbortSignal,
+  runOptions: { parameters?: TestVariable[]; globalVariables?: TestVariable[]; linkedScripts?: AppiumRecordedScriptRecord[] } = {},
 ) {
   const targetDeviceId = deviceId || script.deviceId;
   if (!targetDeviceId) throw new Error('未检测到可用设备');
   if (!script.steps.length) throw new Error('脚本没有可回放步骤');
 
+  const scope = new VariableScope(runOptions.globalVariables ?? getPresetVariables(), script.variables || []);
+  const scripts = new Map((runOptions.linkedScripts ?? linkedScriptSnapshot(script)).map(item => [item.id, item]));
+  for (const item of validateVariables(runOptions.parameters)) scope.set(item);
+  // 提前登记子脚本敏感预设，避免进入子脚本前的原始日志或截图泄露。
+  const visited = new Set<string>();
+  const registerSecrets = (current: AppiumRecordedScriptRecord) => {
+    if (visited.has(current.id)) return;
+    visited.add(current.id);
+    (current.variables || []).forEach(item => scope.track(item));
+    for (const step of current.steps) {
+      (step.parameters || []).forEach(item => scope.track(item));
+      if (step.extractVariable) scope.track({ ...step.extractVariable, value: '' });
+      if (step.type === 'runScript' && step.value) {
+        const child = scripts.get(step.value);
+        if (child) registerSecrets(child);
+      }
+    }
+  };
+  registerSecrets(script);
+
   const startedAt = new Date();
+  const appVersion = await readAppVersion(targetDeviceId, script.appPackage).catch(() => '');
   const lines: string[] = [];
   const pushLine = lines.push.bind(lines);
   lines.push = (...items: string[]) => {
+    items = items.map(item => scope.redact(item));
     const length = pushLine(...items);
     items.forEach((line) => onOutput?.(line));
     return length;
   };
   const context = {
     signal,
-    appiumLog: (line) => lines.push(line),
+    appiumLog: (line) => { if (!scope.privacy.enabled) lines.push(line); },
     serverUrl: configuredAppiumServerUrl(),
     deviceId: targetDeviceId,
+    scripts,
     frames: [] as AppiumReplayFrame[],
+    historyEvents: [] as AppiumReplayFrame[],
     visualChecks: [] as AppiumReplayVisualCheck[],
+    imageChecks: [] as Array<ImageCheckResult & { nodeId: string; nodeNumber: number; nodeLabel: string; scriptName: string; settings: string }>,
+    visualStartOffsets: new Map<string, number>(),
     pendingVisualChecks: [] as PendingVisualChangeCheck[],
     softFailureCount: 0,
   };
-  return replayContext.run(context, async () => {
+  return variableContext.run(scope, () => replayContext.run(context, async () => {
+    if (scope.privacy.enabled) lines.push('敏感变量保护已启用：不保存报告截图、截图节点文件或 Appium 原始日志');
     lines.push(
       `目标设备：${targetDeviceId}`,
       `App 包名：${script.appPackage}`,
@@ -1334,13 +1460,14 @@ export async function replayAppiumScript(
     let stopped = false;
     let managedAppium: Awaited<ReturnType<typeof startManagedAppiumServer>> | null = null;
     try {
+      validateLoopSteps(script.steps);
       lines.push('正在检测 Android SDK...');
       const androidSdk = ensureAndroidSdkAvailable();
       lines.push(`Android SDK 已就绪：${androidSdk.root}`);
       if (usesManagedAppiumServer()) {
         lines.push('正在启动本次回放的 Appium 服务...');
         lines.push('----- Appium 服务端原始日志开始 -----');
-        managedAppium = await startManagedAppiumServer((line) => lines.push(line), signal);
+        managedAppium = await startManagedAppiumServer((line) => { if (!scope.privacy.enabled) lines.push(line); }, signal);
         context.serverUrl = managedAppium.serverUrl;
       }
       lines.push(`Appium 服务：${appiumServerUrl()}`);
@@ -1406,21 +1533,25 @@ export async function replayAppiumScript(
     }
 
     const completedAt = new Date();
+    const safeFrames = scope.privacy.enabled ? [] : scope.scrub(context.frames);
+    const safeChecks = scope.scrub(context.visualChecks.map(check => scope.privacy.enabled
+      ? { ...check, baselineBase64: '', comparisonBase64: '', diffBase64: '' } : check));
     let reportPath = '';
     let reportId = '';
     let logPath = '';
     let htmlReportPath = '';
     try {
       const report = await createAppiumReplayReport({
-        script,
+        script: scope.scrub(script),
         deviceId: targetDeviceId,
         success,
         stopped,
-        output: lines.join('\n'),
+        output: scope.redact(lines.join('\n')),
         startedAt,
         completedAt,
-        frames: context.frames,
-        visualChecks: context.visualChecks,
+        frames: safeFrames,
+        visualChecks: safeChecks,
+        imageChecks: scope.scrub(context.imageChecks.map(check => scope.privacy.enabled ? { ...check, images: [] } : check)),
       });
       reportPath = report.filePath;
       reportId = report.id;
@@ -1435,12 +1566,20 @@ export async function replayAppiumScript(
     return {
       success,
       stopped,
-      output: lines.join('\n'),
+      output: scope.redact(lines.join('\n')),
       reportPath,
       reportId,
       logPath,
       htmlReportPath,
       softFailureCount: context.softFailureCount,
+      history: {
+        scriptId: script.id, scriptName: script.name, appPackage: script.appPackage,
+        appVersion, deviceId: targetDeviceId, startedAt: startedAt.toISOString(),
+        durationMs: completedAt.getTime() - startedAt.getTime(),
+        status: stopped ? 'stopped' as const : success ? 'passed' as const : 'failed' as const,
+        output: scope.redact(lines.join('\n')),
+        ...scope.scrub(captureHistoryFrames(safeFrames, safeChecks, context.historyEvents)),
+      },
     };
-  });
+  }));
 }

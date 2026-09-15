@@ -11,6 +11,18 @@ export function createStepId() {
   return `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export function syncVisualChangeThreshold(steps: AppiumRecordedStep[], source: AppiumRecordedStep) {
+  const config = source.visualChange;
+  if (source.type !== 'visualChange' || config?.role !== 'end' || !config.pairId) return steps;
+  const { changeRatioThreshold } = normalizeVisualChangeConfig(config);
+  // 回放以开始节点配置为准，结束节点修改阈值时同步整组；不同配对互不影响。
+  return steps.map(step => (
+    step.type === 'visualChange' && step.visualChange && step.visualChange.pairId === config.pairId
+      ? { ...step, visualChange: { ...step.visualChange, changeRatioThreshold } }
+      : step
+  ));
+}
+
 export function boundsToVisualRegion(bounds: AppiumBounds) {
   return {
     x: bounds.left,
@@ -47,7 +59,7 @@ export function normalizeVisualChangeConfig(
     changeRatioThreshold: Math.max(0.01, Number(config?.changeRatioThreshold) || VISUAL_CHANGE_DEFAULTS.changeRatioThreshold),
     pixelmatchThreshold: Math.min(
       1,
-      Math.max(0, Number(config?.pixelmatchThreshold) || VISUAL_CHANGE_DEFAULTS.pixelmatchThreshold),
+      Math.max(0, Number.isFinite(config?.pixelmatchThreshold) ? Number(config?.pixelmatchThreshold) : VISUAL_CHANGE_DEFAULTS.pixelmatchThreshold),
     ),
   };
 }

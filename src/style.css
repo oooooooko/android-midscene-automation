@@ -1401,6 +1401,7 @@ select {
 
 .appium-replay-dialog.el-dialog {
   display: flex;
+  padding: 16px;
   width: min(820px, calc(100vw - 32px)) !important;
   height: min(620px, calc(100vh - 64px));
   min-width: 420px;
@@ -1421,8 +1422,16 @@ select {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  padding: 8px 0 0;
+}
+
+.appium-replay-dialog > .el-dialog__header {
+  padding: 0 0 16px;
+  border-bottom: 0;
+}
+
+.appium-replay-dialog > .el-dialog__footer {
+  padding: 16px 0 0;
 }
 
 .appium-replay-dialog .appium-replay-output {
@@ -2882,6 +2891,11 @@ select {
   width: 340px;
 }
 
+.appium-flow-graph-node--search-highlighted .appium-flow-step-card {
+  outline: 3px solid #168aad;
+  outline-offset: 4px;
+}
+
 .appium-flow-graph-node--insert {
   width: 34px;
   height: 34px;
@@ -2913,12 +2927,15 @@ select {
   bottom: 0;
 }
 
-.appium-flow-graph-node--split .appium-flow-handle--top {
+/* Invisible split handles share one point; Vue Flow's 5px minimum creates a gap. */
+.appium-flow-graph-node--split .appium-flow-handle {
+  width: 0;
+  height: 0;
+  min-width: 0;
+  min-height: 0;
   top: 50%;
-}
-
-.appium-flow-graph-node--split .appium-flow-handle--bottom {
-  bottom: 50%;
+  bottom: auto;
+  transform: translate(-50%, -50%);
 }
 
 .appium-flow-start-card {

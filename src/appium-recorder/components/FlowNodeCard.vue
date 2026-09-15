@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
-import { CopyDocument, Delete, Edit, Plus, VideoPlay, View, WarningFilled, Connection } from '@element-plus/icons-vue';
+import { CopyDocument, Delete, Edit, Plus, VideoPlay, View, WarningFilled, Connection, RefreshLeft } from '@element-plus/icons-vue';
 import { AI_MODEL_CONFIG_HINT } from '../ai-recognition';
 import type { AppiumRecordedStep } from '../types';
 import {
@@ -16,7 +16,9 @@ import FlowActionMenu from './FlowActionMenu.vue';
 const props = defineProps<{
   nodeId: string;
   data: FlowGraphNodeData;
+  steps: AppiumRecordedStep[];
   readonly?: boolean;
+  searchHighlighted?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -27,7 +29,7 @@ const emit = defineEmits<{
   editInput: [index: number];
   previewLinkedScript: [index: number];
   execute: [index: number];
-  insert: [payload: { afterIndex: number; action: InsertAction | typeof PASTE_COMMAND; branch?: FlowBranch; conditionIndex?: number }];
+  insert: [payload: { afterIndex: number; action: InsertAction | typeof PASTE_COMMAND; branch?: FlowBranch; conditionIndex?: number; beforeStepId?: string }];
   updateStep: [payload: { index: number; step: AppiumRecordedStep }];
   resize: [payload: { id: string; height: number }];
 }>();
@@ -37,6 +39,7 @@ let resizeObserver: ResizeObserver | null = null;
 
 const insertTitle = computed(() => {
   if (props.data.kind !== 'insert') return '';
+  if (props.data.beforeStepId) return '在合流后插入操作';
   if (props.data.branch) return `在“${props.data.branchLabel || (props.data.branch === 'yes' ? '是' : '否')}”分支插入操作`;
   return props.data.afterIndex < 0 ? '在开始后插入操作' : '插入操作';
 });
@@ -45,6 +48,7 @@ function emitInsert(command: string | number | object) {
   if (props.readonly || props.data.kind !== 'insert') return;
   emit('insert', {
     afterIndex: props.data.afterIndex,
+    beforeStepId: props.data.beforeStepId,
     action: command === PASTE_COMMAND ? PASTE_COMMAND : command as InsertAction,
     branch: props.data.branch,
     conditionIndex: props.data.conditionIndex,
@@ -88,7 +92,7 @@ watch(() => props.data, () => {
   <div
     ref="rootRef"
     class="appium-flow-graph-node nodrag nopan"
-    :class="`appium-flow-graph-node--${data.kind}`"
+    :class="[`appium-flow-graph-node--${data.kind}`, { 'appium-flow-graph-node--search-highlighted': searchHighlighted }]"
     :style="data.kind === 'branch' ? { width: `${data.width}px` } : undefined"
     @pointerdown.stop
     @mousedown.stop
@@ -177,15 +181,15 @@ watch(() => props.data, () => {
               <WarningFilled />
             </el-icon>
           </el-tooltip>
-          <strong :title="data.title">{{ data.title }}</strong>
+          <strong :title="`${data.index + 1}. ${data.title}`"><span class="appium-flow-node-number">{{ data.index + 1 }}.</span> {{ data.title }}</strong>
           <small :title="data.meta">{{ data.meta }}</small>
           <em v-if="data.note" :title="data.note">{{ data.note }}</em>
         </span>
       </button>
       <span v-if="!props.readonly && !data.deleteMode" class="appium-flow-step-card__actions nodrag nopan" @click.stop>
-        <el-tooltip v-if="data.flowKind === 'condition' && !data.copyMode" content="合并分支：将两侧后续节点汇入公共流程" placement="top" :show-after="200">
-        <span class="appium-node-action-tooltip"><el-button text size="small" :icon="Connection"
-          title="合并分支" aria-label="合并分支" :disabled="data.mergeDisabled || Boolean(data.step.flow?.successTargetId)"
+        <el-tooltip v-if="data.flowKind === 'condition' && data.step.type !== 'loop' && !data.copyMode" :content="data.step.flow?.successTargetId ? '取消合并：还原分支并保留后续编辑' : '合并分支：将两侧后续节点汇入公共流程'" placement="top" :show-after="200">
+        <span class="appium-node-action-tooltip"><el-button text size="small" :icon="data.step.flow?.successTargetId ? RefreshLeft : Connection"
+          :title="data.step.flow?.successTargetId ? '取消合并' : '合并分支'" :aria-label="data.step.flow?.successTargetId ? '取消合并' : '合并分支'" :disabled="data.mergeDisabled"
           @click="emit('merge', data.index)" />
         </span></el-tooltip>
         <el-tooltip v-if="!data.copyMode && data.canCopy" content="复制节点：复制后可在插入位置粘贴" placement="top" :show-after="200">
@@ -211,14 +215,14 @@ watch(() => props.data, () => {
           @click="emit('execute', data.index)"
         />
         </span></el-tooltip>
-        <el-tooltip v-if="data.canEditInput" content="修改输入内容：编辑此节点要输入的文字" placement="top" :show-after="200">
+        <el-tooltip v-if="data.canEditInput" :content="data.step.type === 'runScript' ? '修改连接脚本' : data.step.type === 'imageCheck' ? '修改图像判断配置' : '修改输入内容：编辑此节点要输入的文字'" placement="top" :show-after="200">
         <span class="appium-node-action-tooltip">
         <el-button
           text
           size="small"
           :icon="Edit"
           :disabled="data.disabled"
-          title="修改输入内容"
+          :title="data.step.type === 'runScript' ? '修改连接脚本' : data.step.type === 'imageCheck' ? '修改图像判断配置' : '修改输入内容'"
           @click="emit('editInput', data.index)"
         />
         </span></el-tooltip>
@@ -248,6 +252,7 @@ watch(() => props.data, () => {
         v-if="!props.readonly && data.expanded"
         class="appium-flow-step-editor nodrag nopan"
         :step="data.step"
+        :steps="steps"
         :index="data.index"
         :disabled="data.disabled"
         @update="updateStep"

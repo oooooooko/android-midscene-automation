@@ -1,3 +1,6 @@
+import type { TestVariable, VariableExtraction, ScriptReturn } from './variables';
+import type { ImageCheckConfig } from './image-check';
+
 export type AppiumBounds = {
   left: number;
   top: number;
@@ -65,6 +68,7 @@ export type AppiumNode = {
 };
 
 export type AppiumRecordedStep = {
+  mergeUndo?: BranchMergeUndo;
   id: string;
   type:
     | 'tap'
@@ -79,6 +83,7 @@ export type AppiumRecordedStep = {
     | 'checkedState'
     | 'radioButtonState'
     | 'aiRecognition'
+    | 'imageCheck'
     | 'textClick'
     | 'key'
     | 'waitActivity'
@@ -90,6 +95,8 @@ export type AppiumRecordedStep = {
     | 'launchApp'
     | 'openGallery'
     | 'endFlow'
+    | 'loop'
+    | 'breakLoop'
     | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
@@ -97,6 +104,7 @@ export type AppiumRecordedStep = {
     | 'pinch'
     | 'runScript'
     | 'noop'
+    | 'extractVariable'
     | 'log'
     | 'visualChange';
   label: string;
@@ -107,9 +115,17 @@ export type AppiumRecordedStep = {
   fallback?: AppiumSelector;
   value?: string;
   logPrefix?: string;
+  extractVariable?: VariableExtraction;
+  parameters?: TestVariable[];
+  returns?: ScriptReturn[];
   keyCode?: number;
   timeoutMs?: number;
   longPressMode?: 'element' | 'coordinates';
+  breakLoopTargetId?: string;
+  loop?: {
+    maxIterations: number;
+    exitWhen: 'never' | 'exists' | 'notExists';
+  };
   flow?: {
     nodeKind?: 'action' | 'condition' | 'assertion';
     yesTargetId?: string;
@@ -137,6 +153,7 @@ export type AppiumRecordedStep = {
     percent: number;
   };
   visualChange?: AppiumVisualChangeConfig;
+  imageCheck?: ImageCheckConfig;
   snapshot?: {
     text: string;
     resourceId: string;
@@ -145,12 +162,24 @@ export type AppiumRecordedStep = {
   };
 };
 
+export type BranchMergeUndo = {
+  version: 1;
+  conditionId: string;
+  source: 'yes' | 'no';
+  commonIds: string[];
+  originalIds: string[];
+  boundaryId?: string;
+  flows: { id: string; before: AppiumRecordedStep['flow']; after: AppiumRecordedStep['flow'] }[];
+  removed: AppiumRecordedStep[];
+};
+
 export type AppiumRecordedScript = {
   id: string;
   name: string;
   appPackage: string;
   appActivity: string;
   deviceId: string;
+  variables?: TestVariable[];
   steps: AppiumRecordedStep[];
   createdAt: string;
   updatedAt: string;

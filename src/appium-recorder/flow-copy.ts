@@ -1,4 +1,5 @@
 import type { AppiumRecordedStep } from './types';
+import { insertBeforeSharedStep } from './flow-insert';
 
 export type FlowBranch = 'yes' | 'no';
 
@@ -10,6 +11,7 @@ export type FlowClipboard = {
 type PasteTarget = {
   afterIndex: number;
   branch?: FlowBranch;
+  beforeStepId?: string;
 };
 
 const targetKeys = [
@@ -178,7 +180,10 @@ export function pasteFlowClipboard(
   });
   const copies = clipboard.steps.map((source) => {
     const step = clone(source);
+    // 合并记录引用原流程 ID，不能随节点复制到另一条流程。
+    delete step.mergeUndo;
     step.id = idMap.get(source.id) || createId();
+    if (step.breakLoopTargetId) step.breakLoopTargetId = idMap.get(step.breakLoopTargetId) || step.breakLoopTargetId;
     const flow = { ...(step.flow || {}) };
     for (const key of targetKeys) {
       const mappedId = flow[key] ? idMap.get(flow[key] || '') : '';
@@ -224,6 +229,8 @@ export function pasteFlowClipboard(
   const firstRoot = copiedRoots[0];
   const lastRoot = copiedRoots[copiedRoots.length - 1];
   if (!firstRoot || !lastRoot) throw new Error('复制节点数据无效');
+
+  if (target.beforeStepId) return insertBeforeSharedStep(steps, target.beforeStepId, copies, copiedRoots.map(step => step.id));
 
   const nextSteps = [...steps];
   let insertAfterIndex = target.afterIndex;

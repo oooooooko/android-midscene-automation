@@ -1,6 +1,6 @@
 {
   "name": "android-midscene-automation",
-  "version": "0.1.30",
+  "version": "0.1.36",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oooooooko/android-midscene-automation.git"
@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "prepack": "node scripts/sync-readme-docs.mjs",
+    "prepack": "node bin/sync-readme-docs.mjs",
     "remote-agent": "tsx remote-agent/index.ts",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
@@ -38,12 +38,13 @@
   "dependencies": {
     "@dagrejs/dagre": "1.1.5",
     "@element-plus/icons-vue": "2.3.2",
-    "@midscene/android": "https://registry.npmjs.org/@midscene/android/-/android-1.12.0.tgz",
-    "@midscene/android-playground": "1.12.0",
-    "@midscene/core": "https://registry.npmjs.org/@midscene/core/-/core-1.12.0.tgz",
-    "@midscene/playground": "https://registry.npmjs.org/@midscene/playground/-/playground-1.12.0.tgz",
-    "@midscene/shared": "https://registry.npmjs.org/@midscene/shared/-/shared-1.12.0.tgz",
-    "@midscene/web": "1.12.0",
+    "@midscene/android": "https://registry.npmjs.org/@midscene/android/-/android-1.12.5.tgz",
+    "@midscene/android-playground": "https://registry.npmjs.org/@midscene/android-playground/-/android-playground-1.12.5.tgz",
+    "@midscene/core": "https://registry.npmjs.org/@midscene/core/-/core-1.12.5.tgz",
+    "@midscene/playground": "https://registry.npmjs.org/@midscene/playground/-/playground-1.12.5.tgz",
+    "@midscene/shared": "https://registry.npmjs.org/@midscene/shared/-/shared-1.12.5.tgz",
+    "@midscene/web": "https://registry.npmjs.org/@midscene/web/-/web-1.12.5.tgz",
+    "@techstark/opencv-js": "5.0.0-release.1",
     "@vitejs/plugin-vue": "6.0.7",
     "@vue-flow/core": "1.48.2",
     "archiver": "7.0.1",

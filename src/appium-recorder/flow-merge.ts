@@ -25,6 +25,7 @@ export function mergeBranches(steps: AppiumRecordedStep[], conditionId: string, 
   const condition = steps.find((step) => step.id === conditionId);
   const common = steps.find((step) => step.id === commonId);
   if (!condition || defaultFlowKind(condition) !== 'condition') throw new Error('请选择判断节点');
+  if (condition.type === 'loop') throw new Error('循环体与循环结束路径不能合并');
   if (condition.flow?.successTargetId) throw new Error('该判断已有后续公共流程，不能重复合流');
   if (!common || common.flow?.parentConditionId !== conditionId || !common.flow.parentBranch) throw new Error('公共起点必须属于当前判断的直接分支');
   const side = common.flow.parentBranch;
@@ -62,10 +63,10 @@ export function mergeBranches(steps: AppiumRecordedStep[], conditionId: string, 
     }
   }
   function connectEnd(step: typeof next[number]) {
-    if (step.type === 'endFlow') return;
+    if (step.type === 'endFlow' || step.type === 'breakLoop') return;
     step.flow.successTargetId = commonId;
     if (defaultFlowKind(step) === 'condition') {
-      for (const branch of ['yes', 'no'] as const) {
+      for (const branch of (step.type === 'loop' ? ['no'] : ['yes', 'no']) as Branch[]) {
         const children = branchSteps(next, step.id, branch);
         if (children.length) connectEnd(byId.get(children[children.length - 1]!.id)!);
         else step.flow[branch === 'yes' ? 'yesTargetId' : 'noTargetId'] = commonId;
@@ -106,5 +107,17 @@ export function mergeBranches(steps: AppiumRecordedStep[], conditionId: string, 
     visited.add(step.id);
   }
   rest.forEach(visit);
+  // 仅记录结构差异和实际被删除的节点，配置编辑不会被取消合并覆盖。
+  const lastCommon = Math.max(...commonRoots.map(step => steps.indexOf(step)));
+  mergedCondition.mergeUndo = JSON.parse(JSON.stringify({
+    version: 1, conditionId, source: side, commonIds: [...commonIds], originalIds: steps.map(step => step.id),
+    boundaryId: steps.slice(lastCommon + 1).find(step => !ownedIds.has(step.id)
+      && step.flow?.parentConditionId === condition.flow?.parentConditionId
+      && step.flow?.parentBranch === condition.flow?.parentBranch)?.id,
+    flows: steps.filter(step => !removedIds.has(step.id) && (ownedIds.has(step.id)
+      || keys.some(key => step.flow?.[key] !== byId.get(step.id)?.flow[key])))
+      .map(step => ({ id: step.id, before: step.flow, after: byId.get(step.id)?.flow })),
+    removed: steps.filter(step => removedIds.has(step.id)),
+  }));
   return { steps: rest, removedCount: removedIds.size };
 }

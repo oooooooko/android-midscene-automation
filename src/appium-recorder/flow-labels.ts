@@ -4,12 +4,16 @@ import { visualChangeMeta } from './visual-change';
 import { longPressMode } from './long-press';
 import { isNativeStateCondition } from './native-control-state';
 import { DEFAULT_LOG_PREFIX } from './stage-log';
+import { imageCheckSummary } from './image-check';
 
 export function isBooleanCondition(step: Pick<AppiumRecordedStep, 'type'>) {
-  return isNativeStateCondition(step) || step.type === 'aiRecognition' || step.type === 'textClick';
+  return isNativeStateCondition(step) || step.type === 'aiRecognition' || step.type === 'textClick' || step.type === 'imageCheck';
 }
 
 export function defaultFlowKind(step: AppiumRecordedStep): FlowKind {
+  if (step.type === 'extractVariable') return 'action';
+  if (step.type === 'loop') return 'condition';
+  if (step.type === 'breakLoop') return 'action';
   if (step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow') return 'action';
   if (isBooleanCondition(step)) return 'condition';
   if (step.flow?.nodeKind) return step.flow.nodeKind;
@@ -18,6 +22,7 @@ export function defaultFlowKind(step: AppiumRecordedStep): FlowKind {
 }
 
 export function flowBranchLabel(step: Pick<AppiumRecordedStep, 'type'>, branch: FlowBranch) {
+  if (step.type === 'loop') return branch === 'yes' ? '循环体' : '循环结束';
   if (step.type === 'textClick') return branch === 'yes' ? '匹配到文字' : '未匹配到文字';
   if (isBooleanCondition(step)) return branch === 'yes' ? 'true' : 'false';
   return branch === 'yes' ? '是' : '否';
@@ -43,6 +48,7 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     checkedState: '判断勾选',
     radioButtonState: 'RadioButton 状态',
     aiRecognition: 'AI 识别',
+    imageCheck: '图像判断',
     textClick: '文字点击',
     assertText: '断言文本',
     key: '按键',
@@ -54,18 +60,25 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     launchApp: '启动 APP',
     openGallery: '启动相册',
     endFlow: '终止流程',
+    loop: '有界循环',
+    breakLoop: '退出循环',
     clearAppData: '清理 APP 缓存',
     longPress: '长按',
     pinch: '双指缩放',
     runScript: '连接脚本',
     noop: '空节点',
     log: '输出日志',
+    extractVariable: '提取变量',
     visualChange: '检测画面变化',
   };
   return labelMap[step.type] || step.type;
 }
 
 export function flowStepMeta(step: AppiumRecordedStep) {
+  if (step.type === 'imageCheck') return imageCheckSummary(step.imageCheck);
+  if (step.type === 'extractVariable') return `${step.extractVariable?.attribute || 'text'} → ${step.extractVariable?.name || '未设置变量名'}`;
+  if (step.type === 'loop') return `最多 ${step.loop?.maxIterations ?? '?'} 次 · ${step.loop?.exitWhen === 'exists' ? '元素出现时退出' : step.loop?.exitWhen === 'notExists' ? '元素消失时退出' : '固定次数'}${step.loop?.exitWhen !== 'never' ? ` ${step.selector?.value || ''}` : ''}`;
+  if (step.type === 'breakLoop') return step.breakLoopTargetId ? '退出指定循环，继续循环结束后的流程' : '退出当前循环，继续循环结束后的流程';
   if (step.type === 'log') return `${step.logPrefix ?? DEFAULT_LOG_PREFIX}:${step.value || ''}`;
   if (step.type === 'aiRecognition') return step.value || '未填写识别内容';
   if (step.type === 'longPress') {
@@ -96,7 +109,7 @@ export function flowStepMeta(step: AppiumRecordedStep) {
   }
   if (step.type === 'pinch') return step.pinch?.direction === 'out' ? '放大' : '缩小';
   if (step.type === 'coordinateTap') {
-    return `${step.fallback?.centerX || ''},${step.fallback?.centerY || ''}`;
+    return `${step.fallback?.centerX ?? ''},${step.fallback?.centerY ?? ''}`;
   }
   if (step.type === 'assertText') return step.value || '';
   return `${step.selector?.strategy || ''} ${step.selector?.value || ''}`.trim();

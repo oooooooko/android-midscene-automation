@@ -1,9 +1,17 @@
 import { execFile } from 'node:child_process';
+import { getPresetVariables, savePresetVariables } from './variable-store';
+import type { TestVariable } from '../../src/appium-recorder/variables';
+import { deleteRunHistory, getRunHistory, listRunHistory, saveRunHistory } from './run-history';
 import { recognizeDeviceScreen } from './ai-recognition';
+import { readImage, cropImage } from './image-check';
+import { PNG } from 'pngjs';
+import { adbScreenshotBase64 } from './screenshot';
+import type { AppiumVisualChangeRegion } from '../../src/appium-recorder/types';
 import { readFreshWindowHierarchy } from './tree-dump';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   deleteAppiumRecordedScript,
+  linkedScriptSnapshot,
   getAppiumRecordedScript,
   importAppiumRecordedScript,
   listAppiumRecordedScripts,
@@ -176,6 +184,21 @@ export async function handleAppiumRecorderRequest(
       return true;
     }
 
+    if (pathname === '/api/appium-recorder/image-check/capture' && req.method === 'POST') {
+      const parsed = await readBody<{ deviceId: string; region: AppiumVisualChangeRegion; screenWidth: number; screenHeight: number }>(req);
+      const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
+      if (!deviceId) throw new Error('请选择设备');
+      assertDeviceAllowed(deviceId);
+      if (isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持图像模板采集');
+      if (replayingDevices.has(deviceId)) { sendJson(res, { message: '设备正在回放，不能采集模板' }, 409); return true; }
+      const source = readImage(Buffer.from(await adbScreenshotBase64(deviceId), 'base64'));
+      if (source.width !== parsed.screenWidth || source.height !== parsed.screenHeight) throw new Error('设备屏幕尺寸已变化，请刷新预览后重新框选');
+      const base64 = PNG.sync.write(cropImage(source, parsed.region)).toString('base64');
+      if (base64.length > 4 * 1024 * 1024) throw new Error('模板区域过大，请缩小到目标图标');
+      sendJson(res, { base64, screenWidth: source.width, screenHeight: source.height });
+      return true;
+    }
+
     if (pathname === '/api/appium-recorder/ai-recognition/test' && req.method === 'POST') {
       const parsed = await readBody<{ deviceId?: string; prompt?: unknown; timeoutMs?: number }>(req);
       const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
@@ -220,6 +243,17 @@ export async function handleAppiumRecorderRequest(
       return true;
     }
 
+    if (pathname === '/api/appium-recorder/variables') {
+      const scriptId = requestUrl.searchParams.get('scriptId') || undefined;
+      if (scriptId && !getAppiumRecordedScript(scriptId)) throw new Error('脚本不存在');
+      const scope = scriptId || (requestUrl.searchParams.get('draft') === '1' ? '__variable_draft__' : undefined);
+      if (req.method === 'GET') { sendJson(res, { variables: getPresetVariables(scope) }); return true; }
+      if (req.method === 'PUT') {
+        const body = await readBody<{ variables: TestVariable[] }>(req);
+        if (!Array.isArray(body.variables)) throw new Error('变量必须为数组');
+        sendJson(res, { variables: savePresetVariables(body.variables, scope) }); return true;
+      }
+    }
     if (pathname === '/api/appium-recorder/scripts' && req.method === 'GET') {
       sendJson(res, { scripts: listAppiumRecordedScripts() });
       return true;
@@ -233,6 +267,7 @@ export async function handleAppiumRecorderRequest(
         appActivity?: string;
         deviceId?: string;
         steps?: AppiumRecordedStepRecord[];
+        variables?: TestVariable[];
       }>(req);
       const script = saveAppiumRecordedScript({
         id: parsed.id,
@@ -241,6 +276,7 @@ export async function handleAppiumRecorderRequest(
         appActivity: parsed.appActivity || '',
         deviceId: parsed.deviceId || selectedDeviceId,
         steps: parsed.steps || [],
+        variables: parsed.variables,
       });
       sendJson(res, { script });
       return true;
@@ -255,6 +291,7 @@ export async function handleAppiumRecorderRequest(
           appActivity?: string;
           deviceId?: string;
           steps?: AppiumRecordedStepRecord[];
+          variables?: TestVariable[];
         };
       }>(req);
       const imported = parsed.script;
@@ -270,6 +307,7 @@ export async function handleAppiumRecorderRequest(
         appActivity: imported.appActivity || '',
         deviceId: imported.deviceId || '',
         steps: imported.steps,
+        variables: imported.variables,
       });
       sendJson(res, { script });
       return true;
@@ -307,9 +345,24 @@ export async function handleAppiumRecorderRequest(
       return true;
     }
 
+    const historyMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/history(?:\/([^/]+))?$/);
+    if (historyMatch) {
+      const scriptId = decodeURIComponent(historyMatch[1]);
+      const id = historyMatch[2] ? decodeURIComponent(historyMatch[2]) : '';
+      if (req.method === 'GET') {
+        const data = id ? getRunHistory(scriptId, id) : listRunHistory(scriptId);
+        sendJson(res, data, data ? 200 : 404);
+        return true;
+      }
+      if (req.method === 'DELETE' && id) {
+        deleteRunHistory(scriptId, id);
+        sendJson(res, { success: true });
+        return true;
+      }
+    }
     const replayMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/replay$/);
     if (replayMatch && req.method === 'POST') {
-      const parsed = await readBody<{ deviceId?: string }>(req);
+      const parsed = await readBody<{ deviceId?: string; parameters?: TestVariable[] }>(req);
       const script = getAppiumRecordedScript(decodeURIComponent(replayMatch[1]));
       if (!script) throw new Error('Appium 录制脚本不存在');
       const deviceId = parsed.deviceId || selectedDeviceId;
@@ -323,13 +376,18 @@ export async function handleAppiumRecorderRequest(
         res.flushHeaders();
       }
       if (isRemoteDeviceId(deviceId)) {
-        const result = await sendRemoteCommand(deviceId, 'replay', { script }) as { success?: boolean; output?: string };
+        const result = await sendRemoteCommand(deviceId, 'replay', { script, parameters: parsed.parameters, globalVariables: getPresetVariables(), linkedScripts: linkedScriptSnapshot(script) }) as Awaited<ReturnType<typeof replayAppiumScript>>;
+        if (result.history) {
+          try { saveRunHistory({ ...result.history, scriptId: script.id, deviceId }); }
+          catch { result.output += '\n历史记录保存失败'; }
+        }
+        const { history: _history, ...response } = result;
         if (streamOutput) {
           result.output?.split(/\r?\n/).forEach((line) => sendStreamEvent(res, { type: 'log', line }));
-          sendStreamEvent(res, { type: 'result', ...result });
+          sendStreamEvent(res, { type: 'result', ...response });
           res.end();
         } else {
-          sendJson(res, result, result.success ? 200 : 500);
+          sendJson(res, response, result.success ? 200 : 500);
         }
         return true;
       }
@@ -345,12 +403,16 @@ export async function handleAppiumRecorderRequest(
           deviceId,
           streamOutput ? (line) => sendStreamEvent(res, { type: 'log', line }) : undefined,
           replayAbortController.signal,
+          { parameters: parsed.parameters, globalVariables: getPresetVariables() },
         );
+        try { saveRunHistory(result.history); }
+        catch { result.output += '\n历史记录保存失败'; }
+        const { history: _history, ...response } = result;
         if (streamOutput) {
-          sendStreamEvent(res, { type: 'result', ...result });
+          sendStreamEvent(res, { type: 'result', ...response });
           res.end();
         } else {
-          sendJson(res, result, result.success ? 200 : 500);
+          sendJson(res, response, result.success ? 200 : 500);
         }
       } finally {
         replayingDevices.delete(deviceId);

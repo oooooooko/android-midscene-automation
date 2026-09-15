@@ -5,9 +5,12 @@ import { normalizeVisualChangeConfig } from '../visual-change';
 import { longPressMode } from '../long-press';
 import { defaultFlowKind, isBooleanCondition } from '../flow-labels';
 import TextClickSettings from './TextClickSettings.vue';
-import { isNativeStateCondition } from '../native-control-state';
 import LongPressSettings from './LongPressSettings.vue';
 import StageLogSettings from './StageLogSettings.vue';
+import LoopSettings from './LoopSettings.vue';
+import BreakLoopSettings from './BreakLoopSettings.vue';
+import VariableExtractionSettings from './VariableExtractionSettings.vue';
+import ScriptParameterSettings from './ScriptParameterSettings.vue';
 
 type FlowKind = 'action' | 'condition' | 'assertion';
 type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
@@ -15,6 +18,7 @@ type VisualChangeConfig = NonNullable<AppiumRecordedStep['visualChange']>;
 
 const props = defineProps<{
   step: AppiumRecordedStep;
+  steps: AppiumRecordedStep[];
   index: number;
   disabled?: boolean;
 }>();
@@ -42,7 +46,7 @@ function defaultKind(): FlowKind {
 function patchStep(patch: Partial<AppiumRecordedStep>) {
   emit('update', {
     index: props.index,
-    step: { ...props.step, ...patch },
+    step: { ...props.step, ...patch, ...('contextSelector' in patch ? { selectorChain: undefined } : {}) },
   });
 }
 
@@ -74,6 +78,24 @@ function patchSwipe(patch: Partial<SwipeGesture>) {
   });
 }
 
+function patchPinch(patch: Partial<NonNullable<AppiumRecordedStep['pinch']>>) {
+  patchStep({ pinch: { direction: 'out', centerX: 0, centerY: 0, percent: 0.5, ...props.step.pinch, ...patch } });
+}
+
+function patchTapCoordinate(axis: 'centerX' | 'centerY', value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return;
+  const fallback = {
+    ...props.step.fallback,
+    strategy: 'bounds' as const,
+    centerX: props.step.fallback?.centerX ?? 0,
+    centerY: props.step.fallback?.centerY ?? 0,
+    [axis]: Math.max(0, Math.round(value)),
+  };
+  // 仅同步自动生成的名称，保留用户自定义的节点名称。
+  patchStep({ fallback, ...(/^点击坐标 \d+,\d+$/.test(props.step.label)
+    ? { label: `点击坐标 ${fallback.centerX},${fallback.centerY}` } : {}) });
+}
+
 function patchVisualChange(patch: Partial<VisualChangeConfig>) {
   patchStep({
     visualChange: normalizeVisualChangeConfig({
@@ -98,7 +120,7 @@ function patchTimeout(value: unknown) {
   patchStep({ timeoutMs: timeout || undefined });
 }
 
-const showSelector = computed(() => props.step.selector && (
+const showSelector = computed(() => props.step.type !== 'loop' && props.step.selector && (
   props.step.type !== 'longPress' || longPressMode(props.step) === 'element'
 ));
 
@@ -106,7 +128,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
   patchStep({
     selector: { ...props.step.selector!, ...patch },
     // 修改元素目标后，不能继续优先使用录制时的备用 XPath。
-    ...(props.step.type === 'longPress' || isNativeStateCondition(props.step) ? { selectorChain: undefined } : {}),
+    selectorChain: undefined,
   });
 }
 </script>
@@ -134,7 +156,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         <el-form-item label="节点类型">
           <el-select
             :model-value="defaultKind()"
-            :disabled="disabled || isBooleanCondition(step) || step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow'"
+            :disabled="disabled || isBooleanCondition(step) || step.type === 'extractVariable' || step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow' || step.type === 'loop' || step.type === 'breakLoop'"
             @update:model-value="patchFlow({ nodeKind: $event as FlowKind })"
           >
             <el-option label="操作" value="action" />
@@ -142,7 +164,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
             <el-option label="校验" value="assertion" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="step.type !== 'longPress' && step.type !== 'log' && step.type !== 'openGallery' && step.type !== 'endFlow'" label="超时时间 ms">
+        <el-form-item v-if="!['longPress', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type)" label="超时时间 ms">
           <el-input-number
             :model-value="step.timeoutMs || undefined"
             :disabled="disabled"
@@ -154,7 +176,35 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         </el-form-item>
       </div>
       <LongPressSettings v-if="step.type === 'longPress'" :step="step" :disabled="disabled" @update="patchStep" />
+      <el-form-item v-if="['waitActivity', 'launchApp', 'clearAppData'].includes(step.type)" :label="step.type === 'waitActivity' ? '目标 Activity' : '目标 APP 包名'">
+        <el-input :model-value="step.value || ''" :disabled="disabled" @update:model-value="patchStep({ value: String($event) })" />
+      </el-form-item>
+      <template v-if="step.type === 'pinch'">
+        <el-form-item label="缩放方向">
+          <el-select :model-value="step.pinch?.direction || 'out'" :disabled="disabled" @update:model-value="patchPinch({ direction: $event })">
+            <el-option label="放大" value="out" /><el-option label="缩小" value="in" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-for="axis in (['centerX', 'centerY'] as const)" :key="axis" :label="axis === 'centerX' ? '中心 X' : '中心 Y'">
+          <el-input-number :model-value="step.pinch?.[axis] ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" @update:model-value="patchPinch({ [axis]: $event ?? 0 })" />
+        </el-form-item>
+        <el-form-item label="缩放比例">
+          <el-input-number :model-value="step.pinch?.percent ?? 0.5" :disabled="disabled" :min="0.01" :max="1" :step="0.05" controls-position="right" @update:model-value="patchPinch({ percent: $event ?? 0.5 })" />
+        </el-form-item>
+      </template>
+      <div v-if="step.type === 'coordinateTap'" class="appium-flow-editor__grid">
+        <el-form-item label="坐标 X">
+          <el-input-number :model-value="step.fallback?.centerX ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 X" @update:model-value="patchTapCoordinate('centerX', $event)" />
+        </el-form-item>
+        <el-form-item label="坐标 Y">
+          <el-input-number :model-value="step.fallback?.centerY ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 Y" @update:model-value="patchTapCoordinate('centerY', $event)" />
+        </el-form-item>
+      </div>
       <StageLogSettings v-if="step.type === 'log'" :step="step" :disabled="disabled" @update="patchStep" />
+      <VariableExtractionSettings v-if="step.type === 'extractVariable'" :step="step" :disabled="disabled" @update="patchStep" />
+      <ScriptParameterSettings v-if="step.type === 'runScript'" :step="step" :disabled="disabled" @update="patchStep" />
+      <LoopSettings v-if="step.type === 'loop'" :step="step" :disabled="disabled" @update="patchStep" />
+      <BreakLoopSettings v-if="step.type === 'breakLoop'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
       <TextClickSettings v-if="step.type === 'textClick'" :step="step" :disabled="disabled" @update="patchStep" />
       <el-form-item v-if="step.type === 'aiRecognition'" label="识别内容">
         <el-input
@@ -190,7 +240,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           <el-form-item label="变化阈值 %">
             <el-input-number
               :model-value="visualChangeConfig.changeRatioThreshold"
-              :disabled="visualChangeConfigDisabled"
+              :disabled="disabled"
               :min="0.01"
               :max="100"
               :step="0.1"
@@ -358,7 +408,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           />
         </el-form-item>
       </div>
-      <div v-if="defaultKind() === 'condition' && !isBooleanCondition(step)" class="appium-flow-editor__grid">
+      <div v-if="defaultKind() === 'condition' && step.type !== 'loop' && !isBooleanCondition(step)" class="appium-flow-editor__grid">
         <el-form-item label="指定文本（可选）">
           <el-input
             :model-value="step.value || ''"

@@ -1,5 +1,6 @@
 import type { AppiumBounds, AppiumNode, AppiumSelector } from './types';
 import { parseNativeBoolean } from './native-control-state';
+import { xpathStringLiteral } from './node-locators';
 
 type SelectorCounts = {
   contentDesc: Map<string, number>;
@@ -75,10 +76,6 @@ function elementChildren(element: Element) {
   return Array.from(element.children).filter((child) => child.tagName === 'node');
 }
 
-function escapeXpathValue(value: string) {
-  return value.replace(/'/g, "&apos;");
-}
-
 function transformNode(
   element: Element,
   parentPath: string,
@@ -95,7 +92,7 @@ function transformNode(
     .slice(0, index + 1)
     .filter((sibling) => (attr(sibling, 'class') || sibling.tagName) === className).length;
   const xpath = resourceId && resourceIdCounts.get(resourceId) === 1
-    ? `//*[@resource-id='${escapeXpathValue(resourceId)}']`
+    ? `//*[@resource-id=${xpathStringLiteral(resourceId)}]`
     : `${parentPath}/${className}[${sameClassIndex}]`;
   const selector = buildSelector(element, counts, bounds);
   const selfContextSelector: AppiumSelector = selector.unique && selector.strategy !== 'bounds'

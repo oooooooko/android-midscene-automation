@@ -7,8 +7,13 @@ import {
   sqlString,
 } from '../storage/sqlite';
 import { normalizeLegacyNestedConditionBranches } from '../../src/appium-recorder/flow-normalize';
+import { validateLoopSteps } from '../../src/appium-recorder/bounded-loop';
+import { validateVariables, validateExtraction, validateReturns, type TestVariable, type VariableExtraction, type ScriptReturn } from '../../src/appium-recorder/variables';
+import { getPresetVariables, savePresetVariables, deleteScriptVariables } from './variable-store';
+import { validateImageCheck, type ImageCheckConfig } from '../../src/appium-recorder/image-check';
 
 export type AppiumRecordedStepRecord = {
+  mergeUndo?: import('../../src/appium-recorder/types').BranchMergeUndo;
   id: string;
   type:
     | 'tap'
@@ -23,6 +28,7 @@ export type AppiumRecordedStepRecord = {
     | 'checkedState'
     | 'radioButtonState'
     | 'aiRecognition'
+    | 'imageCheck'
     | 'textClick'
     | 'key'
     | 'waitActivity'
@@ -34,6 +40,8 @@ export type AppiumRecordedStepRecord = {
     | 'launchApp'
     | 'openGallery'
     | 'endFlow'
+    | 'loop'
+    | 'breakLoop'
     | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
@@ -41,6 +49,7 @@ export type AppiumRecordedStepRecord = {
     | 'pinch'
     | 'runScript'
     | 'noop'
+    | 'extractVariable'
     | 'log'
     | 'visualChange';
   label: string;
@@ -83,9 +92,18 @@ export type AppiumRecordedStepRecord = {
   };
   value?: string;
   logPrefix?: string;
+  imageCheck?: ImageCheckConfig;
+  extractVariable?: VariableExtraction;
+  parameters?: TestVariable[];
+  returns?: ScriptReturn[];
   keyCode?: number;
   timeoutMs?: number;
   longPressMode?: 'element' | 'coordinates';
+  breakLoopTargetId?: string;
+  loop?: {
+    maxIterations: number;
+    exitWhen: 'never' | 'exists' | 'notExists';
+  };
   flow?: {
     nodeKind?: 'action' | 'condition' | 'assertion';
     yesTargetId?: string;
@@ -154,6 +172,7 @@ export type AppiumRecordedScriptRecord = {
   appPackage: string;
   appActivity: string;
   deviceId: string;
+  variables?: TestVariable[];
   steps: AppiumRecordedStepRecord[];
   createdAt: string;
   updatedAt: string;
@@ -282,6 +301,7 @@ function rowToRecord(row: AppiumRecordedScriptRow): AppiumRecordedScriptRecord {
     appPackage: row.app_package,
     appActivity: normalizeScriptActivity(row.app_package, row.app_activity, steps),
     deviceId: row.device_id || '',
+    variables: getPresetVariables(row.id),
     steps,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -324,7 +344,20 @@ export function getAppiumRecordedScript(id: string) {
   return row ? rowToRecord(row) : null;
 }
 
+export function linkedScriptSnapshot(root: AppiumRecordedScriptRecord) {
+  const found = new Map<string, AppiumRecordedScriptRecord>([[root.id, root]]);
+  for (const script of found.values()) {
+    for (const step of script.steps) {
+      if (step.type !== 'runScript' || !step.value || found.has(step.value)) continue;
+      const linked = getAppiumRecordedScript(step.value);
+      if (linked) found.set(linked.id, linked);
+    }
+  }
+  return [...found.values()];
+}
+
 export function saveAppiumRecordedScript(input: {
+  variables?: TestVariable[];
   id?: string;
   name: string;
   appPackage: string;
@@ -338,6 +371,14 @@ export function saveAppiumRecordedScript(input: {
   const name = input.name.trim();
   const appPackage = input.appPackage.trim();
   const steps = normalizeLegacyNestedConditionBranches(input.steps || []);
+  if (input.variables !== undefined) validateVariables(input.variables);
+  for (const step of steps) {
+    // 读取旧脚本必须容错，让用户能打开并修正无效配置；仅在写入时校验。
+    if (step.type === 'imageCheck') validateImageCheck(step.imageCheck);
+    if (step.type === 'extractVariable') validateExtraction(step.extractVariable);
+    if (step.type === 'runScript') { validateVariables(step.parameters); validateReturns(step.returns); }
+  }
+  validateLoopSteps(steps);
   const appActivity = normalizeScriptActivity(appPackage, input.appActivity, steps);
 
   if (!name) throw new Error('脚本名称不能为空');
@@ -373,6 +414,7 @@ export function saveAppiumRecordedScript(input: {
         flow_json = excluded.flow_json,
         updated_at = excluded.updated_at;
     `);
+    if (input.variables !== undefined) savePresetVariables(input.variables, input.id);
     return getAppiumRecordedScript(input.id);
   }
 
@@ -405,11 +447,14 @@ export function saveAppiumRecordedScript(input: {
       updated_at = excluded.updated_at;
   `);
 
-  return listAppiumRecordedScripts().find((script) => script.name === name) || getAppiumRecordedScript(id);
+  const record = listAppiumRecordedScripts().find((script) => script.name === name) || getAppiumRecordedScript(id);
+  if (record && input.variables !== undefined) record.variables = savePresetVariables(input.variables, record.id);
+  return record;
 }
 
 export function deleteAppiumRecordedScript(id: string) {
   initDb();
+  deleteScriptVariables(id);
   runSql(`
     DELETE FROM appium_recorded_scripts
     WHERE id = ${sqlString(id)};
@@ -417,6 +462,7 @@ export function deleteAppiumRecordedScript(id: string) {
 }
 
 export function importAppiumRecordedScript(input: {
+  variables?: TestVariable[];
   name: string;
   appPackage: string;
   appActivity?: string;

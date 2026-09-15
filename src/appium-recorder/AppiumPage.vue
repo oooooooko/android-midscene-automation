@@ -2,9 +2,19 @@
 import { computed, h, onMounted, onUnmounted, provide, reactive, shallowRef, watch } from 'vue';
 import { flowBackgroundKey, normalizeFlowBackground } from './flow-appearance';
 import { ElForm, ElFormItem, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus';
-import { Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Plus, Refresh, Upload, VideoPlay, View } from '@element-plus/icons-vue';
+import { Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Plus, Refresh, Upload, VideoPlay, View, Clock } from '@element-plus/icons-vue';
+import RunHistoryDialog from './RunHistoryDialog.vue';
 import type { AndroidDevice, AppPreset, DeviceAction } from '../types';
 import DevicePreviewPanel from '../components/device/DevicePreviewPanel.vue';
+import LoopSettings from './components/LoopSettings.vue';
+import BreakLoopSettings from './components/BreakLoopSettings.vue';
+import VisualChangeEndPicker from './components/VisualChangeEndPicker.vue';
+import PresetVariables from './components/PresetVariables.vue';
+import { insertBeforeSharedStep } from './flow-insert';
+import VariableExtractionSettings from './components/VariableExtractionSettings.vue';
+import ScriptParameterSettings from './components/ScriptParameterSettings.vue';
+import { validateVariables, validateExtraction, validateReturns, type TestVariable } from './variables';
+import { defaultLoopConfig, enclosingLoops, breakLoopTarget, validateLoop, validateLoopSteps } from './bounded-loop';
 import {
   clearAppiumDeviceAppData,
   deleteAppiumScript,
@@ -15,12 +25,13 @@ import {
   launchAppiumDeviceApp,
   replayAppiumScript,
   saveAppiumScript,
+  saveVariables,
   stopAppiumReplay,
   tapAppiumDevice,
 } from './api';
-import ComponentTree from './components/ComponentTree.vue';
+import ComponentInspector from './components/ComponentInspector.vue';
+import RecorderWorkspace from './components/RecorderWorkspace.vue';
 import FlowCanvas from './components/FlowCanvas.vue';
-import NodeDetail from './components/NodeDetail.vue';
 import LongPressSettings from './components/LongPressSettings.vue';
 import StageLogSettings from './components/StageLogSettings.vue';
 import TextClickSettings from './components/TextClickSettings.vue';
@@ -29,6 +40,8 @@ import { DEFAULT_LOG_PREFIX, validateStageLog } from './stage-log';
 import RecordedSteps from './components/RecordedSteps.vue';
 import NewScriptDialog from './components/NewScriptDialog.vue';
 import VisualChangeDialog from './components/VisualChangeDialog.vue';
+import ImageCheckDialog from './components/ImageCheckDialog.vue';
+import { createImageCheckConfig, validateImageCheck, type ImageCheckConfig } from './image-check';
 import AiRecognitionTestDialog from './components/AiRecognitionTestDialog.vue';
 import { validateAiRecognitionPrompt } from './ai-recognition';
 import {
@@ -47,10 +60,11 @@ import {
   boundsToVisualRegion,
   createStepId,
   normalizeVisualChangeConfig,
+  syncVisualChangeThreshold,
   visualRegionToBounds,
 } from './visual-change';
 import {
-  findOpenVisualChangeStart,
+  findOpenVisualChangeStarts,
   nextVisualChangePairLabel,
 } from './visual-change-pairs';
 import type {
@@ -61,12 +75,13 @@ import type {
   AppiumVisualChangeRegion,
 } from './types';
 
-type NodeStepType = 'tap' | 'input' | 'assertExists' | 'waitFor';
+type NodeStepType = 'tap' | 'input' | 'waitFor';
 type BranchName = 'yes' | 'no';
 type LegacyFlow = NonNullable<AppiumRecordedStep['flow']> & { scope?: string };
 type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
 type SwipeForm = SwipeGesture & { direction: string };
 type BranchTarget = {
+  beforeStepId?: string;
   stepId: string;
   branch: BranchName;
   updateTarget?: boolean;
@@ -76,13 +91,15 @@ type BranchTarget = {
 type RecorderAction = InsertAction;
 
 const WORKBENCH_TAB_STORAGE_KEY = 'android-midscene-automation:appium-workbench-tab';
+const workspaceRef = shallowRef<InstanceType<typeof RecorderWorkspace>>();
+const historyScript = shallowRef<{ id: string; name: string } | null>(null);
 const AUTO_TREE_REFRESH_INTERVAL_MS = 1800;
 
 const insertableRecorderActions: RecorderAction[] = [
+  'extractVariable',
   'delay',
   'tap',
   'input',
-  'assertExists',
   'waitFor',
   'tapIfExists',
   'inputIfExists',
@@ -93,6 +110,7 @@ const insertableRecorderActions: RecorderAction[] = [
   'checkedState',
   'radioButtonState',
   'aiRecognition',
+  'imageCheck',
   'textClick',
   'runScript',
   'keyBack',
@@ -106,9 +124,10 @@ const insertableRecorderActions: RecorderAction[] = [
   'launchApp',
   'openGallery',
   'endFlow',
+  'loop',
+  'breakLoop',
   'clearAppData',
   'waitDisappear',
-  'assertText',
   'longPress',
   'pinch',
   'noop',
@@ -155,7 +174,7 @@ const selectedScriptId = shallowRef('');
 const newScriptDialogVisible = shallowRef(false);
 const newScriptRevision = shallowRef(0);
 const storedWorkbenchTab = window.localStorage.getItem(WORKBENCH_TAB_STORAGE_KEY);
-const activeWorkbenchTab = shallowRef<'recording' | 'scripts'>(storedWorkbenchTab === 'scripts' ? 'scripts' : 'recording');
+const activeWorkbenchTab = shallowRef<'recording' | 'scripts' | 'variables'>(storedWorkbenchTab === 'scripts' ? 'scripts' : storedWorkbenchTab === 'variables' ? 'variables' : 'recording');
 const steps = shallowRef<AppiumRecordedStep[]>([]);
 const aiRecognitionTestStep = shallowRef<AppiumRecordedStep | null>(null);
 const flowClipboard = shallowRef<FlowClipboard | null>(null);
@@ -164,7 +183,9 @@ const currentActivity = shallowRef('');
 const replayOutput = shallowRef('');
 const replayOutputDialogVisible = shallowRef(false);
 const linkedScriptDialogVisible = shallowRef(false);
+const linkedScriptEditingId = shallowRef('');
 const linkedScriptTargetId = shallowRef('');
+const linkedParameters = reactive<AppiumRecordedStep>({ id: 'link-parameters', type: 'runScript', label: '', parameters: [], returns: [] });
 const linkedScriptInsertIndex = shallowRef<number | undefined>();
 const linkedScriptBranchTarget = shallowRef<BranchTarget | null>(null);
 const linkedScriptExpectedActivity = shallowRef('');
@@ -172,6 +193,11 @@ const linkedScriptPreviewVisible = shallowRef(false);
 const linkedScriptPreviewScriptId = shallowRef('');
 const linkedScriptPreviewResetToken = shallowRef(0);
 const visualChangeDialogVisible = shallowRef(false);
+const imageCheckDraft = shallowRef<AppiumRecordedStep | null>(null);
+let imageCheckIndex: number | undefined;
+let imageCheckBranch: BranchTarget | undefined;
+let imageCheckEditing = false;
+const imageCheckPicking = shallowRef(false);
 const visualChangePicking = shallowRef(false);
 const visualChangeInsertIndex = shallowRef<number | undefined>();
 const visualChangeBranchTarget = shallowRef<BranchTarget | null>(null);
@@ -205,6 +231,7 @@ const form = reactive({
   appPackage: '',
   appActivity: '',
 });
+const scriptVariables = shallowRef<TestVariable[]>([]);
 
 const savedDraftSnapshot = shallowRef('');
 const currentDraftSnapshot = computed(() => JSON.stringify({
@@ -212,12 +239,23 @@ const currentDraftSnapshot = computed(() => JSON.stringify({
   appPackage: form.appPackage,
   appActivity: form.appActivity,
   steps: steps.value,
+  variables: scriptVariables.value,
 }));
 const flowClipboardCount = computed(() => flowClipboard.value?.steps.length || 0);
 const hasUnsavedChanges = computed(() => currentDraftSnapshot.value !== savedDraftSnapshot.value);
 
 function markDraftSaved() {
   savedDraftSnapshot.value = currentDraftSnapshot.value;
+}
+
+function onVariablesSaved(id: string, variables: TestVariable[]) {
+  const script = scripts.value.find(item => item.id === id);
+  if (script) script.variables = variables;
+  if (id && selectedScriptId.value === id) {
+    // 仅更新变量的已保存基线，不把尚未保存的节点标记为已保存。
+    const snapshot = JSON.parse(savedDraftSnapshot.value);
+    savedDraftSnapshot.value = JSON.stringify({ ...snapshot, variables });
+  }
 }
 
 function warnBeforeUnload(event: BeforeUnloadEvent) {
@@ -265,11 +303,12 @@ const selectedBounds = computed(() => {
   return bounds && selectedNode.value ? { id: selectedNode.value.id, ...bounds } : undefined;
 });
 const visualChangeSelectedRegion = computed(() => {
+  if (imageCheckDraft.value?.imageCheck?.target === 'region') return visualRegionToBounds('image-check-region', imageCheckDraft.value.imageCheck.region);
   if (!visualChangeDialogVisible.value || visualChangeConfig.value.mode !== 'region') return undefined;
   return visualRegionToBounds('visual-change-region', visualChangeConfig.value.region);
 });
 const visualChangeRegionSelectionEnabled = computed(() => (
-  visualChangeDialogVisible.value && visualChangeConfig.value.mode === 'region'
+  (visualChangeDialogVisible.value && visualChangeConfig.value.mode === 'region') || imageCheckDraft.value?.imageCheck?.target === 'region'
 ));
 
 function stepWithBranchTarget(step: AppiumRecordedStep, branchTarget: BranchTarget) {
@@ -285,6 +324,10 @@ function stepWithBranchTarget(step: AppiumRecordedStep, branchTarget: BranchTarg
 }
 
 function insertStep(step: AppiumRecordedStep, index?: number, branchTarget?: BranchTarget) {
+  if (branchTarget?.beforeStepId) {
+    steps.value = insertBeforeSharedStep(steps.value, branchTarget.beforeStepId, [step], [step.id]);
+    return steps.value.find(item => item.id === step.id)!;
+  }
   let nextSteps = [...steps.value];
   let insertedStep = branchTarget ? stepWithBranchTarget(step, branchTarget) : step;
   if (index === -1) {
@@ -343,7 +386,7 @@ function copyFlowNodes(indexes: number[]) {
   }
 }
 
-function pasteFlowNodes(index: number, branch?: BranchName) {
+function pasteFlowNodes(index: number, branch?: BranchName, beforeStepId?: string) {
   if (!flowClipboard.value) {
     ElMessage.warning('请先复制节点');
     return;
@@ -356,7 +399,9 @@ function pasteFlowNodes(index: number, branch?: BranchName) {
     const nextSteps = pasteFlowClipboard(steps.value, flowClipboard.value, {
       afterIndex: index,
       branch,
+      beforeStepId,
     });
+    validateLoopSteps(nextSteps);
     steps.value = nextSteps;
     ElMessage.success(`已粘贴 ${flowClipboardCount.value} 个节点${branch ? `到${branch === 'yes' ? '是' : '否'}分支` : ''}`);
     flowClipboard.value = null;
@@ -452,7 +497,6 @@ function createStep(type: NodeStepType, node: AppiumNode): AppiumRecordedStep {
   const labelMap = {
     tap: '点击',
     input: '输入',
-    assertExists: '断言存在',
     waitFor: '等待出现',
   };
   return {
@@ -465,7 +509,7 @@ function createStep(type: NodeStepType, node: AppiumNode): AppiumRecordedStep {
       ? [{ strategy: 'xpath', value: node.xpath, unique: true, matchCount: 1 }]
       : undefined,
     fallback: node.bounds ? { strategy: 'bounds', centerX: node.bounds.centerX, centerY: node.bounds.centerY } : undefined,
-    timeoutMs: type === 'assertExists' || type === 'waitFor' ? 10000 : undefined,
+    timeoutMs: type === 'waitFor' ? 10000 : undefined,
     pageBefore: currentPageSnapshot(node),
     snapshot: {
       text: node.text,
@@ -603,6 +647,35 @@ function defaultVisualChangeRegion(): AppiumVisualChangeRegion {
     width: regionWidth,
     height: regionHeight,
   };
+}
+
+function updateImageCheck(config: ImageCheckConfig) {
+  if (imageCheckDraft.value) imageCheckDraft.value = { ...imageCheckDraft.value, imageCheck: config };
+}
+
+function useImageCheckElement() {
+  const node = selectedNode.value;
+  if (!node?.bounds || !imageCheckDraft.value?.imageCheck) return;
+  const located = createNodeActionStep('imageCheck', '图像判断', node);
+  imageCheckDraft.value = { ...imageCheckDraft.value, selector: located.selector, contextSelector: located.contextSelector,
+    selectorChain: located.selectorChain, fallback: undefined,
+    imageCheck: { ...imageCheckDraft.value.imageCheck, target: 'element', region: boundsToVisualRegion(node.bounds) } };
+}
+
+function confirmImageCheck() {
+  const draft = imageCheckDraft.value;
+  if (!draft || recordingLocked.value) return;
+  try {
+    validateImageCheck(draft.imageCheck);
+    if (draft.imageCheck?.target === 'element' && (!draft.selector || draft.selector.strategy === 'bounds')) throw new Error('请选择具有有效定位信息的组件');
+    if (imageCheckEditing) {
+      const index = steps.value.findIndex(step => step.id === draft.id);
+      if (index < 0) throw new Error('原节点已删除');
+      updateStep(index, draft);
+    } else insertStep(draft, imageCheckIndex, imageCheckBranch);
+    imageCheckDraft.value = null;
+    imageCheckPicking.value = false;
+  } catch (error) { ElMessage.warning((error as Error).message); }
 }
 
 function currentVisualChangeConfig() {
@@ -916,6 +989,7 @@ function selectNodeFromPoint(point: { x: number; y: number }) {
   const node = findSmallestNodeAtPoint(tree.value, point.x, point.y);
   if (node) {
     selectedNode.value = node;
+    workspaceRef.value?.showTree();
     return;
   }
   ElMessage.warning('未命中组件树节点');
@@ -928,6 +1002,7 @@ async function swipePreview(gesture: {
   endY: number;
   duration: number;
 }) {
+  if (recordingBusy.value || replaying.value) return;
   if (!selectedDeviceId.value) return;
   try {
     await props.swipeDevice(
@@ -1093,6 +1168,7 @@ async function addSwipeStep(index?: number, branchTarget?: BranchTarget) {
 }
 
 function openLinkedScriptDialog(index?: number, branchTarget?: BranchTarget) {
+  linkedScriptEditingId.value = '';
   if (!linkableScripts.value.length) {
     ElMessage.warning('暂无可连接的已保存脚本');
     return;
@@ -1114,11 +1190,15 @@ function openLinkedScriptDialog(index?: number, branchTarget?: BranchTarget) {
     return;
   }
   linkedScriptTargetId.value = compatibleLinkableScripts.value[0]?.id || '';
+  linkedParameters.parameters = [];
+  linkedParameters.returns = [];
   linkedScriptInsertIndex.value = index;
   linkedScriptDialogVisible.value = true;
 }
 
 function addLinkedScriptStep() {
+  try { validateVariables(linkedParameters.parameters); validateReturns(linkedParameters.returns); }
+  catch (error) { ElMessage.error(String(error)); return; }
   const script = scripts.value.find((item) => item.id === linkedScriptTargetId.value);
   if (!script) {
     ElMessage.warning('请选择要连接的脚本');
@@ -1138,8 +1218,15 @@ function addLinkedScriptStep() {
     );
     return;
   }
-  insertStep(
-    createRunScriptStep(script),
+  const editingIndex = linkedScriptEditingId.value ? steps.value.findIndex(step => step.id === linkedScriptEditingId.value) : -1;
+  if (linkedScriptEditingId.value && editingIndex < 0) { ElMessage.warning('原节点已删除，请重新打开'); return; }
+  if (editingIndex >= 0) {
+    const original = steps.value[editingIndex]!;
+    updateStep(editingIndex, { ...original, value: script.id,
+      ...(original.label.startsWith('连接脚本 ') ? { label: `连接脚本 ${script.name}` } : {}),
+      parameters: JSON.parse(JSON.stringify(linkedParameters.parameters || [])), returns: JSON.parse(JSON.stringify(linkedParameters.returns || [])) });
+  } else insertStep(
+    { ...createRunScriptStep(script), parameters: JSON.parse(JSON.stringify(linkedParameters.parameters || [])), returns: JSON.parse(JSON.stringify(linkedParameters.returns || [])) },
     linkedScriptInsertIndex.value,
     linkedScriptBranchTarget.value || undefined,
   );
@@ -1147,10 +1234,12 @@ function addLinkedScriptStep() {
   linkedScriptBranchTarget.value = null;
   linkedScriptExpectedActivity.value = '';
   linkedScriptDialogVisible.value = false;
-  ElMessage.success('已添加连接脚本步骤');
+  ElMessage.success(editingIndex >= 0 ? '已修改连接脚本' : '已添加连接脚本步骤');
+  linkedScriptEditingId.value = '';
 }
 
 function closeLinkedScriptDialog() {
+  linkedScriptEditingId.value = '';
   linkedScriptDialogVisible.value = false;
   linkedScriptInsertIndex.value = undefined;
   linkedScriptBranchTarget.value = null;
@@ -1208,10 +1297,16 @@ function pickVisualChangeRegion() {
     mode: 'region',
   });
   visualChangePicking.value = true;
+  workspaceRef.value?.showPreview();
   ElMessage.info('请在设备预览中拖拽框选检测区域');
 }
 
 function applyVisualChangeRegion(region: AppiumVisualChangeRegion) {
+  if (imageCheckDraft.value?.imageCheck) {
+    updateImageCheck({ ...imageCheckDraft.value.imageCheck, region, screenWidth: props.deviceWidth || 0, screenHeight: props.deviceHeight || 0 });
+    imageCheckPicking.value = false;
+    return;
+  }
   visualChangeConfig.value = normalizeVisualChangeConfig({
     ...visualChangeConfig.value,
     mode: 'region',
@@ -1249,6 +1344,13 @@ function isReadonlyFlowCopySelected(_index: number) {
   return false;
 }
 
+function addSharedAction(action: RecorderAction, index: number, beforeStepId?: string) {
+  if (!beforeStepId) return addAction(action, index);
+  const target = steps.value.find(step => step.id === beforeStepId);
+  if (!target) return;
+  return addAction(action, index, { beforeStepId, stepId: target.flow?.parentConditionId || '', branch: target.flow?.parentBranch || 'yes' });
+}
+
 async function addAction(
   action: RecorderAction,
   index?: number,
@@ -1256,21 +1358,12 @@ async function addAction(
 ) {
   if (recordingBusy.value) return;
   if (!ensureAppPackageSelected()) return;
-  const previousStep = typeof index === 'number' && index >= 0 ? steps.value[index] : undefined;
-  if (action === 'launchApp' && steps.value.some((step) => step.type === 'launchApp')) {
-    ElMessage.warning('启动 APP 节点只能添加一个');
-    return;
-  }
   if (action === 'clearAppData' && steps.value.some((step) => step.type === 'clearAppData')) {
     ElMessage.warning('清理 App 缓存节点只能添加一个');
     return;
   }
   if (action === 'clearAppData' && index !== -1) {
     ElMessage.warning('清理 App 缓存只能从开始节点添加');
-    return;
-  }
-  if (action === 'launchApp' && index !== -1 && previousStep?.type !== 'clearAppData') {
-    ElMessage.warning('启动 APP 只能从开始节点或清理 App 缓存后添加');
     return;
   }
   if (action === 'runScript') {
@@ -1285,6 +1378,56 @@ async function addAction(
   }
   if (action === 'endFlow') {
     return insertStep({ id: createStepId(), type: 'endFlow', label: '终止流程', flow: { nodeKind: 'action' } }, index, branchTarget);
+  }
+  if (action === 'loop') {
+    const step = reactive<AppiumRecordedStep>({
+      id: createStepId(), type: 'loop', label: '有界循环', loop: defaultLoopConfig(),
+      selector: selectedNode.value?.selector ? { ...selectedNode.value.selector } : { strategy: 'id', value: '' },
+      flow: { nodeKind: 'condition' },
+    });
+    const result = await ElMessageBox({
+      title: '添加有界循环',
+      message: h(ElForm, { labelPosition: 'top' }, () => h(LoopSettings, { step, onUpdate: (patch) => Object.assign(step, patch) })),
+      showCancelButton: true, confirmButtonText: '添加', cancelButtonText: '取消',
+      beforeClose: (action, _instance, done) => {
+        if (action === 'confirm') {
+          try { validateLoop(step); } catch (error) { ElMessage.warning((error as Error).message); return; }
+        }
+        done();
+      },
+    }).catch(() => null);
+    if (result) return insertStep({ ...step, loop: { ...step.loop! }, selector: { ...step.selector! } }, index, branchTarget);
+    return;
+  }
+  if (action === 'breakLoop') {
+    const step: AppiumRecordedStep = { id: createStepId(), type: 'breakLoop', label: '退出循环', flow: { nodeKind: 'action' } };
+    const scoped = reactive(branchTarget ? stepWithBranchTarget(step, branchTarget) : step);
+    const loops = enclosingLoops(steps.value, scoped);
+    if (!loops.length) { ElMessage.warning('退出循环只能添加在循环体内'); return; }
+    scoped.breakLoopTargetId = loops[0]!.id;
+    const result = await ElMessageBox({
+      title: '添加退出循环',
+      message: h(ElForm, { labelPosition: 'top' }, () => h(BreakLoopSettings, { step: scoped, steps: steps.value, onUpdate: (patch) => Object.assign(scoped, patch) })),
+      showCancelButton: true, confirmButtonText: '添加', cancelButtonText: '取消',
+      beforeClose: (action, _instance, done) => {
+        if (action === 'confirm') {
+          try { breakLoopTarget(steps.value, scoped); } catch (error) { ElMessage.warning((error as Error).message); return; }
+        }
+        done();
+      },
+    }).catch(() => null);
+    if (result) return insertStep({ ...step, breakLoopTargetId: scoped.breakLoopTargetId }, index, branchTarget);
+    return;
+  }
+  if (action === 'imageCheck') {
+    imageCheckIndex = index;
+    imageCheckBranch = branchTarget;
+    imageCheckEditing = false;
+    imageCheckPicking.value = false;
+    imageCheckDraft.value = { id: createStepId(), type: 'imageCheck', label: '图像判断', flow: { nodeKind: 'condition' },
+      imageCheck: { ...createImageCheckConfig(), region: defaultVisualChangeRegion(), screenWidth: props.deviceWidth || 0, screenHeight: props.deviceHeight || 0 } };
+    if (selectedNode.value?.bounds) useImageCheckElement();
+    return;
   }
   if (action === 'aiRecognition') {
     const input = await ElMessageBox.prompt('识别内容', '添加 AI 识别', {
@@ -1324,7 +1467,7 @@ async function addAction(
     if (result) return insertStep({ ...step }, index, branchTarget);
     return;
   }
-  if (action === 'tap' || action === 'input' || action === 'assertExists' || action === 'waitFor') {
+  if (action === 'tap' || action === 'input' || action === 'waitFor') {
     return addStep(action, index, branchTarget);
   }
   if (action === 'keyBack') {
@@ -1356,9 +1499,29 @@ async function addAction(
     return;
   }
   if (action === 'visualChangeEnd') {
-    const startStep = findOpenVisualChangeStart(steps.value, index, branchTarget);
-    if (!startStep) {
+    const candidates = findOpenVisualChangeStarts(steps.value, index, branchTarget);
+    if (!candidates.length) {
       ElMessage.warning('当前分支没有可对应的检测画面变化开始节点');
+      return;
+    }
+    let selectedId = candidates.length === 1 ? candidates[0].id : '';
+    if (candidates.length > 1) {
+      selectedId = await new Promise<string>((resolve) => { void ElMessageBox({
+        title: '选择要结束的画面变化检测',
+        showConfirmButton: false,
+        showCancelButton: false,
+        callback: () => resolve(''),
+        message: h(VisualChangeEndPicker, {
+          candidates: candidates.map(step => ({ id: step.id, label: step.visualChange?.pairLabel || step.label, number: steps.value.findIndex(item => item.id === step.id) + 1 })),
+          onSelect: (id: string) => { resolve(id); ElMessageBox.close(); },
+        }),
+      }); });
+      if (!selectedId) return;
+    }
+    // 选择期间流程可能发生变化；插入前重新检查配对，不能使用过期候选。
+    const startStep = findOpenVisualChangeStarts(steps.value, index, branchTarget).find(step => step.id === selectedId);
+    if (!startStep) {
+      ElMessage.warning('该开始节点已结束或不再属于当前路径，请重新选择');
       return;
     }
     const inserted = insertStep(createVisualChangeEndStep(startStep), index, branchTarget);
@@ -1410,14 +1573,12 @@ async function addAction(
     return;
   }
   if (action === 'launchApp') {
-    const clearStepIndex = steps.value.findIndex((step) => step.type === 'clearAppData');
-    const insertIndex = previousStep?.type === 'clearAppData' ? index : clearStepIndex >= 0 ? clearStepIndex : index;
     return insertStep({
       id: `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'launchApp',
       label: `启动 APP ${form.appPackage}`,
       value: form.appPackage,
-    }, insertIndex);
+    }, index, branchTarget);
   }
   if (action === 'clearAppData') {
     return insertStep({
@@ -1429,6 +1590,22 @@ async function addAction(
   }
   const node = getSelectedNode();
   if (!node) return;
+  if (action === 'extractVariable') {
+    const step = reactive<AppiumRecordedStep>({ ...createNodeActionStep('extractVariable', '提取变量', node), extractVariable: { name: '', attribute: 'text', sensitive: false }, flow: { nodeKind: 'action' } });
+    const result = await ElMessageBox({
+      title: '提取组件到变量',
+      message: h(ElForm, { labelPosition: 'top' }, () => h(VariableExtractionSettings, { step, onUpdate: patch => Object.assign(step, patch) })),
+      showCancelButton: true, confirmButtonText: '添加', cancelButtonText: '取消',
+      beforeClose: (action, _instance, done) => {
+        if (action === 'confirm') {
+          try { validateExtraction(step.extractVariable); } catch (error) { ElMessage.error(String(error)); return; }
+        }
+        done();
+      },
+    }).catch(() => null);
+    if (result) return insertStep(JSON.parse(JSON.stringify(step)), index, branchTarget);
+    return;
+  }
   if (action === 'checkboxState' || action === 'radioButtonState' || action === 'checkedState') {
     const controlName = nativeControlName(action);
     if (!matchesNativeControl(action, node.className) || node.checkable !== true) {
@@ -1526,14 +1703,6 @@ async function addAction(
   if (action === 'waitDisappear') {
     return insertStep(createNodeActionStep('waitDisappear', '等待元素消失', node, { timeoutMs: 10000 }), index, branchTarget);
   }
-  if (action === 'assertText') {
-    const input = await ElMessageBox.prompt('请输入要断言的文本', '断言文本', {
-      inputValue: node.text,
-      confirmButtonText: '添加',
-      cancelButtonText: '取消',
-    }).catch(() => null);
-    if (input?.value) return insertStep(createNodeActionStep('assertText', '断言文本', node, { value: input.value }), index, branchTarget);
-  }
 }
 
 async function addBranchAction(index: number, branch: BranchName, action: RecorderAction) {
@@ -1581,6 +1750,7 @@ async function saveOnActivityChange() {
       appActivity: pending.beforeActivity || form.appActivity,
       deviceId: selectedDeviceId.value,
       steps: steps.value,
+      variables: scriptVariables.value,
     });
     await loadScripts();
     pendingNavigation.value = null;
@@ -1633,11 +1803,28 @@ function updateStep(index: number, step: AppiumRecordedStep) {
         ? syncVisualChangePairConfig(candidate, visualChange)
         : candidate
   ));
-  steps.value = nextSteps;
+  steps.value = syncVisualChangeThreshold(nextSteps, step);
 }
 
 async function editInputStep(index: number) {
   const step = steps.value[index];
+  if (step?.type === 'runScript' && !recordingBusy.value) {
+    const parentId = step.flow?.parentConditionId;
+    openLinkedScriptDialog(index - 1, parentId && step.flow?.parentBranch ? { stepId: parentId, branch: step.flow.parentBranch } : undefined);
+    if (!linkedScriptDialogVisible.value) return;
+    linkedScriptEditingId.value = step.id;
+    linkedScriptTargetId.value = step.value || '';
+    linkedParameters.parameters = JSON.parse(JSON.stringify(step.parameters || []));
+    linkedParameters.returns = JSON.parse(JSON.stringify(step.returns || []));
+    return;
+  }
+  if (step?.type === 'imageCheck' && !recordingBusy.value) {
+    imageCheckIndex = index;
+    imageCheckEditing = true;
+    imageCheckPicking.value = false;
+    imageCheckDraft.value = JSON.parse(JSON.stringify(step));
+    return;
+  }
   if (!step || (step.type !== 'input' && step.type !== 'inputIfExists') || recordingBusy.value) return;
   const input = await ElMessageBox.prompt('', '修改输入内容', {
     inputValue: step.value || '',
@@ -1652,7 +1839,7 @@ async function editInputStep(index: number) {
 }
 
 function setActiveWorkbenchTab(tab: string | number) {
-  const nextTab = tab === 'scripts' ? 'scripts' : 'recording';
+  const nextTab = tab === 'scripts' ? 'scripts' : tab === 'variables' ? 'variables' : 'recording';
   activeWorkbenchTab.value = nextTab;
   window.localStorage.setItem(WORKBENCH_TAB_STORAGE_KEY, nextTab);
 }
@@ -1664,6 +1851,7 @@ function loadScript(script: AppiumRecordedScript) {
   form.name = script.name;
   form.appPackage = script.appPackage;
   form.appActivity = script.appActivity;
+  scriptVariables.value = JSON.parse(JSON.stringify(script.variables || []));
   if (script.deviceId && script.deviceId !== selectedDeviceId.value) {
     void switchDevice(script.deviceId);
   }
@@ -1680,6 +1868,8 @@ function loadSelectedScript() {
 }
 
 function resetCurrentScript() {
+  void saveVariables('/api/appium-recorder/variables?draft=1', []).catch(() => ElMessage.error('变量草稿清理失败'));
+  scriptVariables.value = [];
   flowClipboard.value = null;
   selectedScriptId.value = '';
   form.name = '';
@@ -1691,7 +1881,7 @@ function resetCurrentScript() {
 
 function requestNewScript() {
   if (newScriptDisabled.value) return;
-  if (selectedScriptId.value || form.name.trim() || steps.value.length) {
+  if (selectedScriptId.value || form.name.trim() || steps.value.length || scriptVariables.value.length) {
     newScriptDialogVisible.value = true;
     return;
   }
@@ -1746,6 +1936,7 @@ async function duplicateScript(script: AppiumRecordedScript) {
   try {
     const payload = await saveAppiumScript({
       name: createDuplicateScriptName(script.name),
+      variables: script.variables || [],
       appPackage: script.appPackage,
       appActivity: script.appActivity,
       deviceId: script.deviceId,
@@ -1877,8 +2068,10 @@ async function importScriptFile(event: Event) {
 
 async function saveScript() {
   if (!ensureAppPackageSelected()) return false;
+  const wasNew = !selectedScriptId.value;
   saving.value = true;
   try {
+    validateVariables(scriptVariables.value);
     const payload = await saveAppiumScript({
       id: selectedScriptId.value || undefined,
       name: form.name,
@@ -1886,9 +2079,11 @@ async function saveScript() {
       appActivity: form.appActivity,
       deviceId: selectedDeviceId.value,
       steps: steps.value,
+      variables: scriptVariables.value,
     });
     await loadScripts();
     selectedScriptId.value = payload.script.id;
+    if (wasNew) void saveVariables('/api/appium-recorder/variables?draft=1', []).catch(() => ElMessage.error('变量草稿清理失败'));
     markDraftSaved();
     ElMessage.success('Appium 脚本已保存');
     return true;
@@ -2027,8 +2222,11 @@ watch(
       </el-button>
     </div>
 
-    <div class="appium-recorder-layout">
+    <RecorderWorkspace ref="workspaceRef">
+      <template #preview>
       <DevicePreviewPanel
+        compact
+        :interaction-disabled="recordingBusy || replaying"
         :available="playgroundAvailable"
         :devices="androidDevices"
         :selected-device-id="selectedDeviceId"
@@ -2040,7 +2238,7 @@ watch(
         :selected-bounds="selectedBounds"
         :selected-region="visualChangeSelectedRegion"
         :region-selection="visualChangeRegionSelectionEnabled"
-        :region-draw-mode="visualChangePicking"
+        :region-draw-mode="visualChangePicking || imageCheckPicking"
         :device-width="deviceWidth"
         :device-height="deviceHeight"
         @switch-device="switchDevice"
@@ -2050,27 +2248,12 @@ watch(
         @region-select="applyVisualChangeRegion"
         @swipe="swipePreview"
       />
-
-      <el-card shadow="never" class="appium-recorder-card">
-        <template #header>
-          <div class="panel-header">
-            <span>App 组件树</span>
-            <el-button :icon="Refresh" :loading="loadingTree" :disabled="replaying" @click="refreshTree">
-              刷新组件树
-            </el-button>
-          </div>
-        </template>
-        <div class="appium-tree-panel">
-          <ComponentTree :tree="tree" :selected-id="selectedNode?.id || ''" @select="selectedNode = $event" />
-          <div class="appium-current-activity">
-            <span>当前 Activity</span>
-            <code>{{ currentActivity || '-' }}</code>
-          </div>
-        </div>
-      </el-card>
+      </template>
+      <template #tree>
+        <ComponentInspector :tree="tree" :node="selectedNode" :activity="currentActivity" :loading="loadingTree" :disabled="replaying" :recording="recordingTap" @refresh="refreshTree" @select="selectedNode = $event" />
+      </template>
 
       <el-card shadow="never" class="appium-recorder-card appium-recorder-card--workbench">
-        <template #header>录制与脚本</template>
         <el-tabs
           :model-value="activeWorkbenchTab"
           class="appium-workbench-tabs"
@@ -2112,15 +2295,9 @@ watch(
                     <p>请在录制流程中添加或执行“启动 APP”节点；Activity 匹配后会自动解除编辑锁定。</p>
                   </div>
                 </details>
-                <NodeDetail
-                  :node="selectedNode"
-                  :current-activity="currentActivity"
-                  :loading="recordingTap"
-                />
               </section>
 
               <section class="appium-workbench__section appium-workbench__flow">
-                <h3>录制步骤</h3>
                 <RecordedSteps
                   :key="newScriptRevision"
                   :ai-recognition-model-configured="aiRecognitionModelConfigured"
@@ -2135,7 +2312,7 @@ watch(
                   @copy="copyFlowNodes"
                   @paste="pasteFlowNodes"
                   @add-delay="addDelayStep"
-                  @insert-action="(index, action) => addAction(action, index)"
+                  @insert-action="(index, action, beforeStepId) => addSharedAction(action, index, beforeStepId)"
                   @insert-branch-action="addBranchAction"
                   @edit-input="editInputStep"
                   @preview-linked-script="previewLinkedScriptStep"
@@ -2148,12 +2325,15 @@ watch(
             </div>
           </el-tab-pane>
 
+          <el-tab-pane label="预设变量" name="variables" lazy>
+            <PresetVariables :key="`${selectedScriptId}:${newScriptRevision}`" v-model:variables="scriptVariables" :script-id="selectedScriptId" :script-name="form.name" :disabled="recordingBusy || saving" @saved="onVariablesSaved" />
+          </el-tab-pane>
           <el-tab-pane label="脚本列表" name="scripts">
             <div class="appium-script-list">
               <div class="appium-script-list__toolbar">
-                <el-button :icon="Upload" :loading="importingScript" @click="chooseScriptImportFile">
-                  导入脚本
-                </el-button>
+                <el-tooltip content="导入脚本" placement="top" :show-after="200"><span class="appium-script-icon">
+                  <el-button size="small" :icon="Upload" aria-label="导入脚本" :loading="importingScript" @click="chooseScriptImportFile" />
+                </span></el-tooltip>
                 <input
                   ref="scriptImportInput"
                   class="appium-script-list__file-input"
@@ -2176,37 +2356,50 @@ watch(
                     <small>{{ script.steps.length }} 步 · {{ formatScriptTime(script.updatedAt) }}</small>
                   </div>
                   <div class="appium-script-list__actions">
-                    <el-button size="small" @click.stop="loadScript(script)">加载</el-button>
+                    <el-tooltip content="历史结果对比" placement="top" :show-after="200"><span class="appium-script-icon">
+                      <el-button size="small" :icon="Clock" aria-label="历史结果对比" @click.stop="historyScript = { id: script.id, name: script.name }" />
+                    </span></el-tooltip>
+                    <el-tooltip content="加载" placement="top" :show-after="200"><span class="appium-script-icon">
+                      <el-button size="small" :icon="Document" aria-label="加载" @click.stop="loadScript(script)" />
+                    </span></el-tooltip>
+                    <el-tooltip content="修改脚本名称" placement="top" :show-after="200"><span class="appium-script-icon">
                     <el-button
                       size="small"
                       :icon="Edit"
                       :loading="renamingScriptId === script.id"
-                      title="修改脚本名称"
+                      aria-label="修改脚本名称"
                       @click.stop="renameScript(script)"
                     />
+                    </span></el-tooltip>
+                    <el-tooltip content="复制脚本" placement="top" :show-after="200"><span class="appium-script-icon">
                     <el-button
                       size="small"
                       :icon="CopyDocument"
                       :loading="duplicatingScriptId === script.id"
-                      title="复制脚本"
+                      aria-label="复制脚本"
                       @click.stop="duplicateScript(script)"
                     />
+                    </span></el-tooltip>
+                    <el-tooltip content="下载脚本" placement="top" :show-after="200"><span class="appium-script-icon">
                     <el-button
                       size="small"
                       :icon="Download"
                       :loading="downloadingScriptId === script.id"
                       :disabled="Boolean(downloadingScriptId) && downloadingScriptId !== script.id"
-                      title="下载脚本"
+                      aria-label="下载脚本"
                       @click.stop="downloadScript(script)"
                     />
+                    </span></el-tooltip>
+                    <el-tooltip content="删除脚本" placement="top" :show-after="200"><span class="appium-script-icon">
                     <el-button
                       size="small"
                       type="danger"
                       :icon="Delete"
                       :loading="deletingScriptId === script.id"
-                      title="删除脚本"
+                      aria-label="删除脚本"
                       @click.stop="removeScript(script)"
                     />
+                    </span></el-tooltip>
                   </div>
                 </article>
               </template>
@@ -2214,8 +2407,9 @@ watch(
           </el-tab-pane>
         </el-tabs>
       </el-card>
-    </div>
+    </RecorderWorkspace>
 
+    <RunHistoryDialog v-if="historyScript" :script-id="historyScript.id" :script-name="historyScript.name" @close="historyScript = null" />
     <NewScriptDialog
       v-if="newScriptDialogVisible"
       :script-name="form.name"
@@ -2233,6 +2427,14 @@ watch(
       @close="aiRecognitionTestStep = null"
     />
 
+    <ImageCheckDialog
+      v-if="imageCheckDraft?.imageCheck"
+      :config="imageCheckDraft.imageCheck" :device-id="selectedDeviceId"
+      :has-element="Boolean(selectedNode?.bounds)" :editing="imageCheckEditing" :picking="imageCheckPicking"
+      @update="updateImageCheck" @close="imageCheckDraft = null; imageCheckPicking = false"
+      @confirm="confirmImageCheck" @use-element="useImageCheckElement"
+      @pick="imageCheckPicking = true; workspaceRef?.showPreview()"
+    />
     <VisualChangeDialog
       :model-value="visualChangeDialogVisible"
       :config="visualChangeConfig"
@@ -2307,10 +2509,11 @@ watch(
             </el-button>
           </div>
         </el-form-item>
+        <ScriptParameterSettings :step="linkedParameters" @update="Object.assign(linkedParameters, $event)" />
       </el-form>
       <template #footer>
         <el-button @click="closeLinkedScriptDialog">取消</el-button>
-        <el-button type="primary" @click="addLinkedScriptStep">添加连接</el-button>
+        <el-button type="primary" @click="addLinkedScriptStep">{{ linkedScriptEditingId ? '保存' : '添加连接' }}</el-button>
       </template>
     </el-dialog>
 
@@ -2402,13 +2605,15 @@ watch(
 </template>
 
 <style scoped>
+.appium-script-icon { display: inline-flex; }
+.appium-script-icon .el-button { width: 30px; height: 30px; min-height: 30px; padding: 0; margin: 0; }
 .appium-activity-summary { margin: 8px 0; color: #946000; font-size: 12px; }
 .appium-activity-summary summary { cursor: pointer; line-height: 20px; }
 .appium-activity-summary[open] .appium-activity-lock-alert__details { max-height: 110px; overflow: auto; margin-top: 6px; }
 :deep(.appium-recorder-card--workbench > .el-card__body) { overflow: hidden; }
 :deep(.appium-workbench-tabs > .el-tabs__content) { overflow: hidden; }
 :deep(.appium-workbench-tabs .el-tab-pane) { height: 100%; overflow: auto; }
-.appium-workbench { height: 100%; box-sizing: border-box; grid-template-rows: auto minmax(180px, 1fr); gap: 10px; overflow: auto; }
+.appium-workbench { height: 100%; box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: 12px; }
 .appium-workbench__flow { display: flex; flex-direction: column; min-height: 0; }
 .appium-workbench__flow h3 { margin-bottom: 6px; }
 .appium-workbench__flow :deep(.appium-recorded-steps-panel) { display: flex; flex-direction: column; flex: 1; min-height: 0; }

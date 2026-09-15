@@ -26,12 +26,15 @@ export type InsertAction =
   | 'launchApp'
   | 'openGallery'
   | 'endFlow'
+  | 'loop'
+  | 'breakLoop'
   | 'clearAppData'
   | 'popupCondition'
   | 'checkboxState'
   | 'checkedState'
   | 'radioButtonState'
   | 'aiRecognition'
+  | 'imageCheck'
   | 'textClick'
   | 'tapIfExists'
   | 'inputIfExists'
@@ -43,6 +46,7 @@ export type InsertAction =
   | 'waitDisappear'
   | 'waitActivity'
   | 'runScript'
+  | 'extractVariable'
   | 'noop'
   | 'log'
   | 'visualChangeStart'
@@ -104,6 +108,7 @@ export type FlowGraphNodeData =
       kind: 'insert';
       actionGroups: FlowActionGroup[];
       afterIndex: number;
+      beforeStepId?: string;
       branch?: FlowBranch;
       branchLabel?: string;
       conditionIndex?: number;
@@ -230,6 +235,24 @@ function addUniqueLink(links: Link[], seen: Set<string>, link: Link) {
   links.push(link);
 }
 
+// 与回放的默认分支返回一致；循环体的虚拟回边不参与有向无环布局。
+function continuationTargetId(items: StepItem[], step: AppiumRecordedStep, seen = new Set<string>()): string {
+  if (seen.has(step.id)) return '';
+  seen.add(step.id);
+  if (step.flow?.successTargetId) return step.flow.successTargetId;
+  if (defaultKind(step) === 'condition') {
+    const index = items.findIndex(item => item.step.id === step.id);
+    const sibling = items.slice(index + 1).find(({ step: candidate }) => (
+      candidate.flow?.parentConditionId === step.flow?.parentConditionId
+      && candidate.flow?.parentBranch === step.flow?.parentBranch
+    ));
+    if (sibling) return sibling.step.id;
+  }
+  const parent = items.find(item => item.step.id === step.flow?.parentConditionId)?.step;
+  if (!parent || (parent.type === 'loop' && step.flow?.parentBranch === 'yes')) return '';
+  return continuationTargetId(items, parent, seen);
+}
+
 function branchConnectionTargetId(items: StepItem[], condition: AppiumRecordedStep, branch: FlowBranch) {
   const branchItems = directBranchItems(items, condition.id, branch);
   if (branchItems.length) {
@@ -237,8 +260,10 @@ function branchConnectionTargetId(items: StepItem[], condition: AppiumRecordedSt
     return defaultKind(last) === 'condition' ? '' : last.flow?.successTargetId || '';
   }
   const targetId = branch === 'yes' ? condition.flow?.yesTargetId : condition.flow?.noTargetId;
+  if (!targetId) return condition.type === 'loop' && branch === 'yes' ? '' : continuationTargetId(items, condition);
   const target = items.find(({ step }) => step.id === targetId)?.step;
-  return target && target.flow?.parentConditionId === condition.flow?.parentConditionId ? target.id : '';
+  // 合流目标可以属于祖先作用域，不能用同父节点限制过滤合法的显式连接。
+  return target?.id || '';
 }
 
 function estimateTextLines(text: string | undefined, charsPerLine: number) {
@@ -356,14 +381,10 @@ export function buildFlowGraph(
     afterIndex: number,
     branch?: FlowBranch,
     condition?: StepItem,
+    beforeStepId?: string,
   ) => {
-    const id = insertNodeId(afterIndex, branch, condition?.step.id);
+    const id = beforeStepId ? `insert:before:${beforeStepId}` : insertNodeId(afterIndex, branch, condition?.step.id);
     const isStartInsert = afterIndex < 0 && !branch;
-    const previousStep = afterIndex >= 0 ? steps[afterIndex] : undefined;
-    const canLaunchAfterClearAppData = !isStartInsert
-      && !branch
-      && previousStep?.type === 'clearAppData'
-      && !steps.some((step) => step.type === 'launchApp');
     addNode({
       id,
       type: 'flow-node',
@@ -379,10 +400,9 @@ export function buildFlowGraph(
         kind: 'insert',
         actionGroups: isStartInsert
           ? options.startActionGroups
-          : canLaunchAfterClearAppData
-            ? withLaunchAppAction(options.mainActionGroups)
-            : options.mainActionGroups,
+          : withLaunchAppAction(options.mainActionGroups),
         afterIndex,
+        beforeStepId,
         branch,
         branchLabel: branch && condition ? flowBranchLabel(condition.step, branch) : undefined,
         conditionIndex: condition?.index,
@@ -438,7 +458,7 @@ export function buildFlowGraph(
         canCopy: item.step.type !== 'launchApp'
           && item.step.type !== 'clearAppData'
           && item.step.visualChange?.role !== 'end',
-        canEditInput: item.step.type === 'input' || item.step.type === 'inputIfExists',
+        canEditInput: ['input', 'inputIfExists', 'imageCheck', 'runScript'].includes(item.step.type),
         canExecute: item.step.type === 'launchApp' || item.step.type === 'clearAppData' || item.step.type === 'aiRecognition',
         missingAiModel: item.step.type === 'aiRecognition' && !options.aiRecognitionModelConfigured,
       },
@@ -447,7 +467,7 @@ export function buildFlowGraph(
 
   const addBranchNode = (condition: StepItem, branch: FlowBranch) => {
     const id = branchNodeId(condition.step, branch);
-    const width = condition.step.type === 'textClick' ? 116 : isBooleanCondition(condition.step) ? 56 : FLOW_BRANCH_NODE_WIDTH;
+    const width = condition.step.type === 'textClick' ? 116 : condition.step.type === 'loop' ? 80 : isBooleanCondition(condition.step) ? 56 : FLOW_BRANCH_NODE_WIDTH;
     addNode({
       id,
       type: 'flow-node',
@@ -551,11 +571,8 @@ export function buildFlowGraph(
 
     const targetId = item.step.flow?.successTargetId;
     const explicitTarget = targetId ? stepById.get(targetId) : undefined;
-    const explicitMainTarget = explicitTarget && (!explicitTarget.step.flow?.parentConditionId
-      || explicitTarget.step.flow.parentConditionId !== item.step.flow?.parentConditionId)
-      ? explicitTarget
-      : undefined;
-    const target = explicitMainTarget || nextSibling;
+    // 显式跳转优先于顺序关系，包括同一分支内的跳转；失效目标不能悄悄改走相邻节点。
+    const target = targetId ? explicitTarget : nextSibling || stepById.get(continuationTargetId(items, item.step));
     const insertId = addInsertNode(
       item.index,
       branch,
@@ -563,10 +580,6 @@ export function buildFlowGraph(
     );
     addVisibleLink(nodeIdForStep(item.step), insertId, branch);
     if (!target) return;
-    if (branch && explicitMainTarget) {
-      addVisibleLink(insertId, nodeIdForStep(target.step), branch);
-      return;
-    }
     addVisibleLink(insertId, nodeIdForStep(target.step), branch);
   }
 
@@ -575,6 +588,20 @@ export function buildFlowGraph(
     if (defaultKind(item.step) === 'condition' && allMainItems[index + 1]) {
       addLayoutLink(nodeIdForStep(item.step), nodeIdForStep(allMainItems[index + 1].step));
     }
+  });
+
+  // 汇入线先接公共插入点，再接原节点；分支内插入点仍保持独立。
+  const joins = new Map<string, string>();
+  items.forEach(({ step }) => {
+    const target = defaultKind(step) === 'condition' && stepById.get(continuationTargetId(items, step));
+    if (!target) return;
+    const targetId = nodeIdForStep(target.step);
+    const insertId = `insert:before:${target.step.id}`;
+    if (joins.has(insertId) || !links.some(link => link.target === targetId)) return;
+    addInsertNode(target.index - 1, undefined, undefined, target.step.id);
+    links.forEach(link => { if (link.target === targetId) link.target = insertId; });
+    addVisibleLink(insertId, targetId);
+    joins.set(insertId, nodeIdForStep(step));
   });
 
   const selectedDescendantIds = collectDescendantIds(
@@ -744,13 +771,6 @@ export function buildFlowGraph(
     (nodeOrder.get(a.source) || 0) - (nodeOrder.get(b.source) || 0)
   ));
   // 公共起点从两侧汇入，不能被最后一条分支连线拉到左列或右列。
-  const joins = new Map<string, string>();
-  items.forEach(({ step }) => {
-    const target = step.flow?.successTargetId && stepById.get(step.flow.successTargetId);
-    if (defaultKind(step) === 'condition' && target && !joins.has(nodeIdForStep(target.step))) {
-      joins.set(nodeIdForStep(target.step), nodeIdForStep(step));
-    }
-  });
   const alignVisibleChainGeometry = () => {
     orderedLinks.forEach((link) => {
       const source = nodeById.get(link.source);

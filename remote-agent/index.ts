@@ -18,7 +18,7 @@ const agentName = argValue('agent-name', agentId);
 const token = argValue('token', process.env.REMOTE_AGENT_TOKEN || '');
 
 if (!server) {
-  console.error('缺少 --server，例如：npm run remote-agent -- --server http://172.16.20.116:5173');
+  console.error('缺少 --server，例如：npm run remote-agent -- --server http://<控制台主机地址>:5173');
   process.exit(1);
 }
 
@@ -133,7 +133,11 @@ async function handleCommand(command: RemoteCommand) {
   if (command.type === 'replay') {
     const script = payload.script as AppiumRecordedScriptRecord | undefined;
     if (!script) throw new Error('远程回放缺少脚本内容');
-    return await replayAppiumScript(script, command.deviceId);
+    return await replayAppiumScript(script, command.deviceId, undefined, undefined, {
+      parameters: payload.parameters as import('../src/appium-recorder/variables').TestVariable[] | undefined,
+      globalVariables: payload.globalVariables as import('../src/appium-recorder/variables').TestVariable[] | undefined,
+      linkedScripts: payload.linkedScripts as AppiumRecordedScriptRecord[] | undefined,
+    });
   }
   throw new Error(`不支持的命令：${command.type}`);
 }
