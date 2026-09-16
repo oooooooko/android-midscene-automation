@@ -38,6 +38,7 @@ import { handleAppiumRecorderRequest } from './appium-recorder/routes';
 import { handleRemoteAgentRequest } from './remote-agents/routes';
 import { isRemoteDeviceId, listRemoteAndroidDevices, sendRemoteCommand } from './remote-agents/registry';
 import { getAdbCommand } from './android-sdk';
+import { readAndroidDeviceInfo } from './android-device-info';
 
 async function readBody<T>(req: IncomingMessage) {
   let body = '';
@@ -869,6 +870,24 @@ export function createApiMiddleware() {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/android-device-info') && req.method === 'GET') {
+      try {
+        const deviceId = getRequestedDeviceId(req) || selectedDeviceId;
+        if (!deviceId) throw new Error('未检测到可用设备');
+        assertDeviceAllowedForRequest(req, deviceId);
+        const details = isRemoteDeviceId(deviceId)
+          ? await sendRemoteCommand(deviceId, 'deviceInfo')
+          : await readAndroidDeviceInfo(deviceId, getAdbCommand());
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ deviceId, details }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ message: error instanceof Error ? error.message : '读取设备信息失败' }));
       }
       return;
     }

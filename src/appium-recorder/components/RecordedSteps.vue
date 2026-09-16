@@ -80,6 +80,7 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'pinch', label: '双指缩放' },
       { type: 'clearAppData', label: '清理 App 缓存' },
       { type: 'launchApp', label: '启动 App' },
+      { type: 'stopApp', label: '杀死 APP' },
       { type: 'openGallery', label: '启动相册' },
     ],
   },

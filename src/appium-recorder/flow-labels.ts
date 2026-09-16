@@ -58,6 +58,7 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     swipe: '滑动',
     screenshot: '截图',
     launchApp: '启动 APP',
+    stopApp: '杀死 APP',
     openGallery: '启动相册',
     endFlow: '终止流程',
     loop: '有界循环',
@@ -98,6 +99,7 @@ export function flowStepMeta(step: AppiumRecordedStep) {
   if (step.type === 'key') return `keyCode ${step.keyCode || ''}`;
   if (step.type === 'waitActivity') return step.value || '';
   if (step.type === 'launchApp') return step.value || '';
+  if (step.type === 'stopApp') return `${step.value || ''}（仅停止进程）`;
   if (step.type === 'clearAppData') return `${step.value || ''}（清除数据与缓存）`;
   if (step.type === 'runScript') return step.value ? `脚本 ${step.value}` : '';
   if (step.type === 'noop') return '';

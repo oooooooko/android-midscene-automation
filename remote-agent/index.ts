@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
+import { readAndroidDeviceInfo } from '../server/android-device-info';
 import { readFreshWindowHierarchy } from '../server/appium-recorder/tree-dump';
 import type { RemoteAgentDevice, RemoteCommand } from '../server/remote-agents/protocol';
 import { replayAppiumScript } from '../server/appium-recorder/appium-runner';
@@ -100,6 +101,7 @@ async function handleCommand(command: RemoteCommand) {
     return { base64: image.toString('base64') };
   }
   if (command.type === 'displayInfo') return await getDisplayInfo(command.deviceId);
+  if (command.type === 'deviceInfo') return await readAndroidDeviceInfo(command.deviceId, 'adb');
   if (command.type === 'tree') {
     const [xml, activity] = await Promise.all([
       dumpWindowHierarchy(command.deviceId),

@@ -122,6 +122,7 @@ const insertableRecorderActions: RecorderAction[] = [
   'clearInput',
   'coordinateTap',
   'launchApp',
+  'stopApp',
   'openGallery',
   'endFlow',
   'loop',
@@ -1579,6 +1580,10 @@ async function addAction(
       label: `启动 APP ${form.appPackage}`,
       value: form.appPackage,
     }, index, branchTarget);
+  }
+  if (action === 'stopApp') {
+    return insertStep({ id: createStepId(), type: 'stopApp', label: `杀死 APP ${form.appPackage}`,
+      value: form.appPackage, flow: { nodeKind: 'action' } }, index, branchTarget);
   }
   if (action === 'clearAppData') {
     return insertStep({

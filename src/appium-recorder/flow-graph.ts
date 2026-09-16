@@ -24,6 +24,7 @@ export type InsertAction =
   | 'swipe'
   | 'pinch'
   | 'launchApp'
+  | 'stopApp'
   | 'openGallery'
   | 'endFlow'
   | 'loop'

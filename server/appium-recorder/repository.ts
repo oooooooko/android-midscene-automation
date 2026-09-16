@@ -38,6 +38,7 @@ export type AppiumRecordedStepRecord = {
     | 'swipe'
     | 'screenshot'
     | 'launchApp'
+    | 'stopApp'
     | 'openGallery'
     | 'endFlow'
     | 'loop'

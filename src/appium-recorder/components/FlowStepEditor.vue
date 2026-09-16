@@ -156,7 +156,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         <el-form-item label="节点类型">
           <el-select
             :model-value="defaultKind()"
-            :disabled="disabled || isBooleanCondition(step) || step.type === 'extractVariable' || step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow' || step.type === 'loop' || step.type === 'breakLoop'"
+            :disabled="disabled || isBooleanCondition(step) || step.type === 'stopApp' || step.type === 'extractVariable' || step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow' || step.type === 'loop' || step.type === 'breakLoop'"
             @update:model-value="patchFlow({ nodeKind: $event as FlowKind })"
           >
             <el-option label="操作" value="action" />
@@ -164,7 +164,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
             <el-option label="校验" value="assertion" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="!['longPress', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type)" label="超时时间 ms">
+        <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type)" label="超时时间 ms">
           <el-input-number
             :model-value="step.timeoutMs || undefined"
             :disabled="disabled"
@@ -176,7 +176,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         </el-form-item>
       </div>
       <LongPressSettings v-if="step.type === 'longPress'" :step="step" :disabled="disabled" @update="patchStep" />
-      <el-form-item v-if="['waitActivity', 'launchApp', 'clearAppData'].includes(step.type)" :label="step.type === 'waitActivity' ? '目标 Activity' : '目标 APP 包名'">
+      <el-form-item v-if="['waitActivity', 'launchApp', 'stopApp', 'clearAppData'].includes(step.type)" :label="step.type === 'waitActivity' ? '目标 Activity' : '目标 APP 包名'">
         <el-input :model-value="step.value || ''" :disabled="disabled" @update:model-value="patchStep({ value: String($event) })" />
       </el-form-item>
       <template v-if="step.type === 'pinch'">

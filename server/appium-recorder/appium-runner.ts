@@ -11,6 +11,8 @@ import { checkImage } from './image-check';
 import { IMAGE_CHECK_MODES, type ImageCheckResult } from '../../src/appium-recorder/image-check';
 import { formatStageLog } from '../../src/appium-recorder/stage-log';
 import { openGalleryOnDevice } from './open-gallery';
+import { stopAppOnDevice } from './stop-app';
+import { AppiumRequestTimeoutError, timedAppiumFetch, withElementDeadline } from './request-timeout';
 import { textClickSelector } from '../../src/appium-recorder/text-click';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -83,6 +85,8 @@ function isReplayStopped(error?: unknown) {
 
 function throwIfReplayStopped(error?: unknown) {
   if (isReplayStopped(error)) throw new ReplayStoppedError();
+  // 驱动失去响应不是“元素不存在”，不能被备用定位或可选步骤吞掉。
+  if (error instanceof AppiumRequestTimeoutError) throw error;
 }
 
 function errorDetail(error: unknown) {
@@ -276,30 +280,31 @@ async function appiumRequest<T>(
   if (!options?.ignoreAbort) throwIfReplayStopped();
   context?.appiumLog(`[Appium] 请求：${method} ${path}`);
   let response: Response;
+  let responseText: string;
   try {
-    response = await fetch(requestUrl, {
+    const result = await timedAppiumFetch(requestUrl, {
       ...init,
-      signal: options?.ignoreAbort
-        ? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined)
-        : context?.signal || init?.signal,
+      signal: options?.ignoreAbort ? undefined : context?.signal || init?.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(init?.headers || {}),
       },
-    });
+    }, options?.timeoutMs ?? (path === '/session' && method === 'POST' ? 120000 : 30000));
+    response = result.response;
+    responseText = result.text;
   } catch (error) {
     if (isReplayStopped(error) && !options?.ignoreAbort) {
       context?.appiumLog(`[Appium] 取消：${method} ${path}`);
       throw new ReplayStoppedError();
     }
     context?.appiumLog(`[Appium] 异常：${method} ${path}（${errorDetail(error)}）`);
+    if (error instanceof AppiumRequestTimeoutError) throw error;
     if (isTimeoutError(error)) {
       throw new Error(`Appium 请求超时 ${requestUrl}，${errorDetail(error)}`);
     }
     throw new Error(`无法连接 Appium 服务 ${requestUrl}，${errorDetail(error)}`);
   }
 
-  const responseText = await response.text();
   context?.appiumLog(`[Appium] 响应：HTTP ${response.status} ${method} ${path}（${Date.now() - startedAt}ms）`);
   const payload = (() => {
     try {
@@ -439,7 +444,11 @@ async function findElementBySelector(
   return elementId;
 }
 
-async function findElement(sessionId: string, step: AppiumRecordedStepRecord) {
+async function findElement(sessionId: string, step: AppiumRecordedStepRecord, timeoutMs = step.timeoutMs ?? 10000) {
+  return withElementDeadline(timeoutMs, () => findElementWithinDeadline(sessionId, step));
+}
+
+async function findElementWithinDeadline(sessionId: string, step: AppiumRecordedStepRecord) {
   if (!step.selector) throw new Error(`${step.label} 缺少 selector`);
   const attempts: string[] = [];
 
@@ -454,7 +463,9 @@ async function findElement(sessionId: string, step: AppiumRecordedStepRecord) {
     }
   }
 
-  for (const selector of step.selectorChain || []) {
+  // 唯一原生定位优先；非唯一元素仍保留父级与备用 XPath 的精确匹配。
+  const preferPrimary = step.selector.unique === true && ['id', 'accessibilityId'].includes(step.selector.strategy);
+  for (const selector of [...(preferPrimary ? [step.selector] : []), ...(step.selectorChain || [])]) {
     try {
       attempts.push(`${selector.strategy} ${selector.value || ''}`);
       return await findElementBySelector(sessionId, selector);
@@ -506,7 +517,7 @@ async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord)
   let lastError: unknown;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
-      return await findElement(sessionId, step);
+      return await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
     } catch (error) {
       throwIfReplayStopped(error);
       lastError = error;
@@ -521,7 +532,7 @@ async function findOptionalElement(sessionId: string, step: AppiumRecordedStepRe
   const timeoutMs = step.timeoutMs ?? 2000;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
-      return await findElement(sessionId, step);
+      return await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
     } catch (error) {
       throwIfReplayStopped(error);
       await wait(250);
@@ -535,7 +546,7 @@ async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRec
   const timeoutMs = step.timeoutMs || 10000;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
-      await findElement(sessionId, step);
+      await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
     } catch (error) {
       throwIfReplayStopped(error);
       return;
@@ -766,6 +777,10 @@ async function runStep(
     }
     await launchAppOnDevice(deviceId, packageName);
     return `ADB 已启动 ${packageName}`;
+  }
+
+  if (step.type === 'stopApp') {
+    return stopAppOnDevice(deviceId, step.value || '', replayContext.getStore()?.signal);
   }
 
   if (step.type === 'clearAppData') {

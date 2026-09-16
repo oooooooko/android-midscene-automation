@@ -16,6 +16,7 @@ export const actionDescriptions: Record<InsertAction, string> = {
   swipe: '按指定起点、终点和时长滑动屏幕。',
   pinch: '执行双指放大或缩小手势，需要当前页面支持缩放。',
   launchApp: '启动指定应用，可放在流程中途或分支中执行。',
+  stopApp: '停止当前所选包名的 APP 进程，不删除应用或清除数据；可在节点配置中修改目标包名。',
   openGallery: '打开设备相册应用，不自动选择照片或视频。',
   endFlow: '立即结束当前回放流程，后续节点不再执行。',
   loop: '重复执行循环体，支持固定次数或条件退出，必须设置最大次数。',

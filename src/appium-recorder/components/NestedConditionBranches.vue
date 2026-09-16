@@ -23,6 +23,7 @@ type InsertAction =
   | 'swipe'
   | 'pinch'
   | 'launchApp'
+  | 'stopApp'
   | 'openGallery'
   | 'endFlow'
   | 'loop'
@@ -103,6 +104,7 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     title: '设备操作',
     actions: [
       { type: 'launchApp', label: '启动 App' },
+      { type: 'stopApp', label: '杀死 APP' },
       { type: 'keyBack', label: '系统返回' },
       { type: 'keyHome', label: 'Home 键' },
       { type: 'openGallery', label: '启动相册' },
@@ -153,7 +155,7 @@ function typeLabel(step: AppiumRecordedStep) {
     clearIfExists: '存在则清空', backIfExists: '存在则返回', clearInput: '清空',
     waitFor: '等待出现', waitDisappear: '等待消失', assertExists: '断言存在',
     assertText: '断言文本', key: '按键', waitActivity: '等待 Activity', delay: '延时',
-    coordinateTap: '坐标点击', swipe: '滑动', launchApp: '启动 APP', clearAppData: '清理 APP 缓存', longPress: '长按',
+    coordinateTap: '坐标点击', swipe: '滑动', launchApp: '启动 APP', stopApp: '杀死 APP', clearAppData: '清理 APP 缓存', longPress: '长按',
     pinch: '双指缩放', runScript: '连接脚本', screenshot: '截图', visualChange: '检测画面变化',
     noop: '空节点',
     endFlow: '终止流程',

@@ -147,3 +147,12 @@ export type DeviceAction = {
   icon: string;
   keyCode: number;
 };
+export type AndroidDeviceDetails = {
+  name: string;
+  brand: string;
+  model: string;
+  processor: string;
+  androidVersion: string;
+  physicalResolution: string;
+  resolution: string;
+};

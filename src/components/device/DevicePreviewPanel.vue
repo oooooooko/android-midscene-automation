@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { Close, Cpu, FullScreen, Refresh } from '@element-plus/icons-vue';
 import type { AndroidDevice, DeviceAction } from '../../types';
+import DeviceInfoTooltip from './DeviceInfoTooltip.vue';
 
 type DeviceOverlayBounds = {
   id: string;
@@ -293,7 +294,7 @@ function handlePointerCancel(event: PointerEvent) {
   <el-card shadow="never" class="automation-card device-preview-card" :class="{ 'device-preview-card--compact': compact, 'device-preview-card--enlarged': enlarged }">
     <template #header>
       <div class="panel-header">
-        <span>设备预览</span>
+        <div class="device-preview-title"><span>设备预览</span><DeviceInfoTooltip :device-id="selectedDeviceId" /></div>
         <div class="device-status">
           <el-tag v-if="compact" :type="available ? 'success' : 'info'">
             {{ available ? '已连接' : '未连接' }}
@@ -444,6 +445,7 @@ function handlePointerCancel(event: PointerEvent) {
 </template>
 
 <style scoped>
+.device-preview-title { display: flex; align-items: center; gap: 8px; }
 .device-preview-card--compact { display: flex; flex-direction: column; min-height: 0; }
 .device-preview-card--compact :deep(> .el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; gap: 8px; }
 .device-preview-card--compact .panel-header { flex-wrap: wrap; gap: 8px; font-size: 14px; }

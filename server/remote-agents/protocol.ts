@@ -8,6 +8,7 @@ export type RemoteAgentDevice = {
 export type RemoteCommandType =
   | 'screenshot'
   | 'displayInfo'
+  | 'deviceInfo'
   | 'tree'
   | 'tap'
   | 'swipe'
