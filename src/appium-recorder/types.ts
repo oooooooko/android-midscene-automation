@@ -121,6 +121,7 @@ export type AppiumRecordedStep = {
   returns?: ScriptReturn[];
   keyCode?: number;
   timeoutMs?: number;
+  timeoutBranch?: 'stop' | 'yes' | 'no';
   longPressMode?: 'element' | 'coordinates';
   breakLoopTargetId?: string;
   loop?: {

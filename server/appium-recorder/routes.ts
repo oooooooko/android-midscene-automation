@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
+import { sendReplayVideo } from './video-response';
 import { getPresetVariables, savePresetVariables } from './variable-store';
 import type { TestVariable } from '../../src/appium-recorder/variables';
 import { deleteRunHistory, getRunHistory, listRunHistory, saveRunHistory } from './run-history';
-import { recognizeDeviceScreen } from './ai-recognition';
 import { readImage, cropImage } from './image-check';
 import { PNG } from 'pngjs';
 import { adbScreenshotBase64 } from './screenshot';
@@ -200,20 +200,7 @@ export async function handleAppiumRecorderRequest(
     }
 
     if (pathname === '/api/appium-recorder/ai-recognition/test' && req.method === 'POST') {
-      const parsed = await readBody<{ deviceId?: string; prompt?: unknown; timeoutMs?: number }>(req);
-      const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
-      if (!deviceId) throw new Error('请选择设备');
-      assertDeviceAllowed(deviceId);
-      if (isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持 AI 识别测试');
-      if (replayingDevices.has(deviceId)) { sendJson(res, { message: '设备正在回放，请稍后测试' }, 409); return true; }
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      res.once('close', abort);
-      try {
-        sendJson(res, await recognizeDeviceScreen({ deviceId, prompt: parsed.prompt, timeoutMs: parsed.timeoutMs, signal: controller.signal }));
-      } finally {
-        res.off('close', abort);
-      }
+      sendJson(res, { message: 'AI 识别操作已移除，请使用图像判断或原生组件判断' }, 410);
       return true;
     }
 
@@ -345,6 +332,14 @@ export async function handleAppiumRecorderRequest(
       return true;
     }
 
+    const videoMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/history\/([^/]+)\/video$/);
+    if (videoMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+      const run = getRunHistory(decodeURIComponent(videoMatch[1]), decodeURIComponent(videoMatch[2]));
+      if (!run?.video) { sendJson(res, { error: '本次运行没有视频' }, 404); return true; }
+      assertDeviceAllowed(run.deviceId);
+      await sendReplayVideo(req, res, run.video.filePath);
+      return true;
+    }
     const historyMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/history(?:\/([^/]+))?$/);
     if (historyMatch) {
       const scriptId = decodeURIComponent(historyMatch[1]);
@@ -362,12 +357,13 @@ export async function handleAppiumRecorderRequest(
     }
     const replayMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/replay$/);
     if (replayMatch && req.method === 'POST') {
-      const parsed = await readBody<{ deviceId?: string; parameters?: TestVariable[] }>(req);
+      const parsed = await readBody<{ deviceId?: string; parameters?: TestVariable[]; recordVideo?: boolean }>(req);
       const script = getAppiumRecordedScript(decodeURIComponent(replayMatch[1]));
       if (!script) throw new Error('Appium 录制脚本不存在');
       const deviceId = parsed.deviceId || selectedDeviceId;
       assertDeviceAllowed(deviceId);
       const streamOutput = req.headers.accept?.includes('application/x-ndjson') === true;
+      if (parsed.recordVideo === true && isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持回放录屏，请在连接设备的主机本地运行');
       if (streamOutput) {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -403,7 +399,7 @@ export async function handleAppiumRecorderRequest(
           deviceId,
           streamOutput ? (line) => sendStreamEvent(res, { type: 'log', line }) : undefined,
           replayAbortController.signal,
-          { parameters: parsed.parameters, globalVariables: getPresetVariables() },
+          { parameters: parsed.parameters, globalVariables: getPresetVariables(), recordVideo: parsed.recordVideo === true },
         );
         try { saveRunHistory(result.history); }
         catch { result.output += '\n历史记录保存失败'; }

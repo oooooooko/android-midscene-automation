@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { Delete, Refresh } from '@element-plus/icons-vue';
+import { Delete, Refresh, VideoPlay } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { historyStatistics, type RunSummary, type RunDetail } from './run-history';
 
@@ -16,6 +16,7 @@ const device = ref('');
 const error = ref('');
 const nodeKey = ref('');
 const logQuery = ref('');
+const videoRun = ref<RunSummary>();
 const base = `/api/appium-recorder/scripts/${encodeURIComponent(props.scriptId)}/history`;
 const labels = { passed: '通过', failed: '失败', stopped: '已终止' };
 const versions = computed(() => [...new Set(runs.value.map(run => run.appVersion || '未知'))]);
@@ -49,7 +50,7 @@ async function compare() {
   finally { comparing.value = false; }
 }
 async function remove() {
-  try { await ElMessageBox.confirm(`删除选中的 ${selected.value.length} 条历史及截图、日志快照？原始报告文件不受影响。`, '删除历史结果', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' }); }
+  try { await ElMessageBox.confirm(`删除选中的 ${selected.value.length} 条历史及截图、日志快照和回放视频？原始报告将无法再播放已删除的视频。`, '删除历史结果', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' }); }
   catch { return; }
   loading.value = true;
   try {
@@ -98,6 +99,7 @@ onMounted(load);
           <el-table-column prop="deviceId" label="设备" min-width="140" />
           <el-table-column label="结果" width="85"><template #default="{ row }">{{ labels[row.status as keyof typeof labels] }}</template></el-table-column>
           <el-table-column label="耗时" width="100"><template #default="{ row }">{{ seconds(row.durationMs) }}</template></el-table-column>
+          <el-table-column label="录像" width="70"><template #default="{ row }"><el-tooltip v-if="row.video" content="播放回放视频"><el-button :icon="VideoPlay" aria-label="播放回放视频" @click="videoRun = row" /></el-tooltip></template></el-table-column>
         </el-table>
         <h3>失败节点分布</h3>
         <el-table :data="stats.failures" max-height="220" empty-text="暂无节点失败记录">
@@ -129,6 +131,9 @@ onMounted(load);
         </div>
       </section>
     </div>
+    <el-dialog :model-value="Boolean(videoRun)" title="回放视频" width="min(800px, 90vw)" align-center append-to-body destroy-on-close @close="videoRun = undefined">
+      <video v-if="videoRun" :src="`${base}/${encodeURIComponent(videoRun.id)}/video`" controls preload="metadata" style="width:100%;max-height:70vh" />
+    </el-dialog>
   </el-dialog>
 </template>
 

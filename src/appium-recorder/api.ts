@@ -1,6 +1,5 @@
 import { APP_BASE } from '../api';
 import type { AppiumRecordedScript, AppiumRecordedStep } from './types';
-import type { AiRecognitionResult } from './ai-recognition';
 import type { TestVariable } from './variables';
 import type { AppiumVisualChangeRegion } from './types';
 
@@ -73,13 +72,6 @@ export async function getAppiumScripts() {
   return readJson<{ scripts: AppiumRecordedScript[] }>(response);
 }
 
-export async function testAiRecognition(input: { deviceId: string; prompt: string; timeoutMs?: number }, signal?: AbortSignal) {
-  const response = await fetch(`${APP_BASE}/api/appium-recorder/ai-recognition/test`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
-  });
-  return readJson<AiRecognitionResult & { imageBase64: string }>(response);
-}
-
 export function saveAppiumScript(input: {
   variables?: import('./variables').TestVariable[];
   id?: string;
@@ -115,6 +107,7 @@ export async function downloadAppiumScript(id: string) {
 }
 
 type ReplayResult = {
+  videoPath?: string;
   success: boolean;
   stopped?: boolean;
   output: string;
@@ -131,7 +124,7 @@ type ReplayStreamEvent =
   | { type: 'error'; message: string };
 
 export async function replayAppiumScript(
-  input: { id: string; deviceId?: string; parameters?: import('./variables').TestVariable[] },
+  input: { id: string; deviceId?: string; recordVideo?: boolean; parameters?: import('./variables').TestVariable[] },
   onOutput?: (line: string) => void,
 ) {
   const response = await fetch(`${APP_BASE}/api/appium-recorder/scripts/${encodeURIComponent(input.id)}/replay`, {
@@ -140,7 +133,7 @@ export async function replayAppiumScript(
       'Content-Type': 'application/json',
       Accept: 'application/x-ndjson',
     },
-    body: JSON.stringify({ deviceId: input.deviceId, parameters: input.parameters }),
+    body: JSON.stringify({ deviceId: input.deviceId, parameters: input.parameters, recordVideo: input.recordVideo }),
   });
   if (!response.ok || !response.body) return readJson<ReplayResult>(response);
 

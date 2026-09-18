@@ -26,7 +26,7 @@ export const actionDescriptions: Record<InsertAction, string> = {
   checkboxState: '读取原生 Checkbox 的 checked 状态，按 true/false 分支执行。',
   radioButtonState: '读取原生 RadioButton 的 checked 状态，按 true/false 分支执行。',
   checkedState: '读取 Checkbox、RadioButton 或 Switch 的真实勾选状态，按 true/false 分支执行。不支持仅用图片表示状态的普通 ImageView。',
-  aiRecognition: '用配置的模型判断当前画面，返回 true/false。适合语义、提示含义和复杂画面判断；可直接读取的组件属性优先使用原生判断。需要配置 AI 节点模型。',
+  aiRecognition: '此操作已移除，请使用图像判断或原生组件判断。',
   textClick: '在组件树中按指定文字精确或模糊匹配并点击，进入匹配到文字或未匹配到文字分支。不识别图片或自绘画面中的文字。',
   tapIfExists: '找到目标组件时点击，未找到则跳过并继续后续流程。',
   inputIfExists: '找到目标输入组件时写入文字，未找到则跳过。支持 {{变量名}} 引用。',

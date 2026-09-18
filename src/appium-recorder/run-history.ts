@@ -6,6 +6,7 @@ export type HistoryNode = {
 };
 
 export type RunSummary = {
+  video?: { filePath: string; fileName: string; startedAt: string; warning?: string };
   id: string;
   scriptId: string;
   scriptName: string;

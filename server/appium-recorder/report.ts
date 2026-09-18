@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
+import type { ReplayVideo } from './replay-video';
 import { PNG } from 'pngjs';
 import { appDataPath } from '../paths';
 import { loadConfig } from '../config';
@@ -240,6 +241,7 @@ function stepSection(
 }
 
 function createReplayHtml(input: {
+  video?: { url: string; startedAt: string };
   script: AppiumRecordedScriptRecord;
   deviceId: string;
   resultText: string;
@@ -253,6 +255,7 @@ function createReplayHtml(input: {
 }) {
   const imageCache = new Map<string, string>();
   const payload = jsonForHtml({
+    video: input.video,
     startedAt: input.startedAt.toISOString(),
     durationMs: input.durationMs,
     frames: input.frames.map((frame) => ({
@@ -325,9 +328,11 @@ function createReplayHtml(input: {
     .viewer { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; min-width: 0; min-height: 0; padding: 16px 20px 12px; background: #f4f6f8; }
     .screen { display: flex; align-items: center; justify-content: center; min-height: 0; overflow: hidden; border-radius: 6px; background: #101827; }
     .screen img { display: block; width: 100%; height: 100%; object-fit: contain; transition: opacity .12s ease; }
+    [hidden] { display: none !important; }
     .empty { color: #a8abb2; }
     .caption { min-height: 40px; padding: 10px 4px 0; overflow: hidden; color: #4b515a; font-size: 13px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
     .controls { display: grid; grid-template-columns: auto auto auto minmax(120px, 1fr) auto; align-items: center; gap: 8px; min-height: 52px; }
+    .controls:has(#toggle-recording:not([hidden])) { grid-template-columns: auto auto auto auto minmax(80px, 1fr) auto; }
     button { min-height: 34px; padding: 0 14px; border: 1px solid #cfd5dd; border-radius: 4px; color: #30343b; background: #fff; cursor: pointer; }
     button:hover:not(:disabled) { border-color: #409eff; color: #1677ff; }
     button:disabled { cursor: not-allowed; opacity: .45; }
@@ -364,6 +369,9 @@ function createReplayHtml(input: {
       .thumbnail { height: 78px; }
       header { align-items: flex-start; flex-direction: column; }
       .meta { justify-content: flex-start; }
+      .controls, .controls:has(#toggle-recording:not([hidden])) { display: flex; flex-wrap: wrap; }
+      .controls button { max-width: 100%; }
+      #seek { flex: 1 1 120px; width: auto; }
     }
   </style>
 </head>
@@ -406,9 +414,10 @@ function createReplayHtml(input: {
         </div>
       </div>
       <section class="viewer">
-        <div class="screen"><img id="screen" alt="设备截图" hidden /><span id="empty" class="empty">本次回放没有可用截图</span></div>
+        <div class="screen"><video id="recording" controls preload="metadata" playsinline hidden style="width:100%;height:100%;object-fit:contain"></video><img id="screen" alt="设备截图" hidden /><span id="empty" class="empty">本次回放没有可用截图</span></div>
         <div id="caption" class="caption">暂无截图</div>
         <div class="controls">
+          <button id="toggle-recording" hidden>查看节点截图</button>
           <button id="previous" type="button" title="上一帧">上一帧</button>
           <button id="play" type="button">播放</button>
           <button id="next" type="button" title="下一帧">下一帧</button>
@@ -430,6 +439,12 @@ function createReplayHtml(input: {
     const data = JSON.parse(document.querySelector('#replay-data').textContent || '{}');
     const visualChecks = Array.isArray(data.visualChecks) ? data.visualChecks : [];
     const reportStartedAt = Date.parse(data.startedAt) || 0;
+    const recording = document.querySelector('#recording');
+    const toggleRecording = document.querySelector('#toggle-recording');
+    const videoOffset = Math.max(0, (Date.parse(data.video?.startedAt) || reportStartedAt) - reportStartedAt);
+    let videoMode = Boolean(data.video);
+    let pendingVideoTime = 0;
+    if (data.video) { recording.src = data.video.url; toggleRecording.hidden = false; }
     const frames = (Array.isArray(data.frames) ? data.frames : []).map((frame) => ({
       ...frame,
       offsetMs: Math.max(0, (Date.parse(frame.capturedAt) || reportStartedAt) - reportStartedAt),
@@ -487,8 +502,9 @@ function createReplayHtml(input: {
       const frameChanged = nextFrame !== currentFrame;
       currentFrame = nextFrame;
       const frame = frames[currentFrame];
-      elements.empty.hidden = Boolean(frame);
-      elements.screen.hidden = !frame;
+      elements.empty.hidden = videoMode || Boolean(frame?.imageUrl);
+      elements.screen.hidden = videoMode || !frame?.imageUrl;
+      recording.hidden = !videoMode;
       if (frame) {
         if (frameChanged || elements.screen.src !== frame.imageUrl) elements.screen.src = frame.imageUrl;
         elements.title.textContent = frame.nodeLabel || '未命名节点';
@@ -507,7 +523,7 @@ function createReplayHtml(input: {
       }
       elements.previous.disabled = !frames.length || currentFrame <= 0;
       elements.next.disabled = !frames.length || currentFrame >= frames.length - 1;
-      elements.play.disabled = frames.length < 2;
+      elements.play.disabled = !videoMode && frames.length < 2;
       elements.seek.value = String(Math.round(currentMs / durationMs * 1000));
       elements.clock.textContent = formatTime(currentMs) + ' / ' + formatTime(durationMs);
       elements.playhead.style.left = (currentMs / durationMs * 100) + '%';
@@ -516,14 +532,40 @@ function createReplayHtml(input: {
       if (scrollStep) document.querySelector('.frame-item.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     };
     const pause = () => {
+      recording.pause();
       cancelAnimationFrame(animationFrame);
       animationFrame = 0;
       elements.play.textContent = '播放';
     };
     const seekTo = (milliseconds, scrollStep = true) => {
       currentMs = Math.max(0, Math.min(durationMs, milliseconds));
+      pendingVideoTime = Math.max(0, (currentMs - videoOffset) / 1000);
+      if (data.video && recording.readyState >= 1) recording.currentTime = Math.min(pendingVideoTime, recording.duration || pendingVideoTime);
       render(scrollStep);
     };
+    recording.addEventListener('loadedmetadata', () => { recording.currentTime = Math.min(pendingVideoTime, recording.duration); });
+    recording.addEventListener('timeupdate', () => {
+      if (!videoMode || recording.paused) return;
+      currentMs = recording.currentTime * 1000 + videoOffset;
+      render();
+    });
+    recording.addEventListener('seeked', () => {
+      if (!videoMode) return;
+      currentMs = recording.currentTime * 1000 + videoOffset;
+      render();
+    });
+    recording.addEventListener('play', () => { elements.play.textContent = '暂停'; });
+    recording.addEventListener('pause', () => { elements.play.textContent = '播放'; });
+    recording.addEventListener('error', () => {
+      pause(); videoMode = false; render();
+      toggleRecording.textContent = '视频不可用，请将 MP4 与报告放在一起';
+      toggleRecording.disabled = true;
+    });
+    toggleRecording.addEventListener('click', () => {
+      pause(); videoMode = !videoMode;
+      toggleRecording.textContent = videoMode ? '查看节点截图' : '查看回放视频';
+      seekTo(currentMs, false);
+    });
     const tickPlayback = (now) => {
       currentMs = Math.min(durationMs, now - playbackStartedAt);
       render();
@@ -605,7 +647,12 @@ function createReplayHtml(input: {
       article.append(title);
       const detail = document.createElement('dl');
       const region = check.region || {};
-      const entries = [['结果', check.result === null ? '无法判定' : String(check.result)], ['配置', check.settings],
+      const match = check.templateMatch;
+      const entries = [
+        ...(match ? [['实际匹配结果', match.matched ? '匹配到模板' : '未匹配到模板'],
+          ['预期匹配结果', match.expected === 'present' ? '匹配到模板' : '未匹配到模板'],
+          ['匹配得分 / 严格度', (match.score * 100).toFixed(4) + '% / ' + (match.threshold * 100).toFixed(4) + '%']] : []),
+        [match ? '条件是否成立' : '结果', check.timedOut ? '观察超时（按节点超时配置处理）' : check.result === null ? '无法判定' : match ? (check.result ? '成立 → true 分支' : '不成立 → false 分支') : String(check.result)], ['配置', check.settings],
         ['区域', [region.x, region.y, region.width, region.height].join(', ')],
         ['采样', check.sampleCount + ' 帧'], ['耗时', check.durationMs + 'ms'], ['说明', check.message], ...Object.entries(check.metrics)];
       entries.forEach(([key, value]) => {
@@ -685,6 +732,11 @@ function createReplayHtml(input: {
     elements.previous.addEventListener('click', () => { pause(); seekTo(frames[Math.max(0, currentFrame - 1)]?.offsetMs || 0); });
     elements.next.addEventListener('click', () => { pause(); seekTo(frames[Math.min(frames.length - 1, currentFrame + 1)]?.offsetMs || durationMs); });
     elements.play.addEventListener('click', () => {
+      if (videoMode) {
+        if (!recording.paused) return pause();
+        recording.play().catch(() => { elements.caption.textContent = '视频无法播放，请检查 MP4 文件是否存在或使用其他浏览器'; });
+        return;
+      }
       if (animationFrame) return pause();
       if (currentMs >= durationMs) currentMs = 0;
       playbackStartedAt = performance.now() - currentMs;
@@ -719,6 +771,7 @@ function createReplayHtml(input: {
 }
 
 export async function createAppiumReplayReport(input: {
+  video?: ReplayVideo;
   script: AppiumRecordedScriptRecord;
   deviceId: string;
   success: boolean;
@@ -753,6 +806,7 @@ export async function createAppiumReplayReport(input: {
   const visualCheckByStepId = new Map(visualChecks.map((check) => [check.nodeId, check]));
   const visualFailureCount = visualChecks.filter((check) => check.status === 'failed').length;
   const html = createReplayHtml({
+    video: input.video ? { startedAt: input.video.startedAt, url: relative(outputDir, input.video.filePath).split(/[/\\\\]/).map(encodeURIComponent).join('/') } : undefined,
     script: input.script,
     deviceId: input.deviceId,
     resultText,

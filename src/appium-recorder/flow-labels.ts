@@ -47,7 +47,7 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     checkboxState: 'Checkbox 状态',
     checkedState: '判断勾选',
     radioButtonState: 'RadioButton 状态',
-    aiRecognition: 'AI 识别',
+    aiRecognition: 'AI 识别（已移除）',
     imageCheck: '图像判断',
     textClick: '文字点击',
     assertText: '断言文本',
@@ -81,7 +81,7 @@ export function flowStepMeta(step: AppiumRecordedStep) {
   if (step.type === 'loop') return `最多 ${step.loop?.maxIterations ?? '?'} 次 · ${step.loop?.exitWhen === 'exists' ? '元素出现时退出' : step.loop?.exitWhen === 'notExists' ? '元素消失时退出' : '固定次数'}${step.loop?.exitWhen !== 'never' ? ` ${step.selector?.value || ''}` : ''}`;
   if (step.type === 'breakLoop') return step.breakLoopTargetId ? '退出指定循环，继续循环结束后的流程' : '退出当前循环，继续循环结束后的流程';
   if (step.type === 'log') return `${step.logPrefix ?? DEFAULT_LOG_PREFIX}:${step.value || ''}`;
-  if (step.type === 'aiRecognition') return step.value || '未填写识别内容';
+  if (step.type === 'aiRecognition') return '此操作已移除，请替换为图像判断或原生组件判断';
   if (step.type === 'longPress') {
     const target = longPressMode(step) === 'element'
       ? `元素 ${step.selector?.strategy || ''} ${step.selector?.value || ''}`

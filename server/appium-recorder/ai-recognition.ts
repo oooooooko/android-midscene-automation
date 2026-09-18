@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { DEFAULT_NODE_TIMEOUT_MS } from '../../src/appium-recorder/node-timeout';
+import { ConditionTimeoutError } from './condition-timeout';
 import { loadConfig } from '../config';
 import { adbScreenshotBase64 } from './screenshot';
 import {
@@ -35,7 +37,7 @@ export async function recognizeDeviceScreen(input: {
   if (!['http:', 'https:'].includes(baseURL.protocol)) throw new Error('AI 识别模型 Base URL 必须为 HTTP(S) 地址');
   const startedAt = Date.now();
   const timeoutMs = Number.isFinite(input.timeoutMs) && input.timeoutMs! > 0
-    ? Math.min(300000, Math.max(1000, input.timeoutMs!)) : 60000;
+    ? Math.min(300000, Math.max(1000, input.timeoutMs!)) : DEFAULT_NODE_TIMEOUT_MS;
   const deadline = AbortSignal.timeout(timeoutMs);
   const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
   signal.throwIfAborted();
@@ -59,7 +61,7 @@ export async function recognizeDeviceScreen(input: {
     return { ...parseAiRecognitionResult(choice.message.content), durationMs: Date.now() - startedAt, imageBase64 };
   } catch (error) {
     if (input.signal?.aborted) throw input.signal.reason;
-    if (deadline.aborted) throw new Error(`AI 识别超时（${timeoutMs}ms）`);
+    if (deadline.aborted) throw new ConditionTimeoutError(`AI 识别超时（${timeoutMs}ms）`);
     // 不透传模型服务的原始响应，避免 API Key 或敏感请求信息进入报告。
     if (error instanceof OpenAI.APIError) throw new Error(`AI 识别模型请求失败（HTTP ${error.status || '连接异常'}），请检查模型配置及图片输入支持`);
     throw error;

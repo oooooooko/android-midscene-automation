@@ -6,12 +6,14 @@ import { captureHistoryFrames, readAppVersion } from './history-capture';
 import { BoundedLoopTraversal } from './bounded-loop';
 import { validateLoopSteps } from '../../src/appium-recorder/bounded-loop';
 import { adbScreenshotBase64 } from './screenshot';
-import { recognizeDeviceScreen } from './ai-recognition';
 import { checkImage } from './image-check';
 import { IMAGE_CHECK_MODES, type ImageCheckResult } from '../../src/appium-recorder/image-check';
 import { formatStageLog } from '../../src/appium-recorder/stage-log';
 import { openGalleryOnDevice } from './open-gallery';
 import { stopAppOnDevice } from './stop-app';
+import { DEFAULT_NODE_TIMEOUT_MS } from '../../src/appium-recorder/node-timeout';
+import { startReplayVideo, type ReplayVideo } from './replay-video';
+import { ConditionTimeoutError, AppiumServiceError } from './condition-timeout';
 import { AppiumRequestTimeoutError, timedAppiumFetch, withElementDeadline } from './request-timeout';
 import { textClickSelector } from '../../src/appium-recorder/text-click';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -86,7 +88,7 @@ function isReplayStopped(error?: unknown) {
 function throwIfReplayStopped(error?: unknown) {
   if (isReplayStopped(error)) throw new ReplayStoppedError();
   // 驱动失去响应不是“元素不存在”，不能被备用定位或可选步骤吞掉。
-  if (error instanceof AppiumRequestTimeoutError) throw error;
+  if (error instanceof AppiumRequestTimeoutError || error instanceof AppiumServiceError) throw error;
 }
 
 function errorDetail(error: unknown) {
@@ -209,16 +211,17 @@ function adbSwipe(deviceId: string, step: Required<AppiumRecordedStepRecord>['sw
   });
 }
 
-function adbText(deviceId: string, args: string[]) {
-  return new Promise<string>((resolve) => {
-    execFile(getAdbCommand(), ['-s', deviceId, ...args], { maxBuffer: 4 * 1024 * 1024 }, (_error, stdout, stderr) => {
+function adbText(deviceId: string, args: string[], strict = false) {
+  return new Promise<string>((resolve, reject) => {
+    execFile(getAdbCommand(), ['-s', deviceId, ...args], { maxBuffer: 4 * 1024 * 1024, timeout: 10000, signal: replayContext.getStore()?.signal }, (error, stdout, stderr) => {
+      if (strict && error) { reject(new AppiumServiceError(`读取设备状态失败：${stderr || error.message}`)); return; }
       resolve((stdout || stderr || '').trim());
     });
   });
 }
 
 async function getCurrentActivity(deviceId: string) {
-  const output = await adbText(deviceId, ['shell', 'dumpsys', 'activity', 'activities']);
+  const output = await adbText(deviceId, ['shell', 'dumpsys', 'activity', 'activities'], true);
   const resumedLine = output
     .split(/\r?\n/)
     .find((line) => /(?:topResumedActivity|ResumedActivity|mResumedActivity)/.test(line));
@@ -235,7 +238,7 @@ async function waitForActivity(deviceId: string, step: AppiumRecordedStepRecord)
   const expectedActivity = step.value || '';
   if (!expectedActivity) throw new Error(`${step.label} 缺少目标 Activity`);
   const startedAt = Date.now();
-  const timeoutMs = step.timeoutMs || 10000;
+  const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
   let currentActivity = '';
   while (Date.now() - startedAt <= timeoutMs) {
     throwIfReplayStopped();
@@ -243,7 +246,7 @@ async function waitForActivity(deviceId: string, step: AppiumRecordedStepRecord)
     if (currentActivity === expectedActivity) return;
     await wait(500);
   }
-  throw new Error(`${step.label} 等待超时，当前 Activity：${currentActivity || '-'}`);
+  throw new ConditionTimeoutError(`${step.label} 等待超时，当前 Activity：${currentActivity || '-'}`);
 }
 
 async function appendSettingsDiagnostics(lines: string[], deviceId: string) {
@@ -300,9 +303,9 @@ async function appiumRequest<T>(
     context?.appiumLog(`[Appium] 异常：${method} ${path}（${errorDetail(error)}）`);
     if (error instanceof AppiumRequestTimeoutError) throw error;
     if (isTimeoutError(error)) {
-      throw new Error(`Appium 请求超时 ${requestUrl}，${errorDetail(error)}`);
+      throw new AppiumServiceError(`Appium 请求超时 ${requestUrl}，${errorDetail(error)}`);
     }
-    throw new Error(`无法连接 Appium 服务 ${requestUrl}，${errorDetail(error)}`);
+    throw new AppiumServiceError(`无法连接 Appium 服务 ${requestUrl}，${errorDetail(error)}`);
   }
 
   context?.appiumLog(`[Appium] 响应：HTTP ${response.status} ${method} ${path}（${Date.now() - startedAt}ms）`);
@@ -325,7 +328,8 @@ async function appiumRequest<T>(
       payload.value?.stacktrace || payload.stacktrace ? `堆栈信息：\n${payload.value?.stacktrace || payload.stacktrace}` : '',
       responseText ? `原始响应：\n${responseText}` : '',
     ].filter(Boolean).join('\n');
-    throw new Error(`Appium ${method} ${path} 失败（HTTP ${response.status}）：\n${detail || '未返回错误详情'}`);
+    const ErrorType = ['no such element', 'stale element reference'].includes(payload.value?.error || payload.error || '') ? Error : AppiumServiceError;
+    throw new ErrorType(`Appium ${method} ${path} 失败（HTTP ${response.status}）：\n${detail || '未返回错误详情'}`);
   }
   return payload;
 }
@@ -349,10 +353,11 @@ async function captureReplayFrame(
 ) {
   const context = replayContext.getStore();
   if (!context || !context.deviceId) return;
+  const capturedAt = new Date().toISOString();
   // 执行记录独立于截图，设备截图失败不能让失败节点从统计中消失。
   context.historyEvents.push({ sequence: context.historyEvents.length + 1, scriptName, nodeId: step.id,
     nodeNumber, nodeLabel: step.label, nodeType: step.type, note: step.note || '',
-    selector: replayFrameSelector(step), phase, status, capturedAt: new Date().toISOString(), imageBase64: '' });
+    selector: replayFrameSelector(step), phase, status, capturedAt, imageBase64: '' });
   const appendFrame = (imageBase64: string) => {
     context.frames.push({
       sequence: context.frames.length + 1,
@@ -366,7 +371,7 @@ async function captureReplayFrame(
       selector: replayFrameSelector(step),
       phase,
       status,
-      capturedAt: new Date().toISOString(),
+      capturedAt,
       imageBase64,
     });
   };
@@ -382,6 +387,8 @@ async function captureReplayFrame(
     appendFrame(imageBase64 || await adbScreenshotBase64(context.deviceId));
   } catch (error) {
     context.appiumLog(`[节点 ${nodeNumber}] 截图失败：${errorDetail(error)}`);
+    // 截图失败仍保留时间锚点，报告可定位到该节点的录像。
+    appendFrame('');
   }
 }
 
@@ -444,7 +451,7 @@ async function findElementBySelector(
   return elementId;
 }
 
-async function findElement(sessionId: string, step: AppiumRecordedStepRecord, timeoutMs = step.timeoutMs ?? 10000) {
+async function findElement(sessionId: string, step: AppiumRecordedStepRecord, timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS) {
   return withElementDeadline(timeoutMs, () => findElementWithinDeadline(sessionId, step));
 }
 
@@ -513,7 +520,7 @@ async function tapFallback(deviceId: string, step: AppiumRecordedStepRecord) {
 
 async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord) {
   const startedAt = Date.now();
-  const timeoutMs = step.timeoutMs || 10000;
+  const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
   let lastError: unknown;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
@@ -524,12 +531,12 @@ async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord)
       await wait(500);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(`${step.label} 等待超时`);
+  throw new ConditionTimeoutError(`${step.label} 等待元素超时（${timeoutMs}ms）：${errorDetail(lastError)}`);
 }
 
 async function findOptionalElement(sessionId: string, step: AppiumRecordedStepRecord) {
   const startedAt = Date.now();
-  const timeoutMs = step.timeoutMs ?? 2000;
+  const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
       return await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
@@ -543,7 +550,7 @@ async function findOptionalElement(sessionId: string, step: AppiumRecordedStepRe
 
 async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRecord) {
   const startedAt = Date.now();
-  const timeoutMs = step.timeoutMs || 10000;
+  const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
   while (Date.now() - startedAt <= timeoutMs) {
     try {
       await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
@@ -553,7 +560,7 @@ async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRec
     }
     await wait(500);
   }
-  throw new Error(`${step.label} 等待消失超时`);
+  throw new ConditionTimeoutError(`${step.label} 等待消失超时`);
 }
 
 async function saveScreenshot(deviceId: string) {
@@ -998,7 +1005,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
   }
   if (step.type === 'textClick') {
     const selector = textClickSelector(step);
-    const deadline = Date.now() + Math.max(0, step.timeoutMs ?? 10000);
+    const deadline = Date.now() + Math.max(0, step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS);
     // 查询空结果才是未匹配；通信错误、重复匹配和点击失败走现有异常处理。
     do {
       const payload = await appiumRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
@@ -1013,7 +1020,10 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
         await appiumRequest(`/session/${sessionId}/element/${id}/click`, { method: 'POST', body: '{}' });
         return true;
       }
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) {
+        if (step.timeoutMs === 0) return false;
+        throw new ConditionTimeoutError(`文字点击等待匹配超时（${step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS}ms）`);
+      }
       await wait(Math.max(0, Math.min(500, deadline - Date.now())));
     } while (true);
   }
@@ -1029,7 +1039,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
       return true;
     }
     if (step.type === 'assertText' || (step.type === 'assertExists' && step.value)) {
-      const elementId = await findElement(sessionId, step);
+      const elementId = await waitForElement(sessionId, step);
       const payload = await appiumRequest<AppiumValueResponse<string>>(`/session/${sessionId}/element/${elementId}/text`);
       const actualText = payload.value || '';
       const expectedText = step.value || '';
@@ -1041,7 +1051,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
     return true;
   } catch (error) {
     throwIfReplayStopped(error);
-    return false;
+    throw error;
   }
 }
 
@@ -1117,7 +1127,7 @@ async function replayLinkedScript(
           type: 'waitActivity',
           label: step.label,
           value: linkedScript.appActivity,
-          timeoutMs: 10000,
+          timeoutMs: DEFAULT_NODE_TIMEOUT_MS,
         });
       } catch (error) {
         throwIfReplayStopped(error);
@@ -1251,13 +1261,7 @@ async function replayFlowSteps(
           }
           continue;
         }
-        // AI 节点使用本次执行前截图，并将同一张图片和识别依据写入结果帧。
-        const beforeFrame = replayContext.getStore()?.frames.at(-1);
-        const recognition = step.type === 'aiRecognition' ? await recognizeDeviceScreen({
-          deviceId, prompt: step.value, timeoutMs: step.timeoutMs,
-          signal: replayContext.getStore()?.signal,
-          imageBase64: beforeFrame?.nodeId === step.id && beforeFrame.phase === 'before' ? beforeFrame.imageBase64 : undefined,
-        }) : undefined;
+        if (step.type === 'aiRecognition') throw new Error('AI 识别操作已移除，请替换此节点后回放');
         let imageResult: ImageCheckResult | undefined;
         if (step.type === 'imageCheck') {
           const resolved = resolveVariableStep(step);
@@ -1266,13 +1270,22 @@ async function replayFlowSteps(
             resolveRegion: () => imageCheckRegion(sessionId, resolved), wait,
             signal: replayContext.getStore()?.signal, saveImages: !variableContext.getStore()?.privacy.enabled });
           const config = resolved.imageCheck;
-          const settings = config ? `${IMAGE_CHECK_MODES[config.mode]}；条件 ${config.expectation}；模板阈值 ${config.threshold}；最小得分差 ${config.minScoreGap}；RGB/亮度容差 ${config.tolerance}；目标色 ${config.color}；像素占比 ${config.ratio}%；观察 ${config.durationMs}ms；间隔 ${config.intervalMs}ms；连续 ${config.consecutive} 帧` : '缺少配置';
+          const settings = config ? [
+            IMAGE_CHECK_MODES[config.mode],
+            config.mode === 'template' ? `预期匹配结果：${config.expectation === 'present' ? '匹配到模板' : '未匹配到模板'}` : '',
+            ['template', 'state'].includes(config.mode) ? `匹配严格度 ${config.threshold * 100}%` : '',
+            config.mode === 'state' ? `最小得分差 ${config.minScoreGap}` : '',
+            ['black', 'color', 'change'].includes(config.mode) ? `RGB/亮度容差 ${config.tolerance}；像素占比 ${config.ratio}%` : '',
+            config.mode === 'color' ? `目标色 ${config.color}` : '',
+            config.mode === 'change' ? `预期：${config.expectation === 'present' ? '画面有变化' : '持续无明显变化'}` : '',
+            config.mode !== 'state' ? `观察 ${config.durationMs}ms；间隔 ${config.intervalMs}ms；连续 ${config.consecutive} 帧` : '',
+          ].filter(Boolean).join('；') : '缺少配置';
           replayContext.getStore()?.imageChecks.push({ ...imageResult, nodeId: step.id, nodeNumber: index + 1, nodeLabel: frameStep.label, scriptName: options.scriptName || '', settings });
           lines.push(`[节点 ${index + 1}] 图像判断：${imageResult.result === null ? '无法判定' : imageResult.result}，${imageResult.message}；${settings}；采样 ${imageResult.sampleCount} 帧，耗时 ${imageResult.durationMs}ms；指标 ${JSON.stringify(imageResult.metrics)}`);
           if (imageResult.result === null) throw new Error(imageResult.message);
+          if (imageResult.timedOut) throw new ConditionTimeoutError(imageResult.message);
         }
-        const matched = imageResult ? imageResult.result! : recognition ? recognition.result : await evaluateCondition(sessionId, deviceId, step);
-        if (recognition) lines.push(`[节点 ${index + 1}] AI 识别：${recognition.result}，耗时 ${recognition.durationMs}ms${recognition.reason ? `，依据：${recognition.reason}` : ''}`);
+        const matched = imageResult ? imageResult.result! : await evaluateCondition(sessionId, deviceId, step);
         const branchTargetId = matched ? step.flow?.yesTargetId : step.flow?.noTargetId;
         const next = traversal.branch(step, matched);
         const targetId = branchTargetId || (next === undefined ? '' : steps[next]?.id) || '';
@@ -1284,8 +1297,7 @@ async function replayFlowSteps(
           index + 1,
           options.scriptName || '',
           'after',
-          `判断：${branchLabel}${recognition?.reason ? `；${recognition.reason}` : ''}`,
-          recognition?.imageBase64,
+          `判断：${branchLabel}`,
         );
         index = next;
       } catch (error) {
@@ -1293,6 +1305,17 @@ async function replayFlowSteps(
           lines.push(`[节点 ${index + 1}] 已终止：${step.label}`);
           await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'stopped', '已终止');
           throw new ReplayStoppedError();
+        }
+        if (error instanceof ConditionTimeoutError && (step.timeoutBranch === 'yes' || step.timeoutBranch === 'no')) {
+          const branch = step.timeoutBranch;
+          const status = `判断超时，按配置进入${branch === 'yes' ? '左' : '右'}侧分支（${flowBranchLabel(step, branch)}）`;
+          lines.push(`[节点 ${index + 1}] ${status}；${error.message}`);
+          await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', status);
+          // 循环体必须经过 enter，才能正确记轮次及受最大次数保护。
+          index = step.type === 'loop'
+            ? branch === 'yes' ? traversal.enter(step).next : traversal.exit(step)
+            : traversal.branch(step, branch === 'yes');
+          continue;
         }
         lines.push(`[节点 ${index + 1}] 失败：${errorDetail(error)}`);
         await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'error', '失败');
@@ -1413,7 +1436,7 @@ export async function replayAppiumScript(
   deviceId: string,
   onOutput?: (line: string) => void,
   signal?: AbortSignal,
-  runOptions: { parameters?: TestVariable[]; globalVariables?: TestVariable[]; linkedScripts?: AppiumRecordedScriptRecord[] } = {},
+  runOptions: { recordVideo?: boolean; parameters?: TestVariable[]; globalVariables?: TestVariable[]; linkedScripts?: AppiumRecordedScriptRecord[] } = {},
 ) {
   const targetDeviceId = deviceId || script.deviceId;
   if (!targetDeviceId) throw new Error('未检测到可用设备');
@@ -1421,6 +1444,12 @@ export async function replayAppiumScript(
 
   const scope = new VariableScope(runOptions.globalVariables ?? getPresetVariables(), script.variables || []);
   const scripts = new Map((runOptions.linkedScripts ?? linkedScriptSnapshot(script)).map(item => [item.id, item]));
+  // 旧节点保留图结构供用户替换，但必须在任何设备操作之前阻止回放。
+  for (const candidate of [script, ...scripts.values()]) {
+    if (candidate.steps.some(step => step.type === 'aiRecognition')) {
+      throw new Error(`脚本“${candidate.name}”包含已移除的 AI 识别操作，请改用图像判断或原生组件判断后回放`);
+    }
+  }
   for (const item of validateVariables(runOptions.parameters)) scope.set(item);
   // 提前登记子脚本敏感预设，避免进入子脚本前的原始日志或截图泄露。
   const visited = new Set<string>();
@@ -1473,6 +1502,8 @@ export async function replayAppiumScript(
     let sessionId = '';
     let success = false;
     let stopped = false;
+    let recording: Awaited<ReturnType<typeof startReplayVideo>> | undefined;
+    let video: ReplayVideo | undefined;
     let managedAppium: Awaited<ReturnType<typeof startManagedAppiumServer>> | null = null;
     try {
       validateLoopSteps(script.steps);
@@ -1497,6 +1528,12 @@ export async function replayAppiumScript(
         sessionId = await createSession(targetDeviceId);
       }
       lines.push(`Appium session 已创建：${sessionId}`);
+      if (runOptions.recordVideo) {
+        if (scope.privacy.enabled) throw new Error('本次运行包含敏感变量，为避免泄露已禁止录屏，请关闭录制回放视频');
+        lines.push('正在启动后台录屏...');
+        recording = await startReplayVideo(targetDeviceId, signal);
+        lines.push('后台录屏已启动（MP4 / H.264 / 15fps / 2Mbps，无音频）');
+      }
       if (hasFlowSteps(script.steps)) lines.push('按流程图路径回放...');
       await replayScriptSteps(sessionId, targetDeviceId, script.steps, lines, [script.id], {
         scriptName: script.name,
@@ -1524,6 +1561,19 @@ export async function replayAppiumScript(
         lines.push(`回放终止：${detail}`);
       }
     } finally {
+      if (recording) {
+        try {
+          video = await recording.stop();
+          if (scope.privacy.enabled) {
+            await import('node:fs/promises').then(fs => fs.rm(video!.filePath, { force: true }));
+            video = undefined;
+            lines.push('敏感变量保护：已删除回放视频');
+          } else {
+            lines.push(`回放视频已保存：${video.filePath}`);
+            if (video.warning) lines.push(`录屏警告：${video.warning}`);
+          }
+        } catch (error) { lines.push(`回放视频保存失败：${errorDetail(error)}`); }
+      }
       let managedAppiumStopped = false;
       if (signal?.aborted && managedAppium) {
         await managedAppium.stop();
@@ -1562,6 +1612,7 @@ export async function replayAppiumScript(
         success,
         stopped,
         output: scope.redact(lines.join('\n')),
+        video,
         startedAt,
         completedAt,
         frames: safeFrames,
@@ -1586,9 +1637,11 @@ export async function replayAppiumScript(
       reportId,
       logPath,
       htmlReportPath,
+      videoPath: video?.filePath,
       softFailureCount: context.softFailureCount,
       history: {
         scriptId: script.id, scriptName: script.name, appPackage: script.appPackage,
+        video,
         appVersion, deviceId: targetDeviceId, startedAt: startedAt.toISOString(),
         durationMs: completedAt.getTime() - startedAt.getTime(),
         status: stopped ? 'stopped' as const : success ? 'passed' as const : 'failed' as const,

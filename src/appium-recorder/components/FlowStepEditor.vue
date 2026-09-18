@@ -5,6 +5,8 @@ import { normalizeVisualChangeConfig } from '../visual-change';
 import { longPressMode } from '../long-press';
 import { defaultFlowKind, isBooleanCondition } from '../flow-labels';
 import TextClickSettings from './TextClickSettings.vue';
+import BranchTimeoutSettings from './BranchTimeoutSettings.vue';
+import { DEFAULT_NODE_TIMEOUT_MS } from '../node-timeout';
 import LongPressSettings from './LongPressSettings.vue';
 import StageLogSettings from './StageLogSettings.vue';
 import LoopSettings from './LoopSettings.vue';
@@ -116,8 +118,7 @@ function patchVisualRegion(key: keyof VisualChangeConfig['region'], value: unkno
 }
 
 function patchTimeout(value: unknown) {
-  const timeout = Math.max(0, toInteger(value, props.step.timeoutMs || 0));
-  patchStep({ timeoutMs: timeout || undefined });
+  patchStep({ timeoutMs: value == null || value === '' ? undefined : Math.max(0, toInteger(value, DEFAULT_NODE_TIMEOUT_MS)) });
 }
 
 const showSelector = computed(() => props.step.type !== 'loop' && props.step.selector && (
@@ -152,21 +153,10 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           @update:model-value="patchStep({ note: String($event) || undefined })"
         />
       </el-form-item>
-      <div class="appium-flow-editor__grid">
-        <el-form-item label="节点类型">
-          <el-select
-            :model-value="defaultKind()"
-            :disabled="disabled || isBooleanCondition(step) || step.type === 'stopApp' || step.type === 'extractVariable' || step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow' || step.type === 'loop' || step.type === 'breakLoop'"
-            @update:model-value="patchFlow({ nodeKind: $event as FlowKind })"
-          >
-            <el-option label="操作" value="action" />
-            <el-option label="判断" value="condition" />
-            <el-option label="校验" value="assertion" />
-          </el-select>
-        </el-form-item>
+      <div>
         <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type)" label="超时时间 ms">
           <el-input-number
-            :model-value="step.timeoutMs || undefined"
+            :model-value="step.timeoutMs ?? (step.type === 'delay' ? 1000 : DEFAULT_NODE_TIMEOUT_MS)"
             :disabled="disabled"
             :min="0"
             :max="999999"
@@ -174,6 +164,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
             @update:model-value="patchTimeout($event)"
           />
         </el-form-item>
+        <BranchTimeoutSettings v-if="defaultKind() === 'condition'" :step="step" :disabled="disabled" @update="patchStep({ timeoutBranch: $event })" />
       </div>
       <LongPressSettings v-if="step.type === 'longPress'" :step="step" :disabled="disabled" @update="patchStep" />
       <el-form-item v-if="['waitActivity', 'launchApp', 'stopApp', 'clearAppData'].includes(step.type)" :label="step.type === 'waitActivity' ? '目标 Activity' : '目标 APP 包名'">
@@ -206,12 +197,6 @@ function patchSelector(patch: Partial<AppiumSelector>) {
       <LoopSettings v-if="step.type === 'loop'" :step="step" :disabled="disabled" @update="patchStep" />
       <BreakLoopSettings v-if="step.type === 'breakLoop'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
       <TextClickSettings v-if="step.type === 'textClick'" :step="step" :disabled="disabled" @update="patchStep" />
-      <el-form-item v-if="step.type === 'aiRecognition'" label="识别内容">
-        <el-input
-          :model-value="step.value || ''" type="textarea" :rows="3" maxlength="4000"
-          :disabled="disabled" @update:model-value="patchStep({ value: String($event) })"
-        />
-      </el-form-item>
       <el-form-item
         v-if="step.type === 'input' || step.type === 'inputIfExists' || step.type === 'assertText'"
         label="文本内容"

@@ -1,4 +1,5 @@
 import type { AppiumVisualChangeRegion } from './types';
+import { DEFAULT_NODE_TIMEOUT_MS } from './node-timeout';
 
 export const IMAGE_CHECK_MODES = { template: '模板匹配', state: '图片状态判断', black: '黑屏检测', color: '区域颜色判断', change: '多帧变化检测' } as const;
 export type ImageCheckConfig = {
@@ -20,6 +21,8 @@ export type ImageCheckConfig = {
   consecutive: number;
 };
 export type ImageCheckResult = {
+  templateMatch?: { matched: boolean; expected: 'present' | 'absent'; score: number; threshold: number };
+  timedOut?: boolean;
   result: boolean | null;
   mode: ImageCheckConfig['mode'];
   region: AppiumVisualChangeRegion;
@@ -33,7 +36,7 @@ export type ImageCheckResult = {
 export function createImageCheckConfig(): ImageCheckConfig {
   return { mode: 'template', target: 'region', region: { x: 0, y: 0, width: 100, height: 100 },
     screenWidth: 0, screenHeight: 0, expectation: 'present', threshold: 0.9, minScoreGap: 0.1,
-    color: '#000000', tolerance: 30, ratio: 95, durationMs: 5000, intervalMs: 1000, consecutive: 1 };
+    color: '#000000', tolerance: 30, ratio: 95, durationMs: DEFAULT_NODE_TIMEOUT_MS, intervalMs: 1000, consecutive: 1 };
 }
 
 // 只读取 PNG 头部尺寸，避免为了表单校验解码整张模板。
@@ -113,5 +116,6 @@ export function validateImageCheck(config: ImageCheckConfig | undefined) {
 
 export function imageCheckSummary(config?: ImageCheckConfig) {
   if (!config) return '未配置图像判断';
-  return `${IMAGE_CHECK_MODES[config.mode]} · ${config.target === 'element' ? '组件区域' : '框选区域'} · ${config.durationMs}ms`;
+  const expectation = config.mode === 'template' ? ` · ${config.expectation === 'present' ? '匹配到模板' : '未匹配到模板'}` : '';
+  return `${IMAGE_CHECK_MODES[config.mode]}${expectation} · ${config.target === 'element' ? '组件区域' : '框选区域'} · ${config.durationMs}ms`;
 }

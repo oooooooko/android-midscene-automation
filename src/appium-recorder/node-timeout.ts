@@ -1,0 +1,1 @@
+export const DEFAULT_NODE_TIMEOUT_MS = 3000;

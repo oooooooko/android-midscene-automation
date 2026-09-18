@@ -1,4 +1,6 @@
 import { createId, querySql, runSql, sqlJson, sqlString } from '../storage/sqlite';
+import { rmSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { RunDetail, RunSummary } from '../../src/appium-recorder/run-history';
 
 function ensureTable() {
@@ -29,6 +31,10 @@ export function getRunHistory(scriptId: string, id: string): RunDetail | null {
 
 export function deleteRunHistory(scriptId: string, id: string) {
   ensureTable();
-  // 不接受文件路径，也不删除原始报告；只删除这条历史的自包含快照。
+  const video = getRunHistory(scriptId, id)?.video;
+  // 只清理服务端生成并关联到该记录的录像，不接受客户端文件路径。
+  if (video && basename(video.filePath) === video.fileName && /^replay-[\d]+-[\da-f-]+\.mp4$/.test(video.fileName)) {
+    rmSync(video.filePath, { force: true });
+  }
   runSql(`PRAGMA secure_delete=ON; DELETE FROM appium_run_history WHERE script_id=${sqlString(scriptId)} AND id=${sqlString(id)};`);
 }

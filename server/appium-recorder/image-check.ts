@@ -1,4 +1,6 @@
 import { PNG } from 'pngjs';
+import { AppiumRequestTimeoutError } from './request-timeout';
+import { AppiumServiceError } from './condition-timeout';
 import { validateImageCheck, type ImageCheckConfig, type ImageCheckResult } from '../../src/appium-recorder/image-check';
 import type { AppiumVisualChangeRegion } from '../../src/appium-recorder/types';
 
@@ -126,6 +128,10 @@ export async function checkImage(input: {
       if (!baseline) { baseline = current; observedAt = now(); keep('首帧', current); }
       const measurement = await measure(current, baseline, templates, config);
       result.metrics = { ...measurement.metrics };
+      if (config.mode === 'template') {
+        const score = result.metrics['模板得分']!;
+        result.templateMatch = { matched: score >= config.threshold, expected: config.expectation, score, threshold: config.threshold };
+      }
       input.signal?.throwIfAborted();
       if (config.mode === 'state') {
         if (measurement.matched === null) throw new Error('双模板均未达到阈值或得分过于接近');
@@ -138,20 +144,28 @@ export async function checkImage(input: {
         const changed = maximum >= config.ratio;
         if (changed || (result.sampleCount >= 2 && now() - observedAt >= config.durationMs)) {
           result.result = config.expectation === 'present' ? changed : !changed;
+          result.timedOut = !changed && config.expectation === 'present' && config.durationMs > 0;
           break;
         }
       } else {
         consecutive = measurement.matched ? consecutive + 1 : 0;
         result.metrics['连续满足帧数'] = consecutive;
         if (consecutive >= config.consecutive) { result.result = true; break; }
-        if (now() - observedAt >= config.durationMs) { result.result = false; break; }
+        if (now() - observedAt >= config.durationMs) { result.result = false; result.timedOut = config.durationMs > 0; break; }
       }
       await input.wait(Math.min(config.intervalMs, Math.max(1, config.durationMs - (now() - observedAt))));
     }
     if (last) keep('判定帧', last);
-    result.message = result.result ? '条件成立' : '条件不成立';
+    result.message = result.timedOut ? '观察超时，未在规定时间内满足条件' : result.result ? '条件成立' : '条件不成立';
+    if (result.templateMatch) {
+      const match = result.templateMatch;
+      const actual = match.matched ? '匹配到模板' : '未匹配到模板';
+      const expected = match.expected === 'present' ? '匹配到模板' : '未匹配到模板';
+      result.message = `实际${actual}：得分 ${(match.score * 100).toFixed(4)}%，${match.matched ? '达到' : '低于'}匹配严格度 ${(match.threshold * 100).toFixed(4)}%；预期${expected}；${result.message}${result.timedOut ? '' : ` → ${result.result} 分支`}`;
+    }
   } catch (error) {
     if (input.signal?.aborted) throw error;
+    if (error instanceof AppiumRequestTimeoutError || error instanceof AppiumServiceError) throw error;
     result.message = `无法判定：${error instanceof Error ? error.message : '图像检测异常'}`;
     result.result = null;
   }

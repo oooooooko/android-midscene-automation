@@ -4,9 +4,11 @@ import { ElMessage } from 'element-plus';
 import { Aim, Camera, Upload, QuestionFilled } from '@element-plus/icons-vue';
 import { IMAGE_CHECK_MODES, validateImageCheck, imageTemplateSize, imageTemplateRegionIssue, expandedImageTemplateRegion, type ImageCheckConfig } from '../image-check';
 import { captureImageCheckRegion } from '../api';
+import BranchTimeoutSettings from './BranchTimeoutSettings.vue';
+import type { AppiumRecordedStep } from '../types';
 
-const props = defineProps<{ config: ImageCheckConfig; deviceId: string; hasElement: boolean; editing: boolean; picking: boolean }>();
-const emit = defineEmits<{ update: [config: ImageCheckConfig]; close: []; confirm: []; pick: []; useElement: [] }>();
+const props = defineProps<{ config: ImageCheckConfig; deviceId: string; hasElement: boolean; editing: boolean; picking: boolean; timeoutBranch?: AppiumRecordedStep['timeoutBranch'] }>();
+const emit = defineEmits<{ update: [config: ImageCheckConfig]; timeoutBranch: [value: NonNullable<AppiumRecordedStep['timeoutBranch']>]; close: []; confirm: []; pick: []; useElement: [] }>();
 const busy = ref(false);
 const regionIssue = computed(() => imageTemplateRegionIssue(props.config));
 const expandedRegion = computed(() => expandedImageTemplateRegion(props.config));
@@ -16,7 +18,7 @@ const slots = computed(() => props.config.mode === 'state'
   ? [{ key: 'template' as const, label: '选中模板' }, { key: 'negativeTemplate' as const, label: '未选中模板' }]
   : props.config.mode === 'template' ? [{ key: 'template' as const, label: '模板' }] : []);
 const numericFields = computed(() => [
-  ...(['template', 'state'].includes(props.config.mode) ? [{ key: 'threshold' as const, label: '匹配得分阈值', min: 0.01, max: 1, step: 0.01 }] : []),
+  ...(['template', 'state'].includes(props.config.mode) ? [{ key: 'threshold' as const, label: '匹配严格度 (%)', min: 1, max: 100, step: 1 }] : []),
   ...(props.config.mode === 'state' ? [{ key: 'minScoreGap' as const, label: '两种状态最小得分差', min: 0.001, max: 1, step: 0.01 }] : []),
   ...(['black', 'color', 'change'].includes(props.config.mode) ? [
     { key: 'tolerance' as const, label: props.config.mode === 'black' ? '暗色亮度阈值 (0–255)' : 'RGB 通道容差 (0–255)', min: 0, max: 255, step: 1 },
@@ -108,10 +110,10 @@ async function upload(event: Event) {
       <el-alert v-if="regionIssue" :title="regionIssue" type="warning" show-icon :closable="false" class="image-check-region-warning">
         <el-button v-if="expandedRegion" size="small" @click="patch({ region: expandedRegion })">扩大检测区域</el-button>
       </el-alert>
-      <el-form-item v-if="config.mode === 'template' || config.mode === 'change'" label="判断条件">
+      <el-form-item v-if="config.mode === 'template' || config.mode === 'change'" :label="config.mode === 'template' ? '预期匹配结果' : '判断条件'">
         <el-radio-group :model-value="config.expectation" @update:model-value="patch({ expectation: $event as 'present' | 'absent' })">
-          <el-radio-button value="present">{{ config.mode === 'template' ? '图片存在' : '画面有变化' }}</el-radio-button>
-          <el-radio-button value="absent">{{ config.mode === 'template' ? '图片不存在' : '持续无明显变化' }}</el-radio-button>
+          <el-radio-button value="present">{{ config.mode === 'template' ? '匹配到模板' : '画面有变化' }}</el-radio-button>
+          <el-radio-button value="absent">{{ config.mode === 'template' ? '未匹配到模板' : '持续无明显变化' }}</el-radio-button>
         </el-radio-group>
       </el-form-item>
       <el-form-item v-if="config.mode === 'color'" label="目标颜色 #RRGGBB">
@@ -119,10 +121,29 @@ async function upload(event: Event) {
         <el-input :model-value="config.color" maxlength="7" @update:model-value="patch({ color: $event })" />
       </el-form-item>
       <div class="image-check-grid">
-        <el-form-item v-for="field in numericFields" :key="field.key" :label="field.label">
-          <el-input-number :model-value="config[field.key]" :min="field.min" :max="field.max" :step="field.step" controls-position="right" @update:model-value="$event !== undefined && patch({ [field.key]: $event })" />
-        </el-form-item>
+        <template v-for="field in numericFields" :key="field.key">
+          <el-form-item :label="field.label">
+            <template v-if="field.key === 'threshold'" #label>
+              <span class="image-check-threshold-label">{{ field.label }}
+                <el-tooltip effect="dark" placement="top" :show-after="200">
+                  <template #content>
+                    <div class="image-check-threshold-help">
+                      当前画面与参考模板的匹配得分达到此值，才算匹配成功，得分不是正确概率。
+                      数值越高越严格，可能漏掉有细微变化的目标；越低越宽松，可能误认相似图案。
+                      例如设为 98%，需要匹配得分达到 98%。设为 100% 时，极细微的像素差异也会判为不匹配。图片状态判断还会结合两种模板的最小得分差，得分太接近时无法判定。
+                    </div>
+                  </template>
+                  <el-button class="image-check-threshold-button" :icon="QuestionFilled" text aria-label="匹配严格度说明" @click.prevent />
+                </el-tooltip>
+              </span>
+            </template>
+            <el-input-number :model-value="field.key === 'threshold' ? Number((config.threshold * 100).toFixed(8)) : config[field.key]" :min="field.min" :max="field.max" :step="field.step" controls-position="right" @update:model-value="$event !== undefined && patch({ [field.key]: field.key === 'threshold' ? $event / 100 : $event })" />
+            <el-alert v-if="field.key === 'threshold' && config.threshold === 1" title="100% 要求完全匹配，极细微的像素差异也会判为不匹配。" type="warning" :closable="false" show-icon class="image-check-strict-warning" />
+          </el-form-item>
+          <BranchTimeoutSettings v-if="field.key === 'durationMs'" style="grid-column: 1 / -1" :step="{ id: '', label: '', type: 'imageCheck', timeoutBranch }" :disabled="busy" @update="emit('timeoutBranch', $event)" />
+        </template>
       </div>
+      <BranchTimeoutSettings v-if="config.mode === 'state'" :step="{ id: '', label: '', type: 'imageCheck', timeoutBranch }" :disabled="busy" @update="emit('timeoutBranch', $event)" />
     </el-form>
     <template #footer><el-button :disabled="busy" @click="emit('close')">取消</el-button><el-button type="primary" :disabled="busy" @click="confirm">{{ editing ? '保存' : '添加' }}</el-button></template>
   </el-dialog>
@@ -135,9 +156,17 @@ async function upload(event: Event) {
 .image-check-dialog .el-input-number { width: 100%; }
 .image-check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .image-check-help { margin-left: 8px; color: #606266; }
+.image-check-grid .el-form-item__label { display: flex; align-items: center; min-height: 20px; }
+.image-check-threshold-label { display: inline-flex; align-items: center; gap: 4px; }
+.image-check-dialog .el-button.image-check-threshold-button { flex: 0 0 20px; width: 20px; height: 20px; min-height: 20px; padding: 0; font-size: 14px; }
+.image-check-threshold-help { max-width: min(300px, calc(100vw - 40px)); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.image-check-strict-warning { margin-top: 6px; }
 .image-check-template { display: grid; gap: 6px; margin-bottom: 16px; min-width: 0; }
 .image-check-size { color: #606266; font-size: 12px; }
 .image-check-region-warning { margin-bottom: 16px; }
 .image-check-template .el-image, .image-check-empty { height: 96px; width: 100%; background: #eff5f3; border: 1px solid #d5dfdb; border-radius: 4px; }
 .image-check-empty { display: grid; place-items: center; color: #606266; }
+@media (max-width: 480px) {
+  .image-check-grid { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

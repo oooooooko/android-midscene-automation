@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, provide, reactive, shallowRef, watch } from 'vue';
 import { flowBackgroundKey, normalizeFlowBackground } from './flow-appearance';
+import { DEFAULT_NODE_TIMEOUT_MS } from './node-timeout';
 import { ElForm, ElFormItem, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus';
-import { Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Plus, Refresh, Upload, VideoPlay, View, Clock } from '@element-plus/icons-vue';
+import { ArrowDown, Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Plus, Refresh, Upload, VideoPlay, View, Clock } from '@element-plus/icons-vue';
 import RunHistoryDialog from './RunHistoryDialog.vue';
 import type { AndroidDevice, AppPreset, DeviceAction } from '../types';
 import DevicePreviewPanel from '../components/device/DevicePreviewPanel.vue';
@@ -42,8 +43,6 @@ import NewScriptDialog from './components/NewScriptDialog.vue';
 import VisualChangeDialog from './components/VisualChangeDialog.vue';
 import ImageCheckDialog from './components/ImageCheckDialog.vue';
 import { createImageCheckConfig, validateImageCheck, type ImageCheckConfig } from './image-check';
-import AiRecognitionTestDialog from './components/AiRecognitionTestDialog.vue';
-import { validateAiRecognitionPrompt } from './ai-recognition';
 import {
   createFlowClipboard,
   pasteFlowClipboard,
@@ -95,49 +94,9 @@ const workspaceRef = shallowRef<InstanceType<typeof RecorderWorkspace>>();
 const historyScript = shallowRef<{ id: string; name: string } | null>(null);
 const AUTO_TREE_REFRESH_INTERVAL_MS = 1800;
 
-const insertableRecorderActions: RecorderAction[] = [
-  'extractVariable',
-  'delay',
-  'tap',
-  'input',
-  'waitFor',
-  'tapIfExists',
-  'inputIfExists',
-  'clearIfExists',
-  'backIfExists',
-  'popupCondition',
-  'checkboxState',
-  'checkedState',
-  'radioButtonState',
-  'aiRecognition',
-  'imageCheck',
-  'textClick',
-  'runScript',
-  'keyBack',
-  'keyHome',
-  'keyRecent',
-  'keyPower',
-  'waitActivity',
-  'swipe',
-  'clearInput',
-  'coordinateTap',
-  'launchApp',
-  'stopApp',
-  'openGallery',
-  'endFlow',
-  'loop',
-  'breakLoop',
-  'clearAppData',
-  'waitDisappear',
-  'longPress',
-  'pinch',
-  'noop',
-  'log',
-  'visualChangeStart',
-  'visualChangeEnd',
-];
 const readonlyFlowActionGroups: FlowActionGroup[] = [];
 const readonlyFlowSelectedIndexes: number[] = [];
+const recordReplayVideo = shallowRef(false);
 
 const props = defineProps<{
   aiRecognitionModelConfigured?: boolean;
@@ -177,7 +136,6 @@ const newScriptRevision = shallowRef(0);
 const storedWorkbenchTab = window.localStorage.getItem(WORKBENCH_TAB_STORAGE_KEY);
 const activeWorkbenchTab = shallowRef<'recording' | 'scripts' | 'variables'>(storedWorkbenchTab === 'scripts' ? 'scripts' : storedWorkbenchTab === 'variables' ? 'variables' : 'recording');
 const steps = shallowRef<AppiumRecordedStep[]>([]);
-const aiRecognitionTestStep = shallowRef<AppiumRecordedStep | null>(null);
 const flowClipboard = shallowRef<FlowClipboard | null>(null);
 const rawXml = shallowRef('');
 const currentActivity = shallowRef('');
@@ -294,7 +252,7 @@ const recordingBusy = computed(() => (
   || resolvingNavigation.value
   || Boolean(pendingNavigation.value)
 ));
-const recordingLocked = computed(() => recordingBusy.value || scriptActivityMismatch.value);
+const recordingLocked = computed(() => recordingBusy.value || replaying.value);
 const newScriptDisabled = computed(() => saving.value || replaying.value || recordingBusy.value || launchingApp.value || importingScript.value);
 const overlayBounds = computed(() => flattenNodes(tree.value).flatMap((node) => (
   node.bounds ? [{ id: node.id, ...node.bounds }] : []
@@ -510,7 +468,7 @@ function createStep(type: NodeStepType, node: AppiumNode): AppiumRecordedStep {
       ? [{ strategy: 'xpath', value: node.xpath, unique: true, matchCount: 1 }]
       : undefined,
     fallback: node.bounds ? { strategy: 'bounds', centerX: node.bounds.centerX, centerY: node.bounds.centerY } : undefined,
-    timeoutMs: type === 'waitFor' ? 10000 : undefined,
+    timeoutMs: type === 'waitFor' ? DEFAULT_NODE_TIMEOUT_MS : undefined,
     pageBefore: currentPageSnapshot(node),
     snapshot: {
       text: node.text,
@@ -614,7 +572,7 @@ function createWaitActivityStep(activity: string): AppiumRecordedStep {
     type: 'waitActivity',
     label: `等待 Activity ${activity}`,
     value: activity,
-    timeoutMs: 10000,
+    timeoutMs: DEFAULT_NODE_TIMEOUT_MS,
   };
 }
 
@@ -928,11 +886,6 @@ async function refreshTree() {
 
 async function executeFlowStep(index: number) {
   const step = steps.value[index];
-  if (step?.type === 'aiRecognition') {
-    if (replaying.value || recordingBusy.value) { ElMessage.warning('设备正在执行操作，请稍后测试'); return; }
-    aiRecognitionTestStep.value = { ...step };
-    return;
-  }
   if (!step || (step.type !== 'launchApp' && step.type !== 'clearAppData')) return;
   if (launchingApp.value) return;
   if (!selectedDeviceId.value) {
@@ -976,7 +929,7 @@ async function executeFlowStep(index: number) {
     } else if (scriptActivityMismatch.value) {
       ElMessage.warning(`App 已启动，当前页面仍为 ${currentActivity.value || '-'}`);
     } else {
-      ElMessage.success('已进入脚本绑定页面，编辑锁定已解除');
+      ElMessage.success('已进入脚本绑定页面');
     }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : 'App 操作失败');
@@ -1431,25 +1384,12 @@ async function addAction(
     return;
   }
   if (action === 'aiRecognition') {
-    const input = await ElMessageBox.prompt('识别内容', '添加 AI 识别', {
-      inputType: 'textarea',
-      inputPlaceholder: '例如：检查当前画面有没有显示黑屏',
-      inputValidator: (value) => {
-        try { validateAiRecognitionPrompt(value); return true; }
-        catch (error) { return error instanceof Error ? error.message : '识别内容无效'; }
-      },
-      confirmButtonText: '添加', cancelButtonText: '取消',
-    }).catch(() => null);
-    if (!input) return;
-    return insertStep({
-      id: createStepId(), type: 'aiRecognition', label: 'AI 识别',
-      value: validateAiRecognitionPrompt(input.value), timeoutMs: 60000,
-      flow: { nodeKind: 'condition' },
-    }, index, branchTarget);
+    ElMessage.warning('AI 识别操作已移除，请使用图像判断或原生组件判断');
+    return;
   }
   if (action === 'textClick') {
     const step = reactive<AppiumRecordedStep>({
-      id: createStepId(), type: 'textClick', label: '文字点击', value: '', timeoutMs: 10000,
+      id: createStepId(), type: 'textClick', label: '文字点击', value: '', timeoutMs: DEFAULT_NODE_TIMEOUT_MS,
       flow: { nodeKind: 'condition', textMatch: 'exact' },
     });
     const result = await ElMessageBox({
@@ -1617,7 +1557,7 @@ async function addAction(
       ElMessage.warning(`请选择原生 ${controlName} 元素，当前选中：${node.className || '未知类型'}`);
       return;
     }
-    const step = createNodeActionStep(action, action === 'checkedState' ? '判断勾选' : `判断 ${controlName} 状态`, node, { timeoutMs: 2000 });
+    const step = createNodeActionStep(action, action === 'checkedState' ? '判断勾选' : `判断 ${controlName} 状态`, node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS });
     if ((!step.selector?.value || step.selector.strategy === 'bounds') && node.xpath) {
       step.selector = { strategy: 'xpath', value: node.xpath };
       step.contextSelector = undefined;
@@ -1633,13 +1573,13 @@ async function addAction(
     return insertStep(step, index, branchTarget);
   }
   if (action === 'popupCondition') {
-    const step = createNodeActionStep('assertExists', '判断存在', node, { timeoutMs: 2000 });
+    const step = createNodeActionStep('assertExists', '判断存在', node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS });
     const inserted = insertStep({ ...step, flow: { nodeKind: 'condition' } }, index, branchTarget);
     ElMessage.success('已添加判断节点，请在节点面板配置是/否分支');
     return inserted;
   }
   if (action === 'tapIfExists') {
-    return insertStep(createNodeActionStep('tapIfExists', '存在则点击', node, { timeoutMs: 2000 }), index, branchTarget);
+    return insertStep(createNodeActionStep('tapIfExists', '存在则点击', node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS }), index, branchTarget);
   }
   if (action === 'inputIfExists') {
     const input = await ElMessageBox.prompt('', '存在则输入', {
@@ -1650,16 +1590,16 @@ async function addAction(
     }).catch(() => null);
     if (!input) return;
     return insertStep(
-      createNodeActionStep('inputIfExists', '存在则输入', node, { timeoutMs: 2000, value: input.value }),
+      createNodeActionStep('inputIfExists', '存在则输入', node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS, value: input.value }),
       index,
       branchTarget,
     );
   }
   if (action === 'clearIfExists') {
-    return insertStep(createNodeActionStep('clearIfExists', '存在则清空', node, { timeoutMs: 2000 }), index, branchTarget);
+    return insertStep(createNodeActionStep('clearIfExists', '存在则清空', node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS }), index, branchTarget);
   }
   if (action === 'backIfExists') {
-    return insertStep(createNodeActionStep('backIfExists', '存在则返回', node, { timeoutMs: 2000 }), index, branchTarget);
+    return insertStep(createNodeActionStep('backIfExists', '存在则返回', node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS }), index, branchTarget);
   }
   if (action === 'clearInput') {
     return insertStep(createNodeActionStep('clearInput', '清空输入', node), index, branchTarget);
@@ -1706,7 +1646,7 @@ async function addAction(
     return insertStep({ ...step }, index, branchTarget);
   }
   if (action === 'waitDisappear') {
-    return insertStep(createNodeActionStep('waitDisappear', '等待元素消失', node, { timeoutMs: 10000 }), index, branchTarget);
+    return insertStep(createNodeActionStep('waitDisappear', '等待元素消失', node, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS }), index, branchTarget);
   }
 }
 
@@ -2116,7 +2056,7 @@ async function replayScript() {
   try {
     await pauseAutoTreeRefresh();
     const result = await replayAppiumScript(
-      { id: selectedScript.value.id, deviceId: activeReplayDeviceId.value },
+      { id: selectedScript.value.id, deviceId: activeReplayDeviceId.value, recordVideo: recordReplayVideo.value },
       (line) => {
         replayOutput.value += `${replayOutput.value ? '\n' : ''}${line}`;
       },
@@ -2207,15 +2147,23 @@ watch(
       </el-select>
       <el-button :icon="Plus" :disabled="newScriptDisabled || newScriptDialogVisible" @click="requestNewScript">新建</el-button>
       <el-button :icon="Check" :loading="saving" @click="saveScript">保存</el-button>
-      <el-button
-        type="primary"
-        :icon="VideoPlay"
-        :loading="replaying"
-        :disabled="!selectedScript"
-        @click="replayScript"
-      >
-        回放
-      </el-button>
+      <el-button-group class="replay-button-group">
+        <el-button
+          type="primary"
+          :icon="VideoPlay"
+          :loading="replaying"
+          :disabled="!selectedScript"
+          @click="replayScript"
+        >
+          回放
+        </el-button>
+        <el-popover trigger="click" placement="bottom" :width="260">
+          <template #reference><el-button type="primary" :icon="ArrowDown" :disabled="replaying" aria-label="回放设置" title="回放设置" class="replay-settings-toggle" /></template>
+          <el-tooltip content="使用内置服务端后台录制，无需安装 scrcpy 或 FFmpeg。含敏感变量的运行不录制；分享 HTML 报告时需同时携带 MP4。" placement="bottom" :show-after="300">
+            <el-checkbox v-model="recordReplayVideo" :disabled="replaying">录制回放视频</el-checkbox>
+          </el-tooltip>
+        </el-popover>
+      </el-button-group>
       <el-button
         v-if="replaying"
         type="danger"
@@ -2287,7 +2235,7 @@ watch(
                   v-if="scriptActivityMismatch"
                   class="appium-activity-summary"
                 >
-                  <summary>当前页面与脚本不一致，部分录制操作不可用</summary>
+                  <summary>当前页面与脚本绑定的 Activity 不一致</summary>
                   <div class="appium-activity-lock-alert__details">
                     <div>
                       <strong>脚本绑定</strong>
@@ -2297,7 +2245,7 @@ watch(
                       <strong>当前 Activity</strong>
                       <code>{{ currentActivity || '正在获取' }}</code>
                     </div>
-                    <p>请在录制流程中添加或执行“启动 APP”节点；Activity 匹配后会自动解除编辑锁定。</p>
+                    <p>不影响脚本编辑；如需录制当前页面的组件操作，请确认设备页面及所选组件。</p>
                   </div>
                 </details>
               </section>
@@ -2309,9 +2257,8 @@ watch(
                   :steps="steps"
                   :clipboard-count="flowClipboardCount"
                   :disabled="recordingLocked"
-                  :remove-disabled="recordingBusy"
+                  :remove-disabled="recordingLocked"
                   :merge-disabled="recordingBusy || replaying || saving"
-                  :allowed-locked-actions="scriptActivityMismatch && !recordingBusy ? insertableRecorderActions : []"
                   :launching-step-id="executingAppStepId"
                   @remove="removeStep"
                   @copy="copyFlowNodes"
@@ -2424,16 +2371,11 @@ watch(
       @cancel="newScriptDialogVisible = false"
     />
 
-    <AiRecognitionTestDialog
-      v-if="aiRecognitionTestStep"
-      :step="aiRecognitionTestStep"
-      :device-id="selectedDeviceId"
-      :model-configured="Boolean(aiRecognitionModelConfigured)"
-      @close="aiRecognitionTestStep = null"
-    />
 
     <ImageCheckDialog
       v-if="imageCheckDraft?.imageCheck"
+      :timeout-branch="imageCheckDraft.timeoutBranch"
+      @timeout-branch="imageCheckDraft = { ...imageCheckDraft!, timeoutBranch: $event }"
       :config="imageCheckDraft.imageCheck" :device-id="selectedDeviceId"
       :has-element="Boolean(selectedNode?.bounds)" :editing="imageCheckEditing" :picking="imageCheckPicking"
       @update="updateImageCheck" @close="imageCheckDraft = null; imageCheckPicking = false"
@@ -2624,4 +2566,6 @@ watch(
 .appium-workbench__flow :deep(.appium-recorded-steps-panel) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .appium-workbench__flow :deep(.appium-flow-toolbar) { flex: none; margin-bottom: 8px; }
 .appium-workbench__flow :deep(.appium-flow-canvas--vue:not(.appium-flow-canvas--dialog)) { flex: 1; height: auto; min-height: 120px; }
+.replay-button-group { display: inline-flex; flex-shrink: 0; }
+.replay-settings-toggle { padding-inline: 8px; }
 </style>
