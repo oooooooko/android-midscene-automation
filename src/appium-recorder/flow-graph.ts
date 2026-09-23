@@ -460,8 +460,8 @@ export function buildFlowGraph(
           && item.step.type !== 'clearAppData'
           && item.step.visualChange?.role !== 'end',
         canEditInput: ['input', 'inputIfExists', 'imageCheck', 'runScript'].includes(item.step.type),
-        canExecute: item.step.type === 'launchApp' || item.step.type === 'clearAppData',
-        missingAiModel: item.step.type === 'aiRecognition',
+        canExecute: item.step.type === 'launchApp' || item.step.type === 'clearAppData' || item.step.type === 'aiRecognition',
+        missingAiModel: item.step.type === 'aiRecognition' && !options.aiRecognitionModelConfigured,
       },
     });
   };

@@ -13,6 +13,7 @@ import LoopSettings from './LoopSettings.vue';
 import BreakLoopSettings from './BreakLoopSettings.vue';
 import VariableExtractionSettings from './VariableExtractionSettings.vue';
 import ScriptParameterSettings from './ScriptParameterSettings.vue';
+import AiRecognitionSettings from './AiRecognitionSettings.vue';
 
 type FlowKind = 'action' | 'condition' | 'assertion';
 type SwipeGesture = NonNullable<AppiumRecordedStep['swipe']>;
@@ -154,17 +155,21 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         />
       </el-form-item>
       <div>
-        <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type)" label="超时时间 ms">
+        <el-form-item v-if="step.type === 'aiRecognition'">
+          <el-checkbox :model-value="step.aiTimeoutEnabled === true" :disabled="disabled" @update:model-value="patchStep({ aiTimeoutEnabled: $event === true })">启用超时</el-checkbox>
+        </el-form-item>
+        <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type) && (step.type !== 'aiRecognition' || step.aiTimeoutEnabled === true)" :label="step.type === 'aiRecognition' && step.aiObservation ? '模型请求超时 ms' : '超时时间 ms'">
           <el-input-number
             :model-value="step.timeoutMs ?? (step.type === 'delay' ? 1000 : DEFAULT_NODE_TIMEOUT_MS)"
             :disabled="disabled"
             :min="0"
             :max="999999"
+            :step="1000"
             controls-position="right"
             @update:model-value="patchTimeout($event)"
           />
         </el-form-item>
-        <BranchTimeoutSettings v-if="defaultKind() === 'condition'" :step="step" :disabled="disabled" @update="patchStep({ timeoutBranch: $event })" />
+        <BranchTimeoutSettings v-if="defaultKind() === 'condition' && (step.type !== 'aiRecognition' || step.aiTimeoutEnabled === true)" :step="step" :disabled="disabled" @update="patchStep({ timeoutBranch: $event })" />
       </div>
       <LongPressSettings v-if="step.type === 'longPress'" :step="step" :disabled="disabled" @update="patchStep" />
       <el-form-item v-if="['waitActivity', 'launchApp', 'stopApp', 'clearAppData'].includes(step.type)" :label="step.type === 'waitActivity' ? '目标 Activity' : '目标 APP 包名'">
@@ -197,6 +202,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
       <LoopSettings v-if="step.type === 'loop'" :step="step" :disabled="disabled" @update="patchStep" />
       <BreakLoopSettings v-if="step.type === 'breakLoop'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
       <TextClickSettings v-if="step.type === 'textClick'" :step="step" :disabled="disabled" @update="patchStep" />
+      <AiRecognitionSettings v-if="step.type === 'aiRecognition'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
       <el-form-item
         v-if="step.type === 'input' || step.type === 'inputIfExists' || step.type === 'assertText'"
         label="文本内容"

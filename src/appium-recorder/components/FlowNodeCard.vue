@@ -175,8 +175,8 @@ watch(() => props.data, () => {
         @click="handleStepClick"
       >
         <span class="appium-flow-step-card__content">
-          <el-tooltip v-if="data.missingAiModel" content="AI 识别操作已移除，请删除此节点并改用图像判断或原生组件判断" placement="top">
-            <el-icon class="appium-ai-model-warning" color="var(--el-color-danger)" role="img" aria-label="AI 识别操作已移除" tabindex="0">
+          <el-tooltip v-if="data.missingAiModel" content="请在参数配置 > Appium配置中配置 AI 识别模型" placement="top">
+            <el-icon class="appium-ai-model-warning" color="var(--el-color-danger)" role="img" aria-label="AI 识别模型未配置" tabindex="0">
               <WarningFilled />
             </el-icon>
           </el-tooltip>

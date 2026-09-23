@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import OpenAI from 'openai';
+import type { MidsceneModelProvider } from '../src/config/midscene-model-presets';
 
 type ModelInput = {
-  provider?: 'custom' | 'codex';
+  provider?: MidsceneModelProvider;
   baseUrl: string;
   apiKey: string;
   name: string;

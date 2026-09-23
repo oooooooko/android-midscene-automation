@@ -334,14 +334,27 @@ body {
 }
 
 .config-model-grid {
-  gap: 20px;
+  gap: 32px;
 }
 
 .config-model-grid > section {
   min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-control);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.config-model-grid > section + section {
+  padding-left: 32px;
+  border-left: 1px solid var(--ui-border);
+}
+
+@media (max-width: 640px) {
+  .config-model-grid > section + section {
+    padding: 24px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--ui-border);
+  }
 }
 
 .config-model-grid > section,

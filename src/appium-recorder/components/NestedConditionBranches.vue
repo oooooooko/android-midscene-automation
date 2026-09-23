@@ -119,7 +119,6 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     actions: [
       { type: 'delay', label: '添加延时' },
       { type: 'popupCondition', label: '判断存在' },
-      { type: 'imageCheck', label: '图像判断' },
       { type: 'tapIfExists', label: '存在则点击' },
       { type: 'inputIfExists', label: '存在则输入' },
       { type: 'clearIfExists', label: '存在则清空' },
@@ -129,6 +128,13 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'waitActivity', label: '等待 Activity' },
       { type: 'visualChangeStart', label: '检测画面变化开始' },
       { type: 'visualChangeEnd', label: '检测画面变化结束' },
+    ],
+  },
+  {
+    title: '视觉识别',
+    actions: [
+      { type: 'aiRecognition', label: 'AI 识别' },
+      { type: 'imageCheck', label: '图像判断' },
     ],
   },
   {

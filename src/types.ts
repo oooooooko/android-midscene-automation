@@ -1,6 +1,8 @@
+import type { AiPromptPreset } from './appium-recorder/ai-prompt-presets';
 import type { ScriptStep } from './script-generator';
 import type { MidsceneModelProvider } from './config/midscene-model-presets';
 import type { AiRecognitionModel } from './appium-recorder/ai-recognition';
+import type { AiDeduplicationConfig } from './appium-recorder/ai-deduplication';
 
 export type MenuKey = 'generator' | 'automation' | 'config' | 'appium';
 export type GeneratorMode = 'ai' | 'manual';
@@ -12,7 +14,7 @@ export type GeneratorForm = {
 };
 
 export type ConfigForm = {
-  appium: { model: AiRecognitionModel; flowBackgroundColor?: string };
+  appium: { model: AiRecognitionModel; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;

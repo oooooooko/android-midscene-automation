@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Delete, Refresh, VideoPlay } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { historyStatistics, type RunSummary, type RunDetail } from './run-history';
@@ -17,6 +17,8 @@ const error = ref('');
 const nodeKey = ref('');
 const logQuery = ref('');
 const videoRun = ref<RunSummary>();
+const videoSegment = ref(0);
+watch(videoRun, () => { videoSegment.value = 0; }, { flush: 'sync' });
 const base = `/api/appium-recorder/scripts/${encodeURIComponent(props.scriptId)}/history`;
 const labels = { passed: '通过', failed: '失败', stopped: '已终止' };
 const versions = computed(() => [...new Set(runs.value.map(run => run.appVersion || '未知'))]);
@@ -121,7 +123,7 @@ onMounted(load);
             <p v-if="!run.frames.some(frame => !nodeKey || frame.key === nodeKey)">未捕获到对应截图</p>
             <div class="history-frames">
               <figure v-for="(frame, index) in run.frames.filter(frame => !nodeKey || frame.key === nodeKey)" :key="index">
-                <figcaption>{{ frame.label }} · {{ frame.phase === 'before' ? '执行前' : frame.phase === 'after' ? '执行后' : frame.phase }} · {{ time(frame.capturedAt) }}</figcaption>
+                <figcaption>{{ frame.label }} · {{ frame.phase === 'before' ? '执行前' : frame.phase === 'after' ? '执行后' : frame.phase === 'observation' ? '观察采样' : frame.phase }} · {{ time(frame.capturedAt) }}</figcaption>
                 <el-image :src="frame.imageUrl" :preview-src-list="[frame.imageUrl]" preview-teleported fit="contain" loading="lazy" />
               </figure>
             </div>
@@ -132,7 +134,10 @@ onMounted(load);
       </section>
     </div>
     <el-dialog :model-value="Boolean(videoRun)" title="回放视频" width="min(800px, 90vw)" align-center append-to-body destroy-on-close @close="videoRun = undefined">
-      <video v-if="videoRun" :src="`${base}/${encodeURIComponent(videoRun.id)}/video`" controls preload="metadata" style="width:100%;max-height:70vh" />
+      <el-select v-if="videoRun?.video?.segments?.length" v-model="videoSegment" aria-label="视频片段" style="width:100%;margin-bottom:12px">
+        <el-option v-for="(segment, index) in videoRun.video.segments" :key="segment.fileName" :label="`${index + 1}. ${segment.scriptName || videoRun.scriptName}`" :value="index" />
+      </el-select>
+      <video v-if="videoRun" :src="`${base}/${encodeURIComponent(videoRun.id)}/video?segment=${videoSegment}`" controls preload="metadata" style="width:100%;max-height:70vh" />
     </el-dialog>
   </el-dialog>
 </template>

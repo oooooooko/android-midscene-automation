@@ -89,6 +89,21 @@ export function usesManagedAppiumServer() {
   return !process.env.APPIUM_SERVER_URL?.trim();
 }
 
+// 电脑端服务退出不会保证设备端 instrumentation 退出，尤其是手动终止时。
+// 仅在本次回放拥有的 Appium 服务已停止后调用；不使用已取消的回放 signal。
+export async function stopManagedUiAutomator(deviceId: string, adb: string) {
+  const results = await Promise.allSettled(['io.appium.uiautomator2.server.test', 'io.appium.uiautomator2.server'].map(packageName =>
+    new Promise<void>((resolve, reject) => {
+      execFile(adb, ['-s', deviceId, 'shell', 'am', 'force-stop', packageName], { timeout: 3000 }, (error, _stdout, stderr) => {
+        if (error) reject(new Error(`${packageName}：${stderr?.trim() || error.message}`));
+        else resolve();
+      });
+    }),
+  ));
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+}
+
 export async function startManagedAppiumServer(
   onLine: (line: string) => void,
   signal?: AbortSignal,

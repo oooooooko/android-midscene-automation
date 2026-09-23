@@ -1,21 +1,25 @@
+import type { AiPromptPreset } from '../src/appium-recorder/ai-prompt-presets';
 import fs from 'node:fs';
-import { isHexColor, normalizeFlowBackground } from '../src/appium-recorder/flow-appearance';
+import { isHexColor, normalizeFlowBackground, normalizeFlowLineColor } from '../src/appium-recorder/flow-appearance';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import { appDataPath } from './paths';
 import { loadModelConfigFromDb, saveModelConfigToDb } from './config-store';
 import type { AiRecognitionModel } from '../src/appium-recorder/ai-recognition';
+import { resolveAiPromptPresets } from '../src/appium-recorder/ai-prompt-presets';
+import { resolveAiDeduplication, type AiDeduplicationConfig } from '../src/appium-recorder/ai-deduplication';
+import type { MidsceneModelProvider } from '../src/config/midscene-model-presets';
 
 export type AppConfig = {
-  appium: { model: AiRecognitionModel; flowBackgroundColor?: string };
+  appium: { model: AiRecognitionModel; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;
   };
   midscene: {
     model: {
-      provider: 'custom' | 'codex';
+      provider: MidsceneModelProvider;
       baseUrl: string;
       apiKey: string;
       name: string;
@@ -46,7 +50,7 @@ export class ConfigValidationError extends Error {
 
 function defaultConfig(): AppConfig {
   return {
-    appium: { model: { baseUrl: '', apiKey: '', name: '' } },
+    appium: { model: { baseUrl: '', apiKey: '', name: '' }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
     runtime: {
       androidSdkPath: '',
       reportOutputPath: '',
@@ -84,7 +88,11 @@ function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConf
   return {
     // 旧配置没有 Appium 模型时保留空值，不借用其他模型或改变已有配置。
     appium: {
+      aiPromptPresets: resolveAiPromptPresets(config?.appium?.aiPromptPresets),
+      aiDeduplication: resolveAiDeduplication(config?.appium?.aiDeduplication),
+      screenshotReport: config?.appium?.screenshotReport === true,
       flowBackgroundColor: normalizeFlowBackground(config?.appium?.flowBackgroundColor),
+      flowLineColor: normalizeFlowLineColor(config?.appium?.flowLineColor),
       model: Object.fromEntries(['baseUrl', 'apiKey', 'name'].map((key) => {
         const value = config?.appium?.model?.[key as keyof AiRecognitionModel];
         return [key, typeof value === 'string' ? value.trim() : ''];
@@ -206,8 +214,15 @@ export function loadConfig(): AppConfig {
 }
 
 export function saveConfig(config: AppConfig) {
+  try { resolveAiPromptPresets(config.appium?.aiPromptPresets); }
+  catch (error) { throw new ConfigValidationError(error instanceof Error ? error.message : 'AI 识别预设提示词无效'); }
+  try { resolveAiDeduplication(config.appium?.aiDeduplication); }
+  catch (error) { throw new ConfigValidationError(error instanceof Error ? error.message : '截图去重配置无效'); }
   if (config.appium?.flowBackgroundColor !== undefined && !isHexColor(config.appium.flowBackgroundColor)) {
     throw new ConfigValidationError('流程背景色必须是有效的十六进制颜色（#RGB 或 #RRGGBB）');
+  }
+  if (config.appium?.flowLineColor !== undefined && !isHexColor(config.appium.flowLineColor)) {
+    throw new ConfigValidationError('连接线条颜色必须是有效的十六进制颜色（#RGB 或 #RRGGBB）');
   }
   const normalized = normalizeConfig(config);
   validateRuntimeConfig(normalized);

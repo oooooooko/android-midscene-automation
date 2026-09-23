@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { isAiRecognitionModelConfigured } from './appium-recorder/ai-recognition';
+import { resolveAiDeduplication } from './appium-recorder/ai-deduplication';
+import { resolveAiPromptPresets } from './appium-recorder/ai-prompt-presets';
 import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -27,13 +29,14 @@ import {
   type ScriptStep,
 } from './script-generator';
 import {
-  codexMidsceneModel,
+  selectMidsceneModelProvider,
   type MidsceneModelProvider,
 } from './config/midscene-model-presets';
 import * as api from './api';
+import { useAppiumAutoSave } from './config/use-appium-auto-save';
 import AutomationPage from './pages/AutomationPage.vue';
 import AppiumPage from './appium-recorder/AppiumPage.vue';
-import { DEFAULT_FLOW_BACKGROUND, isHexColor } from './appium-recorder/flow-appearance';
+import { normalizeFlowBackground, normalizeFlowLineColor } from './appium-recorder/flow-appearance';
 import ConfigPage from './pages/ConfigPage.vue';
 import GeneratorPage from './pages/GeneratorPage.vue';
 import type {
@@ -153,7 +156,7 @@ const appPresetForm = reactive({
 });
 
 const configForm = reactive<ConfigForm>({
-  appium: { model: { baseUrl: '', apiKey: '', name: '' } },
+  appium: { model: { baseUrl: '', apiKey: '', name: '' }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
   runtime: {
     androidSdkPath: '',
     reportOutputPath: '',
@@ -181,6 +184,12 @@ const lastCustomMidsceneModel = reactive({
   apiKey: '',
   name: '',
   family: '',
+});
+
+const appiumAutoSave = useAppiumAutoSave(configForm, async value => {
+  await api.saveAppiumConfig(value);
+}, error => {
+  void ElMessageBox.alert(error instanceof Error ? error.message : 'Appium 配置自动保存失败', '自动保存失败', { type: 'error' }).catch(() => {});
 });
 
 const menuItems = [
@@ -662,6 +671,12 @@ const loadConfig = async () => {
   Object.assign(configForm.midscene.env, payload.midscene.env || {});
   Object.assign(configForm.scriptOptimizer.model, payload.scriptOptimizer.model);
   Object.assign(configForm.appium.model, payload.appium?.model || { baseUrl: '', apiKey: '', name: '' });
+  configForm.appium.screenshotReport = payload.appium?.screenshotReport === true;
+  configForm.appium.aiDeduplication = resolveAiDeduplication(payload.appium?.aiDeduplication);
+  configForm.appium.aiPromptPresets = resolveAiPromptPresets(payload.appium?.aiPromptPresets);
+  configForm.appium.flowBackgroundColor = normalizeFlowBackground(payload.appium?.flowBackgroundColor);
+  configForm.appium.flowLineColor = normalizeFlowLineColor(payload.appium?.flowLineColor);
+  appiumAutoSave.initialize();
   aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(configForm.appium.model);
   if (configForm.midscene.model.provider !== 'codex') {
     rememberCustomMidsceneModel();
@@ -677,15 +692,10 @@ const rememberCustomMidsceneModel = () => {
 };
 
 const updateMidsceneModelProvider = (provider: MidsceneModelProvider) => {
-  if (provider === 'codex') {
+  if (configForm.midscene.model.provider !== 'codex') {
     rememberCustomMidsceneModel();
-    Object.assign(configForm.midscene.model, codexMidsceneModel);
-  } else {
-    Object.assign(configForm.midscene.model, {
-      provider: 'custom',
-      ...lastCustomMidsceneModel,
-    });
   }
+  Object.assign(configForm.midscene.model, selectMidsceneModelProvider(provider, configForm.midscene.model, lastCustomMidsceneModel));
   modelTestStatus.midscene = '';
 };
 
@@ -699,22 +709,15 @@ const getMidsceneModelConfigError = () => {
   if (model.provider !== 'codex' && !model.apiKey.trim()) missing.push('API Key');
 
   if (!missing.length) return '';
-  return `Midscene 模型配置不完整：缺少 ${missing.join('、')}。请在“参数配置 > Midscene配置 > Midscene 模型”中选择“使用 Codex”，或补齐自定义提供方后保存。`;
+  return `Midscene 模型配置不完整：缺少 ${missing.join('、')}。请在“参数配置 > Midscene配置 > Midscene 模型”中选择“使用 Codex”，或补齐自定义提供方后测试并保存。`;
 };
 
 const saveModelConfig = async () => {
-  if (!isHexColor(configForm.appium.flowBackgroundColor ?? DEFAULT_FLOW_BACKGROUND)) {
-    ElMessage.warning('流程背景色格式错误，请输入 #RGB 或 #RRGGBB');
-    return;
-  }
   isSavingModelConfig.value = true;
   errorMessage.value = '';
   openActionDialog('保存参数配置');
   try {
-    // 保存的是本次提交快照，不能把请求期间尚未保存的改动标记为已配置。
-    const snapshot = JSON.parse(JSON.stringify(configForm)) as ConfigForm;
-    await api.saveConfig(snapshot);
-    aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(snapshot.appium.model);
+    await api.saveConfig({ runtime: { ...configForm.runtime } });
     closeActionDialog();
     ElMessage.success('参数配置已保存');
   } catch (error) {
@@ -744,9 +747,10 @@ const resetAppPresetForm = () => {
 };
 
 const saveAppPreset = async () => {
+  if (isSavingAppPreset.value) return;
+  const editing = Boolean(appPresetForm.id);
   isSavingAppPreset.value = true;
   errorMessage.value = '';
-  openActionDialog('保存 App 配置');
   try {
     const payload = await api.saveAppPreset({
       id: appPresetForm.id || undefined,
@@ -758,11 +762,10 @@ const saveAppPreset = async () => {
       form.appPresetId = payload.app.id;
     }
     resetAppPresetForm();
-    closeActionDialog();
+    ElMessage.success(editing ? 'App 配置已更新' : 'App 已添加');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'App 配置保存失败';
-    errorMessage.value = message;
-    failActionDialog(message);
+    void ElMessageBox.alert(message, 'App 配置保存失败', { type: 'error' }).catch(() => {});
   } finally {
     isSavingAppPreset.value = false;
   }
@@ -785,22 +788,27 @@ const removeAppPreset = async (id: string) => {
     if (form.appPresetId === id) {
       form.appPresetId = '';
     }
+    if (appPresetForm.id === id) resetAppPresetForm();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'App 配置删除失败';
+    void ElMessageBox.alert(error instanceof Error ? error.message : 'App 配置删除失败', '删除失败', { type: 'error' }).catch(() => {});
   }
 };
 
 const testModel = async (key: 'midscene' | 'scriptOptimizer' | 'appium') => {
+  if (testingModelKey.value) return;
   testingModelKey.value = key;
   errorMessage.value = '';
   modelTestStatus[key] = '';
-  const model = configForm[key].model;
+  const model = { ...configForm[key].model };
 
   try {
-    const payload = await api.testModel({ modelKey: key, model });
-    modelTestStatus[key] = payload.content || '连接成功';
+    const payload = await api.testModel({ modelKey: key, model, save: true });
+    if (!payload.saved) throw new Error('模型未保存，请重试');
+    modelTestStatus[key] = `测试通过，配置已保存${payload.content ? `：${payload.content}` : ''}`;
+    if (key === 'appium') aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(model);
+    ElMessage.success('测试通过，模型配置已保存');
   } catch (error) {
-    modelTestStatus[key] = error instanceof Error ? error.message : '测试失败';
+    modelTestStatus[key] = `未保存：${error instanceof Error ? error.message : '测试失败'}`;
   } finally {
     testingModelKey.value = '';
   }
@@ -1485,7 +1493,7 @@ onUnmounted(() => {
           'page-body--appium': activeMenu === 'appium',
         }"
       >
-        <el-alert v-if="activeMenu !== 'appium' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
+        <el-alert v-if="activeMenu !== 'appium' && activeMenu !== 'config' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
           <template #title>{{ errorMessage }}</template>
         </el-alert>
 
@@ -1526,11 +1534,13 @@ onUnmounted(() => {
           :is-saving-model-config="isSavingModelConfig"
           :is-saving-app-preset="isSavingAppPreset"
           :model-test-status="modelTestStatus"
+          :appium-save-status="appiumAutoSave.status.value"
           @test-model="testModel"
           @save-model-config="saveModelConfig"
           @save-app-preset="saveAppPreset"
           @edit-app-preset="editAppPreset"
           @delete-app-preset="removeAppPreset"
+          @cancel-app-preset-edit="resetAppPresetForm"
           @update-midscene-model-provider="updateMidsceneModelProvider"
         />
 
@@ -1569,7 +1579,9 @@ onUnmounted(() => {
           :active="activeMenu === 'appium'"
           :app-presets="appPresets"
           :ai-recognition-model-configured="aiRecognitionModelConfigured"
+          :ai-prompt-presets="configForm.appium.aiPromptPresets"
           :flow-background-color="configForm.appium.flowBackgroundColor"
+          :flow-line-color="configForm.appium.flowLineColor"
           :device-actions="deviceActions"
           :playground-available="playgroundAvailable"
           :playground-device-id="playgroundDeviceId"

@@ -1,3 +1,4 @@
+import type { AiObservationConfig } from './ai-recognition';
 import type { TestVariable, VariableExtraction, ScriptReturn } from './variables';
 import type { ImageCheckConfig } from './image-check';
 
@@ -121,6 +122,9 @@ export type AppiumRecordedStep = {
   returns?: ScriptReturn[];
   keyCode?: number;
   timeoutMs?: number;
+  aiTimeoutEnabled?: boolean;
+  aiBranchEnabled?: boolean;
+  aiObservation?: AiObservationConfig;
   timeoutBranch?: 'stop' | 'yes' | 'no';
   longPressMode?: 'element' | 'coordinates';
   breakLoopTargetId?: string;

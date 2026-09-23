@@ -716,9 +716,16 @@ export function createApiMiddleware() {
       return;
     }
 
-    if (req.url === '/api/config' && req.method === 'POST') {
+    if ((req.url === '/api/config' || req.url === '/api/config/appium') && req.method === 'POST') {
       try {
-        const config = await readBody<AppConfig>(req);
+        const parsed = await readBody<Partial<AppConfig>>(req);
+        if (req.url === '/api/config/appium' && (!parsed.appium || typeof parsed.appium !== 'object' || Array.isArray(parsed.appium))) {
+          throw new ConfigValidationError('Appium 配置无效');
+        }
+        const current = loadConfig();
+        const config = req.url === '/api/config/appium'
+          ? { ...current, appium: { ...current.appium, ...parsed.appium, model: current.appium.model } }
+          : { ...current, runtime: parsed.runtime ?? current.runtime };
         saveConfig(config);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true }));
@@ -1089,9 +1096,10 @@ export function createApiMiddleware() {
     if (req.url === '/api/test-model' && req.method === 'POST') {
       try {
         const parsed = await readBody<{
+          save?: boolean;
           modelKey?: 'midscene' | 'scriptOptimizer' | 'appium';
           model?: {
-            provider?: 'custom' | 'codex';
+            provider?: import('../src/config/midscene-model-presets').MidsceneModelProvider;
             baseUrl?: string;
             apiKey?: string;
             name?: string;
@@ -1100,6 +1108,13 @@ export function createApiMiddleware() {
         }>(req);
         const model = parsed.model || {};
 
+        if (parsed.save && !['midscene', 'scriptOptimizer', 'appium'].includes(parsed.modelKey || '')) {
+          throw new ConfigValidationError('请选择有效的模型配置');
+        }
+        if (parsed.save && parsed.modelKey === 'midscene' && !model.family?.trim()) {
+          throw new ConfigValidationError('请填写 Model Family');
+        }
+
         const result = await testModelConnection({
           provider: model.provider,
           baseUrl: model.baseUrl || '',
@@ -1107,8 +1122,15 @@ export function createApiMiddleware() {
           name: model.name || '',
           family: model.family || '',
         });
+        if (parsed.save) {
+          if (!result.ok) throw new Error('模型测试失败，未保存配置');
+          const key = parsed.modelKey!;
+          // 测试期间其他配置可能已保存，此时重新读取，只更新已通过测试的模型。
+          const current = loadConfig();
+          saveConfig({ ...current, [key]: { ...current[key], model: { ...current[key].model, ...model } } });
+        }
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify(result));
+        res.end(JSON.stringify({ ...result, saved: parsed.save === true }));
       } catch (error) {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');

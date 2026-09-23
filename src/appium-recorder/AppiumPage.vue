@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, provide, reactive, shallowRef, watch } from 'vue';
-import { flowBackgroundKey, normalizeFlowBackground } from './flow-appearance';
+import { flowBackgroundKey, normalizeFlowBackground, flowLineColorKey, normalizeFlowLineColor } from './flow-appearance';
 import { DEFAULT_NODE_TIMEOUT_MS } from './node-timeout';
+import { aiPromptPresetsKey, DEFAULT_AI_PROMPT_PRESETS, type AiPromptPreset } from './ai-prompt-presets';
+import AiRecognitionPromptInput from './components/AiRecognitionPromptInput.vue';
 import { ElForm, ElFormItem, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus';
 import { ArrowDown, Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Plus, Refresh, Upload, VideoPlay, View, Clock } from '@element-plus/icons-vue';
 import RunHistoryDialog from './RunHistoryDialog.vue';
@@ -42,6 +44,8 @@ import RecordedSteps from './components/RecordedSteps.vue';
 import NewScriptDialog from './components/NewScriptDialog.vue';
 import VisualChangeDialog from './components/VisualChangeDialog.vue';
 import ImageCheckDialog from './components/ImageCheckDialog.vue';
+import AiRecognitionTestDialog from './components/AiRecognitionTestDialog.vue';
+import { validateAiRecognitionPrompt } from './ai-recognition';
 import { createImageCheckConfig, validateImageCheck, type ImageCheckConfig } from './image-check';
 import {
   createFlowClipboard,
@@ -100,7 +104,9 @@ const recordReplayVideo = shallowRef(false);
 
 const props = defineProps<{
   aiRecognitionModelConfigured?: boolean;
+  aiPromptPresets?: AiPromptPreset[];
   flowBackgroundColor?: string;
+  flowLineColor?: string;
   active: boolean;
   appPresets: AppPreset[];
   deviceActions: readonly DeviceAction[];
@@ -126,6 +132,9 @@ const props = defineProps<{
 
 // provide/inject 随组件关系传递，放大弹窗 teleport 后也能使用同一颜色。
 provide(flowBackgroundKey, computed(() => normalizeFlowBackground(props.flowBackgroundColor)));
+provide(flowLineColorKey, computed(() => normalizeFlowLineColor(props.flowLineColor)));
+const availableAiPromptPresets = computed(() => props.aiPromptPresets ?? DEFAULT_AI_PROMPT_PRESETS);
+provide(aiPromptPresetsKey, availableAiPromptPresets);
 const selectedDeviceId = computed(() => props.playgroundDeviceId);
 const tree = shallowRef<AppiumNode | null>(null);
 const selectedNode = shallowRef<AppiumNode | null>(null);
@@ -136,6 +145,7 @@ const newScriptRevision = shallowRef(0);
 const storedWorkbenchTab = window.localStorage.getItem(WORKBENCH_TAB_STORAGE_KEY);
 const activeWorkbenchTab = shallowRef<'recording' | 'scripts' | 'variables'>(storedWorkbenchTab === 'scripts' ? 'scripts' : storedWorkbenchTab === 'variables' ? 'variables' : 'recording');
 const steps = shallowRef<AppiumRecordedStep[]>([]);
+const aiRecognitionTestStep = shallowRef<AppiumRecordedStep | null>(null);
 const flowClipboard = shallowRef<FlowClipboard | null>(null);
 const rawXml = shallowRef('');
 const currentActivity = shallowRef('');
@@ -886,6 +896,11 @@ async function refreshTree() {
 
 async function executeFlowStep(index: number) {
   const step = steps.value[index];
+  if (step?.type === 'aiRecognition') {
+    if (replaying.value || recordingBusy.value) { ElMessage.warning('设备正在执行操作，请稍后测试'); return; }
+    aiRecognitionTestStep.value = { ...step };
+    return;
+  }
   if (!step || (step.type !== 'launchApp' && step.type !== 'clearAppData')) return;
   if (launchingApp.value) return;
   if (!selectedDeviceId.value) {
@@ -1384,8 +1399,27 @@ async function addAction(
     return;
   }
   if (action === 'aiRecognition') {
-    ElMessage.warning('AI 识别操作已移除，请使用图像判断或原生组件判断');
-    return;
+    const draft = reactive({ value: '', error: '' });
+    const result = await ElMessageBox({
+      title: '添加 AI 识别',
+      message: () => h(ElForm, { labelPosition: 'top', style: { width: 'min(380px, calc(100vw - 64px))' } },
+        () => h(ElFormItem, { label: '识别内容', error: draft.error },
+          () => h(AiRecognitionPromptInput, {
+            modelValue: draft.value, presets: availableAiPromptPresets.value,
+            placeholder: '例如：检查当前画面有没有显示黑屏',
+            'onUpdate:modelValue': (value: string) => { draft.value = value; draft.error = ''; },
+          }))),
+      showCancelButton: true, confirmButtonText: '添加', cancelButtonText: '取消',
+      beforeClose: (action, _instance, done) => {
+        if (action === 'confirm') {
+          try { draft.value = validateAiRecognitionPrompt(draft.value); }
+          catch (error) { draft.error = error instanceof Error ? error.message : '识别内容无效'; return; }
+        }
+        done();
+      },
+    }).catch(() => null);
+    if (!result) return;
+    return insertStep({ id: createStepId(), type: 'aiRecognition', label: 'AI 识别', value: draft.value, aiBranchEnabled: false, timeoutMs: DEFAULT_NODE_TIMEOUT_MS, flow: { nodeKind: 'action' } }, index, branchTarget);
   }
   if (action === 'textClick') {
     const step = reactive<AppiumRecordedStep>({
@@ -2277,9 +2311,6 @@ watch(
             </div>
           </el-tab-pane>
 
-          <el-tab-pane label="预设变量" name="variables" lazy>
-            <PresetVariables :key="`${selectedScriptId}:${newScriptRevision}`" v-model:variables="scriptVariables" :script-id="selectedScriptId" :script-name="form.name" :disabled="recordingBusy || saving" @saved="onVariablesSaved" />
-          </el-tab-pane>
           <el-tab-pane label="脚本列表" name="scripts">
             <div class="appium-script-list">
               <div class="appium-script-list__toolbar">
@@ -2357,6 +2388,9 @@ watch(
               </template>
             </div>
           </el-tab-pane>
+          <el-tab-pane label="预设变量" name="variables" lazy>
+            <PresetVariables :key="`${selectedScriptId}:${newScriptRevision}`" v-model:variables="scriptVariables" :script-id="selectedScriptId" :script-name="form.name" :disabled="recordingBusy || saving" @saved="onVariablesSaved" />
+          </el-tab-pane>
         </el-tabs>
       </el-card>
     </RecorderWorkspace>
@@ -2372,6 +2406,7 @@ watch(
     />
 
 
+    <AiRecognitionTestDialog v-if="aiRecognitionTestStep" :step="aiRecognitionTestStep" :device-id="selectedDeviceId" :model-configured="Boolean(aiRecognitionModelConfigured)" @close="aiRecognitionTestStep = null" />
     <ImageCheckDialog
       v-if="imageCheckDraft?.imageCheck"
       :timeout-branch="imageCheckDraft.timeoutBranch"

@@ -1,3 +1,4 @@
+import { validateAiObservation, type AiObservationConfig } from '../../src/appium-recorder/ai-recognition';
 import {
   createId,
   querySql,
@@ -99,6 +100,9 @@ export type AppiumRecordedStepRecord = {
   returns?: ScriptReturn[];
   keyCode?: number;
   timeoutMs?: number;
+  aiTimeoutEnabled?: boolean;
+  aiBranchEnabled?: boolean;
+  aiObservation?: AiObservationConfig;
   timeoutBranch?: 'stop' | 'yes' | 'no';
   longPressMode?: 'element' | 'coordinates';
   breakLoopTargetId?: string;
@@ -376,6 +380,7 @@ export function saveAppiumRecordedScript(input: {
   if (input.variables !== undefined) validateVariables(input.variables);
   for (const step of steps) {
     // 读取旧脚本必须容错，让用户能打开并修正无效配置；仅在写入时校验。
+    if (step.type === 'aiRecognition') validateAiObservation(step.aiObservation);
     if (step.type === 'imageCheck') validateImageCheck(step.imageCheck);
     if (step.type === 'extractVariable') validateExtraction(step.extractVariable);
     if (step.type === 'runScript') { validateVariables(step.parameters); validateReturns(step.returns); }

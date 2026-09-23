@@ -5,8 +5,10 @@ export type HistoryNode = {
   durationMs: number | null;
 };
 
+export type RunVideo = { filePath: string; fileName: string; startedAt: string; warning?: string; scriptId?: string; scriptName?: string; boundaryAt?: string; segments?: RunVideo[] };
+
 export type RunSummary = {
-  video?: { filePath: string; fileName: string; startedAt: string; warning?: string };
+  video?: RunVideo;
   id: string;
   scriptId: string;
   scriptName: string;

@@ -1,5 +1,8 @@
+import type { AiObservationConfig } from '../../src/appium-recorder/ai-recognition';
 import { execFile } from 'node:child_process';
 import { sendReplayVideo } from './video-response';
+import { loadConfig } from '../config';
+import { recognizeDeviceScreen, validateAiBranchQuestion } from './ai-recognition';
 import { getPresetVariables, savePresetVariables } from './variable-store';
 import type { TestVariable } from '../../src/appium-recorder/variables';
 import { deleteRunHistory, getRunHistory, listRunHistory, saveRunHistory } from './run-history';
@@ -199,8 +202,29 @@ export async function handleAppiumRecorderRequest(
       return true;
     }
 
+    if (pathname === '/api/appium-recorder/ai-recognition/validate-question' && req.method === 'POST') {
+      const parsed = await readBody<{ prompt?: unknown }>(req);
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      res.once('close', abort);
+      try { sendJson(res, await validateAiBranchQuestion(parsed.prompt, controller.signal)); }
+      finally { res.off('close', abort); }
+      return true;
+    }
+
     if (pathname === '/api/appium-recorder/ai-recognition/test' && req.method === 'POST') {
-      sendJson(res, { message: 'AI 识别操作已移除，请使用图像判断或原生组件判断' }, 410);
+      const parsed = await readBody<{ deviceId?: string; prompt?: unknown; timeoutMs?: number; aiTimeoutEnabled?: boolean; aiBranchEnabled?: boolean; aiObservation?: AiObservationConfig }>(req);
+      const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
+      if (!deviceId) throw new Error('请选择设备');
+      assertDeviceAllowed(deviceId);
+      if (isRemoteDeviceId(deviceId)) throw new Error('远程设备暂不支持 AI 识别测试');
+      if (replayingDevices.has(deviceId)) { sendJson(res, { message: '设备正在回放，请稍后测试' }, 409); return true; }
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      res.once('close', abort);
+      try {
+        sendJson(res, await recognizeDeviceScreen({ deviceId, prompt: parsed.prompt, timeoutMs: parsed.timeoutMs, aiTimeoutEnabled: parsed.aiTimeoutEnabled === true, aiBranchEnabled: parsed.aiBranchEnabled, aiObservation: parsed.aiObservation, signal: controller.signal }));
+      } finally { res.off('close', abort); }
       return true;
     }
 
@@ -337,7 +361,10 @@ export async function handleAppiumRecorderRequest(
       const run = getRunHistory(decodeURIComponent(videoMatch[1]), decodeURIComponent(videoMatch[2]));
       if (!run?.video) { sendJson(res, { error: '本次运行没有视频' }, 404); return true; }
       assertDeviceAllowed(run.deviceId);
-      await sendReplayVideo(req, res, run.video.filePath);
+      const index = Number(new URL(req.url || '', 'http://localhost').searchParams.get('segment') || 0);
+      const segment = Number.isSafeInteger(index) && index >= 0 ? (run.video.segments || [run.video])[index] : undefined;
+      if (!segment) { sendJson(res, { error: '视频片段不存在' }, 404); return true; }
+      await sendReplayVideo(req, res, segment.filePath);
       return true;
     }
     const historyMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/history(?:\/([^/]+))?$/);
@@ -372,7 +399,7 @@ export async function handleAppiumRecorderRequest(
         res.flushHeaders();
       }
       if (isRemoteDeviceId(deviceId)) {
-        const result = await sendRemoteCommand(deviceId, 'replay', { script, parameters: parsed.parameters, globalVariables: getPresetVariables(), linkedScripts: linkedScriptSnapshot(script) }) as Awaited<ReturnType<typeof replayAppiumScript>>;
+        const result = await sendRemoteCommand(deviceId, 'replay', { script, screenshotReport: loadConfig().appium.screenshotReport === true, parameters: parsed.parameters, globalVariables: getPresetVariables(), linkedScripts: linkedScriptSnapshot(script) }) as Awaited<ReturnType<typeof replayAppiumScript>>;
         if (result.history) {
           try { saveRunHistory({ ...result.history, scriptId: script.id, deviceId }); }
           catch { result.output += '\n历史记录保存失败'; }

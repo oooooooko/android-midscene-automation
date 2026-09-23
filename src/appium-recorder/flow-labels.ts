@@ -5,12 +5,14 @@ import { longPressMode } from './long-press';
 import { isNativeStateCondition } from './native-control-state';
 import { DEFAULT_LOG_PREFIX } from './stage-log';
 import { imageCheckSummary } from './image-check';
+import { isAiBranchEnabled } from './ai-recognition';
 
-export function isBooleanCondition(step: Pick<AppiumRecordedStep, 'type'>) {
-  return isNativeStateCondition(step) || step.type === 'aiRecognition' || step.type === 'textClick' || step.type === 'imageCheck';
+export function isBooleanCondition(step: Pick<AppiumRecordedStep, 'type' | 'aiBranchEnabled'>) {
+  return isNativeStateCondition(step) || (step.type === 'aiRecognition' && isAiBranchEnabled(step)) || step.type === 'textClick' || step.type === 'imageCheck';
 }
 
 export function defaultFlowKind(step: AppiumRecordedStep): FlowKind {
+  if (step.type === 'aiRecognition') return isAiBranchEnabled(step) ? 'condition' : 'action';
   if (step.type === 'extractVariable') return 'action';
   if (step.type === 'loop') return 'condition';
   if (step.type === 'breakLoop') return 'action';
@@ -47,7 +49,7 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     checkboxState: 'Checkbox 状态',
     checkedState: '判断勾选',
     radioButtonState: 'RadioButton 状态',
-    aiRecognition: 'AI 识别（已移除）',
+    aiRecognition: 'AI 识别',
     imageCheck: '图像判断',
     textClick: '文字点击',
     assertText: '断言文本',
@@ -81,7 +83,7 @@ export function flowStepMeta(step: AppiumRecordedStep) {
   if (step.type === 'loop') return `最多 ${step.loop?.maxIterations ?? '?'} 次 · ${step.loop?.exitWhen === 'exists' ? '元素出现时退出' : step.loop?.exitWhen === 'notExists' ? '元素消失时退出' : '固定次数'}${step.loop?.exitWhen !== 'never' ? ` ${step.selector?.value || ''}` : ''}`;
   if (step.type === 'breakLoop') return step.breakLoopTargetId ? '退出指定循环，继续循环结束后的流程' : '退出当前循环，继续循环结束后的流程';
   if (step.type === 'log') return `${step.logPrefix ?? DEFAULT_LOG_PREFIX}:${step.value || ''}`;
-  if (step.type === 'aiRecognition') return '此操作已移除，请替换为图像判断或原生组件判断';
+  if (step.type === 'aiRecognition') return `AI ${step.aiObservation?.mode === 'untilMatch' ? '命中即结束' : step.aiObservation ? '持续观察' : '识别'} · ${step.value || '未填写识别内容'}`;
   if (step.type === 'longPress') {
     const target = longPressMode(step) === 'element'
       ? `元素 ${step.selector?.strategy || ''} ${step.selector?.value || ''}`

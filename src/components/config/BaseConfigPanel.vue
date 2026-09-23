@@ -15,6 +15,7 @@ defineEmits<{
   saveAppPreset: [];
   editAppPreset: [app: AppPreset];
   deleteAppPreset: [id: string];
+  cancelAppPresetEdit: [];
 }>();
 </script>
 
@@ -55,21 +56,21 @@ defineEmits<{
             <span>预设 App 参数</span>
             <el-tag v-if="appPresetForm.id" size="small" type="warning">编辑中</el-tag>
           </div>
-          <div class="panel-header__actions">
-            <el-button type="primary" :loading="isSavingAppPreset" @click="$emit('saveAppPreset')">
-              {{ appPresetForm.id ? '保存修改' : '保存 App' }}
-            </el-button>
-          </div>
         </div>
       </template>
 
-      <el-form label-position="top">
+      <div class="app-preset-layout">
+      <el-form label-position="top" :disabled="isSavingAppPreset" @submit.prevent="$emit('saveAppPreset')">
         <el-form-item label="App 名称">
           <el-input v-model="appPresetForm.name" placeholder="例如：示例 App" />
         </el-form-item>
         <el-form-item label="App 包名">
           <el-input v-model="appPresetForm.packageName" placeholder="例如：com.example.app" />
         </el-form-item>
+        <div class="app-preset-actions">
+          <el-button v-if="appPresetForm.id" :disabled="isSavingAppPreset" @click="$emit('cancelAppPresetEdit')">取消编辑</el-button>
+          <el-button native-type="submit" :loading="isSavingAppPreset">{{ appPresetForm.id ? '保存修改' : '添加' }}</el-button>
+        </div>
       </el-form>
 
       <div class="app-preset-list">
@@ -79,12 +80,23 @@ defineEmits<{
             <span>{{ app.packageName }}</span>
           </div>
           <div class="script-row__actions">
-            <el-button text size="small" :icon="Edit" @click="$emit('editAppPreset', app)" />
-            <el-button text size="small" :icon="Delete" @click="$emit('deleteAppPreset', app.id)" />
+            <el-button text size="small" :icon="Edit" :disabled="isSavingAppPreset" :aria-label="`编辑 ${app.name}`" @click="$emit('editAppPreset', app)" />
+            <el-button text size="small" :icon="Delete" :disabled="isSavingAppPreset" :aria-label="`删除 ${app.name}`" @click="$emit('deleteAppPreset', app.id)" />
           </div>
         </div>
         <el-empty v-if="!appPresets.length" description="暂无预设 App" />
       </div>
+      </div>
     </el-card>
   </div>
 </template>
+
+<style scoped>
+.app-preset-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.app-preset-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+.app-preset-layout .app-preset-list { margin-top: 0; padding-left: 24px; border-left: 1px solid var(--ui-border); }
+@media (max-width: 800px) {
+  .app-preset-layout { grid-template-columns: minmax(0, 1fr); }
+  .app-preset-layout .app-preset-list { padding: 24px 4px 0 0; border-left: 0; border-top: 1px solid var(--ui-border); }
+}
+</style>

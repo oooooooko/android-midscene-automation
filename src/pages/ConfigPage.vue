@@ -13,6 +13,7 @@ defineProps<{
   testingModelKey: string;
   isSavingModelConfig: boolean;
   isSavingAppPreset: boolean;
+  appiumSaveStatus?: string;
   modelTestStatus: { midscene: string; scriptOptimizer: string; appium?: string };
 }>();
 
@@ -22,6 +23,7 @@ defineEmits<{
   saveAppPreset: [];
   editAppPreset: [app: AppPreset];
   deleteAppPreset: [id: string];
+  cancelAppPresetEdit: [];
   updateMidsceneModelProvider: [provider: MidsceneModelProvider];
 }>();
 
@@ -81,6 +83,7 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
         @save-app-preset="$emit('saveAppPreset')"
         @edit-app-preset="$emit('editAppPreset', $event)"
         @delete-app-preset="$emit('deleteAppPreset', $event)"
+        @cancel-app-preset-edit="$emit('cancelAppPresetEdit')"
       />
     </section>
 
@@ -93,10 +96,8 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
       <MidsceneConfigPanel
         :config-form="configForm"
         :testing-model-key="testingModelKey"
-        :is-saving-model-config="isSavingModelConfig"
         :model-test-status="modelTestStatus"
         @test-model="$emit('testModel', $event)"
-        @save-model-config="$emit('saveModelConfig')"
         @update-midscene-model-provider="$emit('updateMidsceneModelProvider', $event)"
       />
     </section>
@@ -110,10 +111,9 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
       <AppiumConfigPanel
         :config-form="configForm"
         :testing-model-key="testingModelKey"
-        :is-saving-model-config="isSavingModelConfig"
         :test-status="modelTestStatus.appium"
+        :save-status="appiumSaveStatus"
         @test-model="$emit('testModel', 'appium')"
-        @save-model-config="$emit('saveModelConfig')"
       />
     </section>
   </div>

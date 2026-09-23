@@ -6,7 +6,7 @@ import type { AppiumVisualChangeRegion } from '../../src/appium-recorder/types';
 
 // 延迟初始化，普通回放不加载 WASM；仅缓存运行库，不缓存设备截图或检测结果。
 let runtime: Promise<typeof import('@techstark/opencv-js')> | undefined;
-async function openCv() {
+export async function openCv() {
   runtime ??= import('@techstark/opencv-js').then(async module => {
     const cv = await module.default;
     if (!cv.Mat) await new Promise<void>(resolve => { cv.onRuntimeInitialized = resolve; });

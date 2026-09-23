@@ -9,6 +9,7 @@ export function adbScreenshotBase64(deviceId: string, signal?: AbortSignal) {
       ['-s', deviceId, 'exec-out', 'screencap', '-p'],
       { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024, timeout: 8000, signal },
       (error, stdout, stderr) => {
+        if (signal?.aborted) { reject(signal.reason); return; }
         if (error) {
           reject(new Error(stderr?.toString('utf8').trim() || error.message || 'ADB 截图失败'));
           return;

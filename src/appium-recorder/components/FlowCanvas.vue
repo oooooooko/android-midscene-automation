@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, shallowRef, watch } from 'vue';
-import { DEFAULT_FLOW_BACKGROUND, flowBackgroundKey } from '../flow-appearance';
+import { DEFAULT_FLOW_BACKGROUND, flowBackgroundKey, DEFAULT_FLOW_LINE_COLOR, flowLineColorKey } from '../flow-appearance';
 import { useVueFlow, VueFlow } from '@vue-flow/core';
 import FlowNodeCard from './FlowNodeCard.vue';
 import FlowRoundedEdge from './FlowRoundedEdge.vue';
@@ -14,6 +14,7 @@ import {
 import type { AppiumRecordedStep } from '../types';
 
 const flowBackground = inject(flowBackgroundKey, computed(() => DEFAULT_FLOW_BACKGROUND));
+const flowLineColor = inject(flowLineColorKey, computed(() => DEFAULT_FLOW_LINE_COLOR));
 
 const props = defineProps<{
   aiRecognitionModelConfigured?: boolean;
@@ -195,7 +196,7 @@ function handleInsert(payload: {
 </script>
 
 <template>
-  <div class="appium-flow-canvas appium-flow-canvas--vue" :style="{ '--flow-background': flowBackground }">
+  <div class="appium-flow-canvas appium-flow-canvas--vue" :style="{ '--flow-background': flowBackground, '--appium-flow-line-color': flowLineColor }">
     <VueFlow
       :id="id"
       class="appium-vue-flow"

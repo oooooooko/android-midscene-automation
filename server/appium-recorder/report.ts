@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { stripReplayLogTime } from './replay-log';
 import { join, relative } from 'node:path';
 import type { ReplayVideo } from './replay-video';
 import { PNG } from 'pngjs';
@@ -20,7 +21,7 @@ export type AppiumReplayFrame = {
   logContent?: string;
   note: string;
   selector: string;
-  phase: 'before' | 'after' | 'error' | 'stopped';
+  phase: 'before' | 'after' | 'error' | 'stopped' | 'observation';
   status: string;
   capturedAt: string;
   imageBase64: string;
@@ -152,13 +153,13 @@ function selectorText(selector?: AppiumRecordedStepRecord['selector']) {
 
 function stepExecutionLines(outputLines: string[], index: number) {
   const prefixes = [`[节点 ${index + 1}]`, `[步骤 ${index + 1}]`];
-  return outputLines.filter((line) => prefixes.some((prefix) => line.startsWith(prefix)));
+  return outputLines.filter((line) => prefixes.some((prefix) => stripReplayLogTime(line).startsWith(prefix)));
 }
 
 function executionStatus(lines: string[]) {
   if (!lines.length) return '未执行';
   // 只识别执行器的状态前缀，用户日志中的“失败”等文字不是执行结果。
-  const messages = lines.map((line) => line.replace(/^\[(?:节点|步骤) \d+\] /, ''));
+  const messages = lines.map((line) => stripReplayLogTime(line).replace(/^\[(?:节点|步骤) \d+\] /, ''));
   if (messages.some((line) => line.startsWith('失败：') || line.startsWith('失败分支：'))) return '失败';
   if (messages.some((line) => line.startsWith('跳过：'))) return '跳过';
   if (messages.some((line) => line.startsWith('判断：'))) return '判断完成';
@@ -241,7 +242,7 @@ function stepSection(
 }
 
 function createReplayHtml(input: {
-  video?: { url: string; startedAt: string };
+  video?: { url: string; startedAt: string; segments?: Array<{ url: string; startedAt: string; boundaryAt?: string; scriptName?: string }> };
   script: AppiumRecordedScriptRecord;
   deviceId: string;
   resultText: string;
@@ -418,6 +419,7 @@ function createReplayHtml(input: {
         <div id="caption" class="caption">暂无截图</div>
         <div class="controls">
           <button id="toggle-recording" hidden>查看节点截图</button>
+          <select id="video-segment" aria-label="视频片段" hidden style="max-width:100%;min-width:0"></select>
           <button id="previous" type="button" title="上一帧">上一帧</button>
           <button id="play" type="button">播放</button>
           <button id="next" type="button" title="下一帧">下一帧</button>
@@ -441,7 +443,16 @@ function createReplayHtml(input: {
     const reportStartedAt = Date.parse(data.startedAt) || 0;
     const recording = document.querySelector('#recording');
     const toggleRecording = document.querySelector('#toggle-recording');
-    const videoOffset = Math.max(0, (Date.parse(data.video?.startedAt) || reportStartedAt) - reportStartedAt);
+    const videos = data.video ? (data.video.segments || [data.video]) : [];
+    const segmentSelect = document.querySelector('#video-segment');
+    let activeVideo = 0;
+    let videoOffset = Math.max(0, (Date.parse(videos[0]?.startedAt) || reportStartedAt) - reportStartedAt);
+    videos.forEach((video, index) => {
+      const option = document.createElement('option');
+      option.value = String(index); option.textContent = (index + 1) + '. ' + (video.scriptName || data.scriptName || '回放视频');
+      segmentSelect.appendChild(option);
+    });
+    segmentSelect.hidden = videos.length < 2;
     let videoMode = Boolean(data.video);
     let pendingVideoTime = 0;
     if (data.video) { recording.src = data.video.url; toggleRecording.hidden = false; }
@@ -457,7 +468,7 @@ function createReplayHtml(input: {
     frames.forEach((frame, index) => {
       const key = JSON.stringify([frame.scriptName, frame.nodeId, frame.nodeNumber]);
       const pending = pendingSteps.get(key) || [];
-      let stepIndex = frame.phase === 'before' ? undefined : pending.pop();
+      let stepIndex = frame.phase === 'before' ? undefined : frame.phase === 'observation' ? pending.at(-1) : pending.pop();
       if (stepIndex === undefined) {
         stepIndex = steps.length;
         steps.push({ firstIndex: index, lastIndex: index });
@@ -486,7 +497,7 @@ function createReplayHtml(input: {
     let currentMs = 0;
     let animationFrame = 0;
     let playbackStartedAt = 0;
-    const phaseLabels = { before: '执行前', after: '执行后', error: '失败', stopped: '已终止' };
+    const phaseLabels = { before: '执行前', after: '执行后', observation: '观察采样', error: '失败', stopped: '已终止' };
     const visualCheckStatusLabel = (status) => status === 'passed' ? '有变化' : '无明显变化';
     const formatTime = (milliseconds) => {
       const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -539,11 +550,32 @@ function createReplayHtml(input: {
     };
     const seekTo = (milliseconds, scrollStep = true) => {
       currentMs = Math.max(0, Math.min(durationMs, milliseconds));
+      let index = 0;
+      for (let i = 1; i < videos.length; i++) {
+        if (Date.parse(videos[i].boundaryAt || videos[i].startedAt) - reportStartedAt <= currentMs) index = i;
+      }
+      if (index !== activeVideo) {
+        activeVideo = index; segmentSelect.value = String(index);
+        videoOffset = Math.max(0, Date.parse(videos[index].startedAt) - reportStartedAt);
+        recording.src = videos[index].url;
+      }
       pendingVideoTime = Math.max(0, (currentMs - videoOffset) / 1000);
       if (data.video && recording.readyState >= 1) recording.currentTime = Math.min(pendingVideoTime, recording.duration || pendingVideoTime);
       render(scrollStep);
     };
     recording.addEventListener('loadedmetadata', () => { recording.currentTime = Math.min(pendingVideoTime, recording.duration); });
+    segmentSelect.addEventListener('change', () => {
+      pause();
+      const video = videos[Number(segmentSelect.value)];
+      seekTo(Date.parse(video.boundaryAt || video.startedAt) - reportStartedAt);
+    });
+    recording.addEventListener('ended', () => {
+      if (videoMode && activeVideo + 1 < videos.length) {
+        const next = videos[activeVideo + 1];
+        seekTo(Date.parse(next.boundaryAt || next.startedAt) - reportStartedAt);
+        recording.play().catch(() => undefined);
+      }
+    });
     recording.addEventListener('timeupdate', () => {
       if (!videoMode || recording.paused) return;
       currentMs = recording.currentTime * 1000 + videoOffset;
@@ -771,6 +803,7 @@ function createReplayHtml(input: {
 }
 
 export async function createAppiumReplayReport(input: {
+  screenshotReport?: boolean;
   video?: ReplayVideo;
   script: AppiumRecordedScriptRecord;
   deviceId: string;
@@ -789,14 +822,14 @@ export async function createAppiumReplayReport(input: {
   const baseName = `${fileDateTime(input.completedAt)}-${safeFileName(input.script.name)}`;
   const fileName = `${baseName}.md`;
   const logFileName = `${baseName}.log`;
-  const htmlFileName = `${baseName}.html`;
+  const htmlFileName = (input.screenshotReport ?? loadConfig().appium.screenshotReport) === true ? `${baseName}.html` : '';
   const filePath = join(outputDir, fileName);
   const logPath = join(outputDir, logFileName);
-  const htmlReportPath = join(outputDir, htmlFileName);
+  const htmlReportPath = htmlFileName ? join(outputDir, htmlFileName) : '';
   const persistedOutput = [
     input.output,
     `回放报告：${filePath}`,
-    `截图回放：${htmlReportPath}`,
+    htmlReportPath ? `截图回放：${htmlReportPath}` : '',
     `回放日志：${logPath}`,
   ].filter(Boolean).join('\n');
   const outputLines = persistedOutput.split(/\r?\n/);
@@ -805,8 +838,15 @@ export async function createAppiumReplayReport(input: {
   const visualChecks = input.visualChecks || [];
   const visualCheckByStepId = new Map(visualChecks.map((check) => [check.nodeId, check]));
   const visualFailureCount = visualChecks.filter((check) => check.status === 'failed').length;
-  const html = createReplayHtml({
-    video: input.video ? { startedAt: input.video.startedAt, url: relative(outputDir, input.video.filePath).split(/[/\\\\]/).map(encodeURIComponent).join('/') } : undefined,
+  const html = htmlReportPath ? createReplayHtml({
+    video: input.video ? {
+      startedAt: input.video.startedAt,
+      url: relative(outputDir, input.video.filePath).split(/[/\\\\]/).map(encodeURIComponent).join('/'),
+      segments: (input.video.segments || [input.video]).map(segment => ({
+        startedAt: segment.startedAt, boundaryAt: segment.boundaryAt, scriptName: segment.scriptName,
+        url: relative(outputDir, segment.filePath).split(/[/\\\\]/).map(encodeURIComponent).join('/'),
+      })),
+    } : undefined,
     script: input.script,
     deviceId: input.deviceId,
     resultText,
@@ -817,7 +857,7 @@ export async function createAppiumReplayReport(input: {
     visualChecks,
     imageChecks: input.imageChecks,
     output: persistedOutput,
-  });
+  }) : '';
   const markdown = [
     '# Appium 回放报告',
     '',
@@ -835,7 +875,7 @@ export async function createAppiumReplayReport(input: {
     `| 节点数量 | ${input.script.steps.length} |`,
     `| 截图帧数 | ${(input.frames || []).length} |`,
     `| 视觉检测未达预期 | ${visualFailureCount} |`,
-    `| 截图回放 | ${markdownValue(htmlReportPath)} |`,
+    `| 截图回放 | ${htmlReportPath ? markdownValue(htmlReportPath) : '未开启'} |`,
     '',
     '## 节点明细',
     '',
@@ -850,7 +890,7 @@ export async function createAppiumReplayReport(input: {
   await Promise.all([
     writeFile(filePath, markdown, 'utf8'),
     writeFile(logPath, `${persistedOutput}\n`, 'utf8'),
-    writeFile(htmlReportPath, html, 'utf8'),
+    ...(htmlReportPath ? [writeFile(htmlReportPath, html, 'utf8')] : []),
   ]);
   const record = saveAppiumReplayReport({
     scriptId: input.script.id,

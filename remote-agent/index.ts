@@ -136,6 +136,7 @@ async function handleCommand(command: RemoteCommand) {
     const script = payload.script as AppiumRecordedScriptRecord | undefined;
     if (!script) throw new Error('远程回放缺少脚本内容');
     return await replayAppiumScript(script, command.deviceId, undefined, undefined, {
+      screenshotReport: payload.screenshotReport === true,
       parameters: payload.parameters as import('../src/appium-recorder/variables').TestVariable[] | undefined,
       globalVariables: payload.globalVariables as import('../src/appium-recorder/variables').TestVariable[] | undefined,
       linkedScripts: payload.linkedScripts as AppiumRecordedScriptRecord[] | undefined,

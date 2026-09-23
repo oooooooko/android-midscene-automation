@@ -20,6 +20,7 @@ export function captureHistoryFrames(frames: AppiumReplayFrame[], checks: Appium
   const nodes: HistoryNode[] = [];
   const pending = new Map<string, AppiumReplayFrame>();
   for (const frame of events) {
+    if (frame.phase === 'observation') continue;
     const key = frame.nodeId;
     if (frame.phase === 'before') { pending.set(key, frame); continue; }
     const start = pending.get(key);

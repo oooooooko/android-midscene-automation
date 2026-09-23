@@ -1,7 +1,21 @@
 import { APP_BASE } from '../api';
+import type { AiObservationConfig, AiRecognitionResult } from './ai-recognition';
 import type { AppiumRecordedScript, AppiumRecordedStep } from './types';
 import type { TestVariable } from './variables';
 import type { AppiumVisualChangeRegion } from './types';
+
+export async function testAiRecognition(input: { deviceId: string; prompt: string; timeoutMs?: number; aiTimeoutEnabled?: boolean; aiBranchEnabled?: boolean; aiObservation?: AiObservationConfig }, signal?: AbortSignal) {
+  const response = await fetch(`${APP_BASE}/api/appium-recorder/ai-recognition/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
+  });
+  return readJson<AiRecognitionResult & { imageBase64: string }>(response);
+}
+
+export async function validateAiBranchQuestion(prompt: string, signal?: AbortSignal) {
+  return readJson<{ result: boolean; reason: string }>(await fetch(`${APP_BASE}/api/appium-recorder/ai-recognition/validate-question`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }), signal,
+  }));
+}
 
 export function captureImageCheckRegion(deviceId: string, region: AppiumVisualChangeRegion, screenWidth: number, screenHeight: number) {
   return postJson<{ base64: string; screenWidth: number; screenHeight: number }>(`${APP_BASE}/api/appium-recorder/image-check/capture`, { deviceId, region, screenWidth, screenHeight });

@@ -1,4 +1,5 @@
 import type { ScriptStep } from './script-generator';
+import type { MidsceneModelProvider } from './config/midscene-model-presets';
 import type {
   AndroidDevice,
   AppPreset,
@@ -109,16 +110,21 @@ export async function getConfig() {
   return readJson<ConfigForm>(response);
 }
 
-// 保存模型配置；当前由参数配置页的各模块保存按钮调用。
-export function saveConfig(input: ConfigForm) {
+// 运行配置独立保存，不携带尚未测试的模型草稿。
+export function saveConfig(input: Pick<ConfigForm, 'runtime'>) {
   return postJson<{ success?: boolean } | ConfigForm>(`${APP_BASE}/api/config`, input);
+}
+
+export function saveAppiumConfig(appium: Omit<ConfigForm['appium'], 'model'>) {
+  return postJson<{ success: boolean }>(`${APP_BASE}/api/config/appium`, { appium });
 }
 
 // 测试指定模型配置是否可用，通常用于保存前验证 baseUrl/apiKey/model。
 export function testModel(input: {
+  save?: boolean;
   modelKey: 'midscene' | 'scriptOptimizer' | 'appium';
   model: {
-    provider?: 'custom' | 'codex';
+    provider?: MidsceneModelProvider;
     baseUrl: string;
     apiKey: string;
     name: string;
@@ -126,6 +132,7 @@ export function testModel(input: {
   };
 }) {
   return postJson<{
+    saved?: boolean;
     content?: string;
     durationMs?: number;
     usage?: {

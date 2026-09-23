@@ -14,7 +14,7 @@ export class ReplayMp4Writer {
   private startedMonotonic = 0;
   private endedMonotonic?: number;
 
-  constructor(path: string) {
+  constructor(path: string, private anchor?: number) {
     this.output = new Output({ target: new FilePathTarget(path, { chunkSize: 1024 * 1024 }), format: new Mp4OutputFormat({ fastStart: 'fragmented' }) });
     this.output.addVideoTrack(this.source);
   }
@@ -37,8 +37,8 @@ export class ReplayMp4Writer {
     if (this.origin === undefined) {
       if (!packet.keyframe) return;
       this.origin = packet.pts;
-      this.startedAt = Date.now();
-      this.startedMonotonic = performance.now();
+      this.startedAt = this.anchor ?? Date.now();
+      this.startedMonotonic = performance.now() - (Date.now() - this.startedAt);
     }
     const timestamp = Number(packet.pts - this.origin) / 1000000;
     if (!Number.isFinite(timestamp) || timestamp < 0 || (this.pending && timestamp < this.pending.timestamp)) throw new Error('录屏时间戳异常');

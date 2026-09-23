@@ -24,7 +24,11 @@ function adbCommand(args: string[], signal?: AbortSignal) {
   });
 }
 
-export async function openRecordingSource(deviceId: string, signal: AbortSignal) {
+export type RecordingProfile = { label: string; maxSize: number; videoBitRate: number };
+
+export async function openRecordingSource(deviceId: string, signal: AbortSignal, profile: RecordingProfile = {
+  label: '标准', maxSize: 1280, videoBitRate: 2000000,
+}) {
   const require = createRequire(import.meta.url);
   const bin = join(dirname(require.resolve('@midscene/android-playground/package.json')), 'bin');
   const version = (await readFile(join(bin, 'scrcpy-server.version'), 'utf8')).trim();
@@ -52,8 +56,9 @@ export async function openRecordingSource(deviceId: string, signal: AbortSignal)
     const options = new AdbScrcpyOptions3_3_3({
       scid: Math.floor(Math.random() * 0x7fffffff).toString(16).padStart(8, '0'),
       audio: false, control: false, videoCodec: 'h264', sendFrameMeta: true,
-      maxSize: 1280, maxFps: 15, videoBitRate: 2000000,
-      captureOrientation: '@', videoCodecOptions: 'profile=1,max-bframes=0,i-frame-interval=2',
+      maxSize: profile.maxSize, maxFps: 15, videoBitRate: profile.videoBitRate,
+      // 不强制 profile/max-bframes 等厂商兼容性差的参数，交给设备选择。
+      captureOrientation: '@',
     });
     client = await waitForVideoTask(AdbScrcpyClient.start(adb, remotePath, options).then(value => {
       if (closing || signal.aborted) { void value.close(); throw signal.reason || new Error('录屏已取消'); }
@@ -75,6 +80,6 @@ export async function openRecordingSource(deviceId: string, signal: AbortSignal)
     return { stream: video.stream, close, diagnostics: () => logs };
   } catch (error) {
     await close();
-    throw error;
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs}`, { cause: error });
   }
 }

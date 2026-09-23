@@ -1684,16 +1684,11 @@ select {
   gap: 8px;
 }
 
-.config-field-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.config-field-help.el-button {
-  height: 18px;
+.config-model-help.el-button.is-text {
+  width: 28px;
+  height: 28px;
   padding: 0;
-  color: var(--el-text-color-secondary);
+  font-size: 16px;
 }
 
 .config-module-card {
@@ -2869,7 +2864,7 @@ select {
 
 .appium-vue-flow .vue-flow__edge-path,
 .appium-vue-flow .vue-flow__connection-path {
-  stroke: #719985;
+  stroke: var(--appium-flow-line-color, #719985);
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;

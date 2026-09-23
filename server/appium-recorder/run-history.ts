@@ -33,8 +33,10 @@ export function deleteRunHistory(scriptId: string, id: string) {
   ensureTable();
   const video = getRunHistory(scriptId, id)?.video;
   // 只清理服务端生成并关联到该记录的录像，不接受客户端文件路径。
-  if (video && basename(video.filePath) === video.fileName && /^replay-[\d]+-[\da-f-]+\.mp4$/.test(video.fileName)) {
-    rmSync(video.filePath, { force: true });
+  for (const segment of video?.segments || (video ? [video] : [])) {
+    if (basename(segment.filePath) === segment.fileName && /^replay-[\d]+-[\da-f-]+\.mp4$/.test(segment.fileName)) {
+      rmSync(segment.filePath, { force: true });
+    }
   }
   runSql(`PRAGMA secure_delete=ON; DELETE FROM appium_run_history WHERE script_id=${sqlString(scriptId)} AND id=${sqlString(id)};`);
 }
