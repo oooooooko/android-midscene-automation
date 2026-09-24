@@ -239,7 +239,7 @@ function onVariablesSaved(id: string, variables: TestVariable[]) {
 }
 
 function warnBeforeUnload(event: BeforeUnloadEvent) {
-  if (!props.active || !hasUnsavedChanges.value) return;
+  if (!hasUnsavedChanges.value) return;
   event.preventDefault();
   event.returnValue = '';
 }
@@ -2232,6 +2232,7 @@ watch(
 
 <template>
   <section class="appium-recorder-page">
+    <Teleport to="#appium-header-actions">
     <div v-if="active" class="appium-header-actions">
       <el-select
         v-model="selectedScriptId"
@@ -2280,6 +2281,8 @@ watch(
         终止
       </el-button>
     </div>
+
+    </Teleport>
 
     <RecorderWorkspace ref="workspaceRef">
       <template #preview>

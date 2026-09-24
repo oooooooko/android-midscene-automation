@@ -27,7 +27,7 @@ defineEmits<{ test: [] }>();
     <p class="appium-model-description">{{ description }}</p>
     <el-form label-position="top" :disabled="!!testingModelKey">
       <el-form-item label="Base URL"><el-input v-model="model.baseUrl" placeholder="兼容 OpenAI 的 API 地址" /></el-form-item>
-      <el-form-item label="API Key"><el-input v-model="model.apiKey" type="password" show-password /></el-form-item>
+      <el-form-item label="API Key"><el-input v-model="model.apiKey" type="password" placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换" show-password /></el-form-item>
       <el-form-item label="Model Name"><el-input v-model="model.name" :placeholder="namePlaceholder" /></el-form-item>
       <el-alert v-if="testStatus" class="appium-model-status" :title="testStatus"
         :type="testStatus.startsWith('测试通过') ? 'success' : 'warning'" :closable="false" show-icon />

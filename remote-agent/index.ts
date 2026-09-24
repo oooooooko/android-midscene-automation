@@ -6,7 +6,9 @@ import type { RemoteAgentDevice, RemoteCommand } from '../server/remote-agents/p
 import { replayAppiumScript } from '../server/appium-recorder/appium-runner';
 import type { AppiumRecordedScriptRecord } from '../server/appium-recorder/repository';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.3';
+const replays = new Map<string, AbortController>();
+let lastHeartbeatAt = Date.now();
 
 function argValue(name: string, fallback = '') {
   const index = process.argv.indexOf(`--${name}`);
@@ -25,7 +27,7 @@ if (!server) {
 
 function execText(command: string, args: string[] = []) {
   return new Promise<string>((resolve, reject) => {
-    execFile(command, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(command, args, { maxBuffer: 20 * 1024 * 1024, timeout: 10000 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
@@ -37,7 +39,7 @@ function execText(command: string, args: string[] = []) {
 
 function execBuffer(command: string, args: string[] = []) {
   return new Promise<Buffer>((resolve, reject) => {
-    execFile(command, args, { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(command, args, { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024, timeout: 10000 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(Buffer.isBuffer(stderr) ? stderr.toString() : stderr || error.message));
         return;
@@ -50,10 +52,11 @@ function execBuffer(command: string, args: string[] = []) {
 async function postJson<T>(url: string, body: unknown) {
   const response = await fetch(url, {
     method: 'POST',
+    signal: AbortSignal.timeout(10000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const payload = await response.json().catch(() => ({})) as T & { message?: string };
+  const payload = await response.json() as T & { message?: string };
   if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
   return payload;
 }
@@ -94,7 +97,7 @@ async function getCurrentActivity(deviceId: string) {
   return resumedLine?.match(/\s([\w.$]+\/[\w.$]+)\s/)?.[1] || '';
 }
 
-async function handleCommand(command: RemoteCommand) {
+async function handleCommand(command: RemoteCommand, signal?: AbortSignal) {
   const payload = command.payload || {};
   if (command.type === 'screenshot') {
     const image = await execBuffer('adb', ['-s', command.deviceId, 'exec-out', 'screencap', '-p']);
@@ -135,8 +138,10 @@ async function handleCommand(command: RemoteCommand) {
   if (command.type === 'replay') {
     const script = payload.script as AppiumRecordedScriptRecord | undefined;
     if (!script) throw new Error('远程回放缺少脚本内容');
-    return await replayAppiumScript(script, command.deviceId, undefined, undefined, {
+    return await replayAppiumScript(script, command.deviceId, undefined, signal, {
       screenshotReport: payload.screenshotReport === true,
+      reportSummaryEnabled: typeof payload.reportSummaryEnabled === 'boolean' ? payload.reportSummaryEnabled : undefined,
+      reportSummaryPrompt: typeof payload.reportSummaryPrompt === 'string' ? payload.reportSummaryPrompt : undefined,
       parameters: payload.parameters as import('../src/appium-recorder/variables').TestVariable[] | undefined,
       globalVariables: payload.globalVariables as import('../src/appium-recorder/variables').TestVariable[] | undefined,
       linkedScripts: payload.linkedScripts as AppiumRecordedScriptRecord[] | undefined,
@@ -150,48 +155,71 @@ async function heartbeat() {
     console.warn(`扫描设备失败：${error instanceof Error ? error.message : String(error)}`);
     return [];
   });
-  await postJson(`${server}/api/remote-agents/heartbeat`, {
+  const control = await postJson<{ cancelledCommandIds?: string[] }>(`${server}/api/remote-agents/heartbeat`, {
     agentId,
     agentName,
     version: VERSION,
     token,
     devices,
   });
+  lastHeartbeatAt = Date.now();
+  for (const id of control.cancelledCommandIds || []) replays.get(id)?.abort();
   console.log(`已上报 ${devices.length} 台设备到 ${server}`);
 }
 
 async function reportResult(command: RemoteCommand, ok: boolean, data?: unknown, error?: string) {
-  await postJson(`${server}/api/remote-agents/result`, {
-    agentId,
-    token,
-    commandId: command.id,
-    ok,
-    data,
-    error,
-  });
+  // 上报失败只重试结果，绝不重新执行已经操作过设备的脚本。
+  for (;;) {
+    try {
+      await postJson(`${server}/api/remote-agents/result`, { agentId, token, commandId: command.id, ok, data, error });
+      return;
+    } catch (error) {
+      if (command.type !== 'replay') throw error;
+      console.warn(`结果上报失败，正在重试：${error instanceof Error ? error.message : String(error)}`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  }
 }
 
 async function pollOnce() {
   const url = new URL(`${server}/api/remote-agents/poll`);
   url.searchParams.set('agentId', agentId);
   if (token) url.searchParams.set('token', token);
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
   const payload = await response.json().catch(() => ({})) as { command?: RemoteCommand | null; message?: string };
   if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
   if (!payload.command) return;
-  try {
-    const result = await handleCommand(payload.command);
-    await reportResult(payload.command, true, result);
-  } catch (error) {
-    await reportResult(payload.command, false, undefined, error instanceof Error ? error.message : String(error));
+  const command = payload.command;
+  const controller = command.type === 'replay' ? new AbortController() : undefined;
+  if (controller) {
+    replays.set(command.id, controller);
+    if (command.cancelled) controller.abort();
   }
+  try {
+    let result: unknown;
+    try {
+      result = await handleCommand(command, controller?.signal);
+    } catch (error) {
+      await reportResult(command, false, undefined, error instanceof Error ? error.message : String(error));
+      return;
+    }
+    await reportResult(command, true, result);
+  } finally { replays.delete(command.id); }
 }
 
 async function main() {
   console.log(`Remote Agent 启动：${agentId}`);
   console.log(`中央服务：${server}`);
   await heartbeat();
-  setInterval(() => void heartbeat().catch((error) => console.warn(`心跳失败：${error.message}`)), 3000);
+  let heartbeatTask: Promise<void> | undefined;
+  setInterval(() => {
+    if (Date.now() - lastHeartbeatAt >= 45000) {
+      for (const controller of replays.values()) controller.abort();
+    }
+    if (!heartbeatTask) heartbeatTask = heartbeat()
+      .catch(error => console.warn(`心跳失败：${error.message}`))
+      .finally(() => { heartbeatTask = undefined; });
+  }, 3000);
   for (;;) {
     await pollOnce().catch((error) => console.warn(`轮询失败：${error.message}`));
     await new Promise((resolve) => setTimeout(resolve, 300));

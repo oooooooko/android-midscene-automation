@@ -52,7 +52,13 @@ test('loads quietly, serializes rapid edits, validates colors and surfaces save 
     await delay(400);
     assert.equal(errors.length, 1);
     assert.match(auto.status.value, /失败/);
+    assert.equal(auto.failed.value, true);
+    assert.equal(auto.dirty.value, true);
     fail = false;
+    await auto.retry();
+    assert.equal(auto.failed.value, false);
+    assert.equal(auto.dirty.value, false);
+    assert.equal(submissions.at(-1)?.screenshotReport, true);
     form.appium.flowBackgroundColor = '#abcdef';
     await delay(400);
     assert.equal(auto.status.value, '已自动保存');

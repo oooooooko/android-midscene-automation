@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { resolveReportSummary } from './appium-recorder/report-summary';
-import { isAiRecognitionModelConfigured } from './appium-recorder/ai-recognition';
-import { resolveAiDeduplication } from './appium-recorder/ai-deduplication';
-import { resolveAiPromptPresets } from './appium-recorder/ai-prompt-presets';
-import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   Check,
+  Close,
+  DataAnalysis,
   CopyDocument,
   Edit,
   Loading,
   Monitor,
   Operation,
-  QuestionFilled,
+  InfoFilled,
+  Fold,
+  Expand,
   RefreshLeft,
   Setting,
   VideoPause,
@@ -30,31 +30,27 @@ import {
   buildScript,
   type ScriptStep,
 } from './script-generator';
-import {
-  selectMidsceneModelProvider,
-  type MidsceneModelProvider,
-} from './config/midscene-model-presets';
 import * as api from './api';
-import { useAppiumAutoSave } from './config/use-appium-auto-save';
-import AutomationPage from './pages/AutomationPage.vue';
-import AppiumPage from './appium-recorder/AppiumPage.vue';
-import { normalizeFlowBackground, normalizeFlowLineColor } from './appium-recorder/flow-appearance';
-import ConfigPage from './pages/ConfigPage.vue';
-import GeneratorPage from './pages/GeneratorPage.vue';
-import HelpCenterDialog from './components/help/HelpCenterDialog.vue';
+import { useModelConfig } from './config/use-model-config';
+import { useDevicePreview } from './composables/use-device-preview';
+import { useScriptExecution } from './composables/use-script-execution';
+import { useInitialResource } from './composables/use-initial-resource';
+import AppSidebar from './components/AppSidebar.vue';
+const AnalysisPage = defineAsyncComponent(() => import('./pages/AnalysisPage.vue'));
+const AutomationPage = defineAsyncComponent(() => import('./pages/AutomationPage.vue'));
+const AppiumPage = defineAsyncComponent(() => import('./appium-recorder/AppiumPage.vue'));
+const ConfigPage = defineAsyncComponent(() => import('./pages/ConfigPage.vue'));
+const GeneratorPage = defineAsyncComponent(() => import('./pages/GeneratorPage.vue'));
+const HelpCenter = defineAsyncComponent(() => import('./components/help/HelpCenter.vue'));
 import type {
-  AndroidDevice,
-  ConfigForm,
   AppPreset,
-  ExecutionStep,
   GeneratorMode,
   MenuKey,
-  RunScriptStreamEvent,
   SavedScript,
 } from './types';
 
 const ACTIVE_MENU_STORAGE_KEY = 'android-midscene-automation:active-menu';
-const menuKeys: MenuKey[] = ['generator', 'automation', 'config', 'appium'];
+const menuKeys: MenuKey[] = ['analysis', 'generator', 'automation', 'config', 'appium', 'about'];
 const storedMenu = window.localStorage.getItem(ACTIVE_MENU_STORAGE_KEY) as MenuKey | null;
 const activeMenu = ref<MenuKey>(storedMenu && menuKeys.includes(storedMenu) ? storedMenu : 'generator');
 const activeGeneratorMode = ref<GeneratorMode>('ai');
@@ -64,54 +60,17 @@ const promptPresetId = shallowRef(defaultPromptPresetId);
 const steps = ref<ScriptStep[]>([]);
 const errorMessage = ref('');
 const isGenerating = ref(false);
-const isSavingModelConfig = ref(false);
 const isSavingAppPreset = ref(false);
-const isRunningScript = ref(false);
-const isStoppingScript = ref(false);
 const showGeneratedCode = ref(false);
-const helpCenterVisible = shallowRef(false);
 const generatedCodeOverride = shallowRef<string | null>(null);
 const generatedCodeDraft = shallowRef('');
 const generatedCodeEditing = shallowRef(false);
 const generatedCodeEditSaving = shallowRef(false);
 const importingTestCase = shallowRef(false);
 const importedTestCaseFileName = shallowRef('');
-const testingModelKey = ref('');
-const playgroundAvailable = ref(false);
-const playgroundPreviewError = ref('');
-const playgroundDeviceId = ref('');
-const playgroundFrameUrl = ref('');
-const playgroundFrameSignature = ref('');
-const restartingPlaygroundPreview = shallowRef(false);
-const devicePreviewUrl = ref('');
-const devicePreviewMode = ref<'stream' | 'screenshot' | ''>('');
-const backendOffline = shallowRef(false);
-const androidDevices = ref<AndroidDevice[]>([]);
-const deviceInterfaceSize = reactive({ width: 0, height: 0 });
-const deviceDebug = reactive({
-  rawX: 0,
-  rawY: 0,
-  mappedX: 0,
-  mappedY: 0,
-  action: '',
-  status: 'idle',
-  message: '',
-});
 const selectedScriptId = ref('');
-const executionLog = ref('');
-const executionProcess = ref<ExecutionStep[]>([]);
-const lastRunStatus = ref('');
-const runStartedAt = shallowRef<number | null>(null);
-const runningElapsedNow = shallowRef(0);
 const savedScripts = ref<SavedScript[]>([]);
 const appPresets = ref<AppPreset[]>([]);
-const modelTestStatus = reactive({
-  midscene: '',
-  scriptOptimizer: '',
-  appium: '',
-  promptOptimizer: '',
-});
-const aiRecognitionModelConfigured = shallowRef(false);
 const actionDialog = reactive({
   visible: false,
   title: '',
@@ -131,22 +90,7 @@ const codeDialog = reactive({
   editing: false,
   saving: false,
 });
-let playgroundPollTimer: number | null = null;
-let devicePreviewTimer: number | null = null;
-let executionProgressTimer: number | null = null;
 let aiGenerateAbortController: AbortController | null = null;
-let scriptRunAbortController: AbortController | null = null;
-
-const isBackendFetchError = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error || '');
-  return error instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(message);
-};
-
-const stopPlaygroundPollTimer = () => {
-  if (!playgroundPollTimer) return;
-  window.clearInterval(playgroundPollTimer);
-  playgroundPollTimer = null;
-};
 
 const form = reactive({
   promptTitle: '',
@@ -160,50 +104,29 @@ const appPresetForm = reactive({
   packageName: '',
 });
 
-const configForm = reactive<ConfigForm>({
-  appium: { reportSummary: resolveReportSummary(), model: { baseUrl: '', apiKey: '', name: '' }, promptOptimizer: { model: { baseUrl: '', apiKey: '', name: '' } }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
-  runtime: {
-    androidSdkPath: '',
-    reportOutputPath: '',
-  },
-  midscene: {
-    model: {
-      provider: 'custom',
-      baseUrl: '',
-      apiKey: '',
-      name: '',
-      family: '',
-    },
-    env: {},
-  },
-  scriptOptimizer: {
-    model: {
-      baseUrl: '',
-      apiKey: '',
-      name: '',
-    },
-  },
-});
-const lastCustomMidsceneModel = reactive({
-  baseUrl: '',
-  apiKey: '',
-  name: '',
-  family: '',
-});
+const { ready: configReady, configForm, appiumAutoSave, isSavingModelConfig, testingModelKey, modelTestStatus, aiRecognitionModelConfigured, loadConfig, updateMidsceneModelProvider, getMidsceneModelConfigError, saveModelConfig, testModel } = useModelConfig();
+const { connectionError, reconnecting, reconnect, playgroundAvailable, playgroundPreviewError, playgroundDeviceId, playgroundFrameUrl, devicePreviewUrl, androidDevices, deviceInterfaceSize, refreshDevicePreview, tapDevice, swipeDevice, switchAndroidDevice, triggerDeviceKey } = useDevicePreview(activeMenu);
+const { isRunningScript, isStoppingScript, executionLog, executionProcess, lastRunStatus, runningElapsedText, runSelectedScript, stopSelectedScript } = useScriptExecution(computed(() => selectedScript.value), selectedScriptId, playgroundDeviceId, id => loadSavedScripts(id), getMidsceneModelConfigError);
+const visitedMenus = reactive(new Set<MenuKey>([activeMenu.value]));
+const openMenus = ref<MenuKey[]>([...menuKeys]);
+const visibleMenuItems = computed(() => openMenus.value.map(key => menuItems.find(item => item.key === key)!));
+function closeMenu(key: MenuKey) {
+  if (openMenus.value.length === 1) return;
+  const index = openMenus.value.indexOf(key);
+  openMenus.value.splice(index, 1);
+  if (activeMenu.value === key) activeMenu.value = openMenus.value[Math.max(0, index - 1)];
+}
 
-const appiumAutoSave = useAppiumAutoSave(configForm, async value => {
-  await api.saveAppiumConfig(value);
-}, error => {
-  void ElMessageBox.alert(error instanceof Error ? error.message : 'Appium 配置自动保存失败', '自动保存失败', { type: 'error' }).catch(() => {});
-});
-
+const sidebarCollapsed = shallowRef(false);
 const menuItems = [
+  { key: 'analysis', label: '分析页', icon: DataAnalysis },
   { key: 'generator', label: '测试脚本生成', icon: Operation },
   { key: 'automation', label: '自动化测试', icon: Monitor },
+  { key: 'appium', label: 'Appium', icon: Monitor },
+  { key: 'config', label: '参数配置', icon: Setting },
+  { key: 'about', label: '关于', icon: InfoFilled },
 ] as const;
 const activeMenuLabel = computed(() => {
-  if (activeMenu.value === 'appium') return 'Appium';
-  if (activeMenu.value === 'config') return '参数配置';
   return menuItems.find((item) => item.key === activeMenu.value)?.label || 'Midscene';
 });
 
@@ -666,76 +589,6 @@ const generateWithModel = async () => {
   }
 };
 
-const loadConfig = async () => {
-  const payload = await api.getConfig();
-  Object.assign(configForm.runtime, payload.runtime || {});
-  Object.assign(configForm.midscene.model, payload.midscene.model);
-  Object.keys(configForm.midscene.env).forEach((key) => {
-    delete configForm.midscene.env[key];
-  });
-  Object.assign(configForm.midscene.env, payload.midscene.env || {});
-  Object.assign(configForm.scriptOptimizer.model, payload.scriptOptimizer.model);
-  Object.assign(configForm.appium.model, payload.appium?.model || { baseUrl: '', apiKey: '', name: '' });
-  Object.assign(configForm.appium.promptOptimizer!.model, payload.appium?.promptOptimizer?.model || { baseUrl: '', apiKey: '', name: '' });
-  configForm.appium.screenshotReport = payload.appium?.screenshotReport === true;
-  configForm.appium.reportSummary = resolveReportSummary(payload.appium?.reportSummary);
-  configForm.appium.aiDeduplication = resolveAiDeduplication(payload.appium?.aiDeduplication);
-  configForm.appium.aiPromptPresets = resolveAiPromptPresets(payload.appium?.aiPromptPresets);
-  configForm.appium.flowBackgroundColor = normalizeFlowBackground(payload.appium?.flowBackgroundColor);
-  configForm.appium.flowLineColor = normalizeFlowLineColor(payload.appium?.flowLineColor);
-  appiumAutoSave.initialize();
-  aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(configForm.appium.model);
-  if (configForm.midscene.model.provider !== 'codex') {
-    rememberCustomMidsceneModel();
-  }
-};
-
-const rememberCustomMidsceneModel = () => {
-  if (configForm.midscene.model.provider === 'codex') return;
-  lastCustomMidsceneModel.baseUrl = configForm.midscene.model.baseUrl;
-  lastCustomMidsceneModel.apiKey = configForm.midscene.model.apiKey;
-  lastCustomMidsceneModel.name = configForm.midscene.model.name;
-  lastCustomMidsceneModel.family = configForm.midscene.model.family;
-};
-
-const updateMidsceneModelProvider = (provider: MidsceneModelProvider) => {
-  if (configForm.midscene.model.provider !== 'codex') {
-    rememberCustomMidsceneModel();
-  }
-  Object.assign(configForm.midscene.model, selectMidsceneModelProvider(provider, configForm.midscene.model, lastCustomMidsceneModel));
-  modelTestStatus.midscene = '';
-};
-
-const getMidsceneModelConfigError = () => {
-  const model = configForm.midscene.model;
-  const missing = [];
-
-  if (!model.baseUrl.trim()) missing.push('Base URL');
-  if (!model.name.trim()) missing.push('Model Name');
-  if (!model.family.trim()) missing.push('Model Family');
-  if (model.provider !== 'codex' && !model.apiKey.trim()) missing.push('API Key');
-
-  if (!missing.length) return '';
-  return `Midscene 模型配置不完整：缺少 ${missing.join('、')}。请在“参数配置 > Midscene配置 > Midscene 模型”中选择“使用 Codex”，或补齐自定义提供方后测试并保存。`;
-};
-
-const saveModelConfig = async () => {
-  isSavingModelConfig.value = true;
-  errorMessage.value = '';
-  openActionDialog('保存参数配置');
-  try {
-    await api.saveConfig({ runtime: { ...configForm.runtime } });
-    closeActionDialog();
-    ElMessage.success('参数配置已保存');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '参数配置保存失败';
-    errorMessage.value = message;
-    failActionDialog(message);
-  } finally {
-    isSavingModelConfig.value = false;
-  }
-};
-
 const loadAppPresets = async () => {
   const payload = await api.getAppPresets();
   appPresets.value = payload.apps || [];
@@ -801,511 +654,6 @@ const removeAppPreset = async (id: string) => {
   }
 };
 
-const testModel = async (key: 'midscene' | 'scriptOptimizer' | 'appium' | 'promptOptimizer') => {
-  if (testingModelKey.value) return;
-  testingModelKey.value = key;
-  errorMessage.value = '';
-  modelTestStatus[key] = '';
-  const model = { ...(key === 'promptOptimizer'
-      ? configForm.appium.promptOptimizer!.model
-      : configForm[key].model) };
-
-  try {
-    const payload = await api.testModel({ modelKey: key, model, save: true });
-    if (!payload.saved) throw new Error('模型未保存，请重试');
-    const successMessage = `测试通过，配置已保存${payload.content ? `：${payload.content}` : ''}`;
-    modelTestStatus[key] = '';
-    if (key === 'appium') aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(model);
-    void ElMessageBox.alert(successMessage, '模型测试成功', {
-      type: 'success',
-      confirmButtonText: '确定',
-    }).catch(() => {});
-  } catch (error) {
-    modelTestStatus[key] = `未保存：${error instanceof Error ? error.message : '测试失败'}`;
-  } finally {
-    testingModelKey.value = '';
-  }
-};
-
-const loadAndroidDevices = async () => {
-  if (backendOffline.value) return;
-  try {
-    const payload = await api.getAndroidDevices();
-    backendOffline.value = false;
-    androidDevices.value = payload.devices || [];
-    playgroundDeviceId.value = payload.currentDeviceId || '';
-    playgroundAvailable.value = androidDevices.value.some((item) => item.status === 'device');
-  } catch (error) {
-    if (isBackendFetchError(error)) {
-      markBackendOffline();
-      return;
-    }
-    throw error;
-  }
-};
-
-const loadDeviceInterface = async () => {
-  try {
-    const payload = await api.getAndroidDisplayInfo(playgroundDeviceId.value);
-    deviceInterfaceSize.width = Number(payload.width) || 0;
-    deviceInterfaceSize.height = Number(payload.height) || 0;
-  } catch {
-    deviceInterfaceSize.width = 0;
-    deviceInterfaceSize.height = 0;
-  }
-};
-
-const loadAdbPreview = () => {
-  if (backendOffline.value) return;
-  if (!playgroundDeviceId.value) {
-    playgroundFrameUrl.value = '';
-    devicePreviewUrl.value = '';
-    devicePreviewMode.value = '';
-    return;
-  }
-
-  playgroundFrameUrl.value = '';
-  devicePreviewUrl.value = `${api.APP_BASE}/api/android-preview?deviceId=${encodeURIComponent(playgroundDeviceId.value)}&t=${Date.now()}`;
-  devicePreviewMode.value = 'screenshot';
-};
-
-const refreshAdbPreviewAfterInput = () => {
-  if (devicePreviewMode.value === 'screenshot' && devicePreviewUrl.value) {
-    window.setTimeout(loadAdbPreview, 120);
-  }
-};
-
-const refreshDevicePreview = async () => {
-  if (devicePreviewMode.value === 'stream' && playgroundDeviceId.value) {
-    if (restartingPlaygroundPreview.value) return;
-    restartingPlaygroundPreview.value = true;
-    playgroundFrameUrl.value = '';
-    playgroundFrameSignature.value = '';
-    try {
-      await api.restartPlaygroundPreview({ deviceId: playgroundDeviceId.value });
-      restartingPlaygroundPreview.value = false;
-      await loadPlaygroundStatus();
-    } catch (error) {
-      playgroundPreviewError.value = error instanceof Error ? error.message : '重启实时预览失败';
-    } finally {
-      restartingPlaygroundPreview.value = false;
-    }
-    return;
-  }
-  loadAdbPreview();
-};
-
-const startDevicePreviewTimer = () => {
-  if (backendOffline.value) return;
-  if (devicePreviewTimer) return;
-  loadAdbPreview();
-  devicePreviewTimer = window.setInterval(loadAdbPreview, 1000);
-};
-
-const stopDevicePreviewTimer = () => {
-  if (!devicePreviewTimer) return;
-  window.clearInterval(devicePreviewTimer);
-  devicePreviewTimer = null;
-};
-
-const markBackendOffline = () => {
-  if (backendOffline.value) return;
-  backendOffline.value = true;
-  playgroundAvailable.value = false;
-  playgroundFrameUrl.value = '';
-  playgroundFrameSignature.value = '';
-  devicePreviewUrl.value = '';
-  devicePreviewMode.value = '';
-  playgroundPreviewError.value = '本地服务已断开，请重新运行启动命令后刷新页面。';
-  errorMessage.value = playgroundPreviewError.value;
-  stopPlaygroundPollTimer();
-  stopDevicePreviewTimer();
-};
-
-const loadPlaygroundStatus = async () => {
-  if (backendOffline.value || restartingPlaygroundPreview.value) return;
-  if (!playgroundDeviceId.value) {
-    stopDevicePreviewTimer();
-    playgroundAvailable.value = false;
-    playgroundPreviewError.value = '';
-    playgroundFrameUrl.value = '';
-    playgroundFrameSignature.value = '';
-    devicePreviewUrl.value = '';
-    devicePreviewMode.value = '';
-    return;
-  }
-
-  try {
-    await loadDeviceInterface();
-    if (restartingPlaygroundPreview.value) return;
-    const payload = await api.getPlaygroundStatus();
-    if (restartingPlaygroundPreview.value) return;
-
-    const matchedDevice = !payload.deviceId || payload.deviceId === playgroundDeviceId.value;
-    const hasRealtimeStream = payload.previewKind === 'scrcpy' && payload.sessionConnected === true;
-    const hasPlayground = Boolean(payload.available) && matchedDevice && hasRealtimeStream;
-    playgroundAvailable.value = androidDevices.value.some((item) => item.status === 'device');
-    playgroundPreviewError.value =
-      matchedDevice && !hasRealtimeStream
-        ? payload.previewError || payload.setupState || ''
-        : `未找到设备 ${playgroundDeviceId.value} 对应的 Playground 实例`;
-
-    const nextSignature = `${payload.url || ''}::${playgroundDeviceId.value}`;
-    if (hasPlayground) {
-      stopDevicePreviewTimer();
-      if (nextSignature !== playgroundFrameSignature.value || !playgroundFrameUrl.value) {
-        playgroundFrameSignature.value = nextSignature;
-        playgroundFrameUrl.value = `${api.APP_BASE}/__android_playground__/?ts=${Date.now()}`;
-      }
-      devicePreviewUrl.value = '';
-      devicePreviewMode.value = 'stream';
-      playgroundPreviewError.value = '';
-    }
-
-    if (!hasPlayground) {
-      playgroundFrameUrl.value = '';
-      playgroundFrameSignature.value = '';
-      loadAdbPreview();
-      if (activeMenu.value === 'appium' || activeMenu.value === 'automation') startDevicePreviewTimer();
-    }
-  } catch (error) {
-    if (isBackendFetchError(error)) {
-      markBackendOffline();
-      return;
-    }
-    playgroundAvailable.value = false;
-    playgroundFrameUrl.value = '';
-    playgroundFrameSignature.value = '';
-    loadAdbPreview();
-    if (activeMenu.value === 'appium' || activeMenu.value === 'automation') startDevicePreviewTimer();
-    playgroundPreviewError.value = error instanceof Error ? error.message : '设备预览不可用';
-  }
-};
-
-const tapDevice = async (x: number, y: number) => {
-  deviceDebug.action = 'tap';
-  deviceDebug.status = 'pending';
-  try {
-    await api.tapAndroid({
-      deviceId: playgroundDeviceId.value,
-      x,
-      y,
-    });
-    deviceDebug.status = 'ok';
-    deviceDebug.message = 'tap sent';
-    refreshAdbPreviewAfterInput();
-  } catch (error) {
-    deviceDebug.status = 'error';
-    deviceDebug.message = error instanceof Error ? error.message : '点击失败';
-    throw error;
-  }
-};
-
-const swipeDevice = async (startX: number, startY: number, endX: number, endY: number, duration = 120) => {
-  deviceDebug.action = 'swipe';
-  deviceDebug.status = 'pending';
-  try {
-    await api.swipeAndroid({
-      deviceId: playgroundDeviceId.value,
-      startX,
-      startY,
-      endX,
-      endY,
-      duration,
-    });
-    deviceDebug.status = 'ok';
-    deviceDebug.message = 'swipe sent';
-    refreshAdbPreviewAfterInput();
-  } catch (error) {
-    deviceDebug.status = 'error';
-    deviceDebug.message = error instanceof Error ? error.message : '滑动失败';
-    throw error;
-  }
-};
-
-const switchAndroidDevice = async (deviceId: string) => {
-  try {
-    const payload = await api.setAndroidDevice({ deviceId });
-    playgroundDeviceId.value = payload.currentDeviceId || deviceId;
-    await loadPlaygroundStatus();
-  } catch (error) {
-    playgroundPreviewError.value = error instanceof Error ? error.message : '切换设备失败';
-  }
-};
-
-const triggerDeviceKey = async (keyCode: number) => {
-  if (!playgroundDeviceId.value) {
-    return;
-  }
-  try {
-    await api.sendAndroidKeyevent({
-      deviceId: playgroundDeviceId.value,
-      keyCode,
-    });
-    refreshAdbPreviewAfterInput();
-  } catch (error) {
-    playgroundPreviewError.value = error instanceof Error ? error.message : '操作失败';
-  }
-};
-
-const buildExecutionProcess = (script: SavedScript): ExecutionStep[] => {
-  const activeSteps = (script.steps || []).filter((step) => step.enabled !== false);
-  if (!activeSteps.length) {
-    return [
-      {
-        id: 'script',
-        sourceIndex: 0,
-        title: script.promptTitle || script.name,
-        method: 'script',
-        prompt: script.filePath,
-        status: 'pending',
-        detail: '等待执行脚本',
-      },
-    ];
-  }
-
-  return activeSteps
-    .map((step, index) => ({
-      id: step.id || `${script.id}-${index}`,
-      sourceIndex: index,
-      title: step.label || `步骤 ${index + 1}`,
-      method: step.type,
-      prompt: step.prompt || step.value || '',
-      status: 'pending' as const,
-      detail: '等待前置步骤完成',
-    }))
-    .filter((step) => step.title !== '统一处理弹窗');
-};
-
-const markExecutionProcess = (success: boolean, output: string) => {
-  if (!executionProcess.value.length) return;
-  const runningIndex = executionProcess.value.findIndex((step) => step.status === 'running');
-  const errorIndex = executionProcess.value.findIndex((step) => step.status === 'error');
-  const failedIndex = success
-    ? -1
-    : runningIndex >= 0
-      ? runningIndex
-      : errorIndex >= 0
-        ? errorIndex
-        : Math.max(0, executionProcess.value.length - 1);
-  executionProcess.value = executionProcess.value.map((step, index) => {
-    if (success || index < failedIndex) {
-      return { ...step, status: 'success', detail: '执行完成' };
-    }
-    if (index === failedIndex) {
-      return {
-        ...step,
-        status: 'error',
-        detail: output || '执行失败',
-      };
-    }
-    return step;
-  });
-};
-
-const formatElapsed = (startedAt: number) => `${Math.max(0, Math.floor((Date.now() - startedAt) / 1000))} 秒`;
-const formatCompactDuration = (milliseconds: number) => {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes ? `${minutes}m${seconds}s` : `${seconds}s`;
-};
-const runningElapsedText = computed(() => {
-  if (lastRunStatus.value !== '执行中' || !runStartedAt.value) return '';
-  return formatCompactDuration(runningElapsedNow.value - runStartedAt.value);
-});
-
-const updateRunningStepElapsed = () => {
-  if (runStartedAt.value) {
-    runningElapsedNow.value = Date.now();
-  }
-  executionProcess.value = executionProcess.value.map((step) => {
-    if (step.status !== 'running' || !step.startedAt) {
-      return step;
-    }
-    return {
-      ...step,
-      detail: `执行中，已耗时 ${formatElapsed(step.startedAt)}`,
-    };
-  });
-};
-
-const startExecutionProgressTimer = () => {
-  if (executionProgressTimer) {
-    window.clearInterval(executionProgressTimer);
-  }
-  executionProgressTimer = window.setInterval(updateRunningStepElapsed, 1000);
-};
-
-const stopExecutionProgressTimer = () => {
-  if (!executionProgressTimer) return;
-  window.clearInterval(executionProgressTimer);
-  executionProgressTimer = null;
-};
-
-const appendExecutionStepLog = (event: Extract<RunScriptStreamEvent, { type: 'step' }>) => {
-  const title = event.title || `步骤 ${event.index + 1}`;
-  if (event.status === 'start') {
-    executionLog.value += `[步骤 ${event.index + 1}] 开始：${title}\n`;
-    return;
-  }
-  if (event.status === 'success') {
-    executionLog.value += `[步骤 ${event.index + 1}] 完成：${title}\n`;
-    return;
-  }
-  executionLog.value += `[步骤 ${event.index + 1}] 失败：${title}${event.detail ? `\n${event.detail}` : ''}\n`;
-};
-
-const applyRunScriptEvent = (event: RunScriptStreamEvent) => {
-  if (event.type === 'output') {
-    executionLog.value += event.chunk;
-    if (!lastRunStatus.value) {
-      lastRunStatus.value = '执行中';
-    }
-    return;
-  }
-
-  if (event.type === 'error') {
-    executionLog.value += `${event.message}\n`;
-    markExecutionProcess(false, event.message);
-    lastRunStatus.value = '执行失败';
-    return;
-  }
-
-  if (event.type === 'step') {
-    appendExecutionStepLog(event);
-    executionProcess.value = executionProcess.value.map((step) => {
-      if (step.sourceIndex !== event.index) {
-        return step;
-      }
-
-      if (event.status === 'start') {
-        const startedAt = Date.now();
-        return { ...step, status: 'running', startedAt, detail: `执行中，已耗时 ${formatElapsed(startedAt)}` };
-      }
-      if (event.status === 'success') {
-        return { ...step, status: 'success', startedAt: undefined, detail: '执行完成' };
-      }
-      return {
-        ...step,
-        status: 'error',
-        startedAt: undefined,
-        detail: event.detail || '执行失败',
-      };
-    });
-    return;
-  }
-
-  if (event.type === 'done') {
-    if (event.output && !executionLog.value.trim()) {
-      executionLog.value = event.output;
-    }
-    markExecutionProcess(event.success, event.output || executionLog.value);
-    lastRunStatus.value = event.success ? '执行完成' : event.output.includes('脚本执行已停止') ? '已停止' : '执行失败';
-  }
-};
-
-const runSelectedScript = async () => {
-  if (isRunningScript.value) return;
-
-  if (!selectedScript.value) {
-    lastRunStatus.value = '请先选择脚本';
-    return;
-  }
-
-  const modelConfigError = getMidsceneModelConfigError();
-  if (modelConfigError) {
-    lastRunStatus.value = '模型配置不完整';
-    executionLog.value = modelConfigError;
-    ElMessage.error('Midscene 模型配置不完整');
-    return;
-  }
-
-  isRunningScript.value = true;
-  isStoppingScript.value = false;
-  runStartedAt.value = Date.now();
-  runningElapsedNow.value = runStartedAt.value;
-  executionLog.value = '';
-  lastRunStatus.value = '执行中';
-
-  try {
-    await loadSavedScripts(selectedScriptId.value);
-    const script = selectedScript.value;
-    if (!script) {
-      throw new Error('脚本不存在');
-    }
-
-    executionProcess.value = buildExecutionProcess(script);
-    if (executionProcess.value[0]) {
-      const startedAt = Date.now();
-      executionProcess.value[0].status = 'running';
-      executionProcess.value[0].startedAt = startedAt;
-      executionProcess.value[0].detail = `执行中，已耗时 ${formatElapsed(startedAt)}`;
-    }
-    startExecutionProgressTimer();
-
-    scriptRunAbortController = new AbortController();
-    await api.runScript(
-      {
-        code: script.code,
-        scriptName: script.name,
-        deviceId: playgroundDeviceId.value,
-        steps: script.steps || [],
-        signal: scriptRunAbortController.signal,
-      },
-      applyRunScriptEvent,
-    );
-
-    if (!lastRunStatus.value) {
-      lastRunStatus.value = '执行完成';
-    }
-    if (!executionLog.value.trim()) {
-      executionLog.value = '执行完成，无输出';
-    }
-  } catch (error) {
-    const isAbortError = error instanceof DOMException && error.name === 'AbortError';
-    executionLog.value = isAbortError ? '脚本执行已停止。' : error instanceof Error ? error.message : '执行失败';
-    markExecutionProcess(false, executionLog.value);
-    lastRunStatus.value = isAbortError ? '已停止' : '执行失败';
-  } finally {
-    stopExecutionProgressTimer();
-    isRunningScript.value = false;
-    isStoppingScript.value = false;
-    runStartedAt.value = null;
-    runningElapsedNow.value = 0;
-    scriptRunAbortController = null;
-  }
-};
-
-const stopSelectedScript = async () => {
-  if (!isRunningScript.value || isStoppingScript.value) return;
-
-  try {
-    await ElMessageBox.confirm(
-      '停止后当前脚本进程会立即终止，未完成步骤不会继续执行。确定停止吗？',
-      '确认停止执行',
-      {
-        confirmButtonText: '停止执行',
-        cancelButtonText: '继续执行',
-        type: 'warning',
-        confirmButtonClass: 'el-button--danger',
-      },
-    );
-  } catch {
-    return;
-  }
-
-  isStoppingScript.value = true;
-  lastRunStatus.value = '停止中';
-
-  try {
-    await api.stopScript();
-  } catch (error) {
-    executionLog.value += `${error instanceof Error ? error.message : '停止执行失败'}\n`;
-    scriptRunAbortController?.abort();
-  }
-};
-
 watch(
   () => generatedCode.value,
   () => {
@@ -1315,46 +663,35 @@ watch(
   },
 );
 
-watch(activeMenu, (menu) => {
+const configResource = useInitialResource('参数配置', loadConfig);
+const presetsResource = useInitialResource('应用预设', loadAppPresets);
+const scriptsResource = useInitialResource('脚本列表', loadSavedScripts);
+const initialResources = [configResource, presetsResource, scriptsResource];
+const failedResources = computed(() => initialResources.filter(resource => resource.error.value));
+watch(activeMenu, menu => {
   window.localStorage.setItem(ACTIVE_MENU_STORAGE_KEY, menu);
-  if (menu === 'appium' || menu === 'automation') {
-    stopDevicePreviewTimer();
-    void loadPlaygroundStatus();
-  } else {
-    stopDevicePreviewTimer();
-  }
-}, { immediate: true });
-
+  visitedMenus.add(menu);
+  if (!openMenus.value.includes(menu)) openMenus.value.push(menu);
+}, { flush: 'sync' });
+const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (!appiumAutoSave.dirty.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+};
 onMounted(async () => {
-  try {
-    await migrateLegacySavedScripts();
-  } catch (error) {
-    console.warn('脚本缓存迁移失败', error);
-  }
-
-  await Promise.allSettled([loadConfig(), loadAppPresets(), loadAndroidDevices(), loadSavedScripts()]);
-  await loadPlaygroundStatus();
-  playgroundPollTimer = window.setInterval(() => {
-    if (backendOffline.value) {
-      stopPlaygroundPollTimer();
-      return;
-    }
-    void loadAndroidDevices();
-    void loadPlaygroundStatus();
-  }, 2500);
+  window.addEventListener('beforeunload', warnBeforeUnload);
+  try { await migrateLegacySavedScripts(); }
+  catch (error) { ElMessage.warning(error instanceof Error ? error.message : '脚本缓存迁移失败'); }
+  await Promise.all(initialResources.map(resource => resource.load()));
 });
-
 onUnmounted(() => {
-  stopPlaygroundPollTimer();
-  stopDevicePreviewTimer();
-  stopExecutionProgressTimer();
+  window.removeEventListener('beforeunload', warnBeforeUnload);
   aiGenerateAbortController?.abort();
-  scriptRunAbortController?.abort();
 });
 </script>
 
 <template>
-  <div class="layout">
+  <div class="layout" :class="{ 'layout--collapsed': sidebarCollapsed }">
     <el-dialog
       v-model="actionDialog.visible"
       :title="actionDialog.title"
@@ -1430,50 +767,20 @@ onUnmounted(() => {
       <pre v-else class="code-block code-dialog__body"><code>{{ codeDialog.code || '暂无代码' }}</code></pre>
     </el-dialog>
 
-    <aside class="layout-sidebar">
-      <div class="layout-sidebar__top">
-        <div class="layout-sidebar__logo">MS</div>
-      </div>
-      <el-menu :default-active="activeMenu" :default-openeds="['midscene']" class="layout-menu" @select="selectMenu">
-        <el-sub-menu index="midscene">
-          <template #title>
-            <el-icon><Operation /></el-icon>
-            <span>Midscene</span>
-          </template>
-          <el-menu-item v-for="item in menuItems" :key="item.key" :index="item.key">
-            <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.label }}</span>
-          </el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="appium">
-          <el-icon><Monitor /></el-icon>
-          <span>Appium</span>
-        </el-menu-item>
-        <el-menu-item index="config">
-          <el-icon><Setting /></el-icon>
-          <span>参数配置</span>
-        </el-menu-item>
-      </el-menu>
-      <div class="layout-sidebar__footer">
-        <el-tooltip content="帮助与版本" placement="right">
-          <button
-            type="button"
-            class="layout-sidebar__help"
-            aria-label="打开帮助与版本信息"
-            @click="helpCenterVisible = true"
-          >
-            <el-icon><QuestionFilled /></el-icon>
-          </button>
-        </el-tooltip>
-      </div>
-    </aside>
+    <AppSidebar :active-menu="activeMenu" :collapsed="sidebarCollapsed"
+      @select="selectMenu" />
 
     <div class="layout-main">
       <header class="layout-header">
         <div class="layout-header__title">
-          {{ activeMenuLabel }}
+          <el-button text class="layout-collapse" :icon="sidebarCollapsed ? Expand : Fold"
+            :aria-label="sidebarCollapsed ? '展开导航' : '收起导航'" :aria-expanded="!sidebarCollapsed"
+            @click="sidebarCollapsed = !sidebarCollapsed" />
+          <span class="layout-header__breadcrumb">工作空间 <span>/</span></span>
+          <span>{{ activeMenuLabel }}</span>
         </div>
         <div class="layout-header__actions">
+          <div id="appium-header-actions" v-show="activeMenu === 'appium'"></div>
           <el-button
             v-if="activeMenu === 'generator'"
             type="primary"
@@ -1511,18 +818,42 @@ onUnmounted(() => {
         </div>
       </header>
 
+      <nav class="layout-page-tabs" aria-label="页面导航">
+        <div v-for="item in visibleMenuItems" :key="item.key" class="layout-page-tab" :class="{ 'is-active': activeMenu === item.key }">
+          <button type="button" class="layout-page-tab__select"
+            :aria-current="activeMenu === item.key ? 'page' : undefined" @click="selectMenu(item.key)">
+            <el-icon><component :is="item.icon" /></el-icon>{{ item.label }}
+          </button>
+          <button type="button" class="layout-page-tab__close" :aria-label="`关闭${item.label}页签`"
+            :disabled="openMenus.length === 1" :title="openMenus.length === 1 ? '至少保留一个页签' : '关闭页签，编辑状态仍保留'" @click="closeMenu(item.key)">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+      </nav>
+
+      <div v-if="connectionError" class="connection-status" role="status">
+        <span>{{ connectionError }}</span><el-button link type="primary" :loading="reconnecting" @click="reconnect">重新连接</el-button>
+      </div>
+      <div v-for="resource in failedResources" :key="resource.name" class="connection-status" role="alert">
+        <span>{{ resource.name }}加载失败：{{ resource.error.value }}</span>
+        <el-button link type="primary" :loading="resource.loading.value" @click="resource.load">重试</el-button>
+      </div>
       <main
         class="page-body"
         :class="{
           'page-body--fixed': activeMenu === 'generator' && activeGeneratorMode === 'ai',
           'page-body--appium': activeMenu === 'appium',
+          'page-body--config': activeMenu === 'config',
         }"
       >
-        <el-alert v-if="activeMenu !== 'appium' && activeMenu !== 'config' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
+        <el-alert v-if="activeMenu !== 'appium' && activeMenu !== 'config' && activeMenu !== 'about' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
           <template #title>{{ errorMessage }}</template>
         </el-alert>
 
+        <AnalysisPage v-if="visitedMenus.has('analysis')" v-show="activeMenu === 'analysis'" :active="activeMenu === 'analysis'" />
+
         <GeneratorPage
+          v-if="visitedMenus.has('generator')"
           v-show="activeMenu === 'generator'"
           v-model:mode="activeGeneratorMode"
           v-model:source-prompt="sourcePrompt"
@@ -1550,7 +881,10 @@ onUnmounted(() => {
           @clear-all="clearGeneratorPage"
         />
 
+        <div v-if="activeMenu === 'config' && !configReady && !configResource.error.value" class="page-loading" role="status">正在加载参数配置…</div>
+
         <ConfigPage
+          v-if="visitedMenus.has('config') && configReady"
           v-show="activeMenu === 'config'"
           :config-form="configForm"
           :app-presets="appPresets"
@@ -1560,6 +894,8 @@ onUnmounted(() => {
           :is-saving-app-preset="isSavingAppPreset"
           :model-test-status="modelTestStatus"
           :appium-save-status="appiumAutoSave.status.value"
+          :appium-save-failed="appiumAutoSave.failed.value"
+          @retry-appium-save="appiumAutoSave.retry"
           @test-model="testModel"
           @save-model-config="saveModelConfig"
           @save-app-preset="saveAppPreset"
@@ -1570,6 +906,7 @@ onUnmounted(() => {
         />
 
         <AutomationPage
+          v-if="visitedMenus.has('automation')"
           v-show="activeMenu === 'automation'"
           v-model:selected-script-id="selectedScriptId"
           :saved-scripts="savedScripts"
@@ -1600,6 +937,7 @@ onUnmounted(() => {
         />
 
         <AppiumPage
+          v-if="visitedMenus.has('appium')"
           v-show="activeMenu === 'appium'"
           :active="activeMenu === 'appium'"
           :app-presets="appPresets"
@@ -1623,9 +961,9 @@ onUnmounted(() => {
           :swipe-device="swipeDevice"
         />
 
+        <HelpCenter v-if="visitedMenus.has('about')" v-show="activeMenu === 'about'" :active="activeMenu === 'about'" />
       </main>
     </div>
 
-    <HelpCenterDialog v-model="helpCenterVisible" />
   </div>
 </template>

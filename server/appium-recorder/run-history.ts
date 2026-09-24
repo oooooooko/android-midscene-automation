@@ -40,3 +40,14 @@ export function deleteRunHistory(scriptId: string, id: string) {
   }
   runSql(`PRAGMA secure_delete=ON; DELETE FROM appium_run_history WHERE script_id=${sqlString(scriptId)} AND id=${sqlString(id)};`);
 }
+
+export function listRunAnalytics() {
+  ensureTable();
+  return querySql<{ scriptId: string; scriptName: string; startedAt: string; durationMs: number; status: RunSummary['status'] }>(`
+    SELECT script_id AS scriptId, started_at AS startedAt,
+      json_extract(summary, '$.scriptName') AS scriptName,
+      json_extract(summary, '$.durationMs') AS durationMs,
+      json_extract(summary, '$.status') AS status
+    FROM appium_run_history;
+  `);
+}

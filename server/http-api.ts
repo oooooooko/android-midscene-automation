@@ -1,3 +1,6 @@
+import { getTestAnalytics } from './analytics';
+import { readBody, readRawBody, requestErrorStatus } from './request-body';
+import { canManageConfig, publicConfig, resolveSavedModelKey } from './config-access';
 import { resolveReportSummary } from '../src/appium-recorder/report-summary';
 // The Midscene Admin HTTP API — extracted from vite.config.ts so the exact
 // same middleware serves the standalone dev/preview flow AND the DSH plugin.
@@ -36,36 +39,11 @@ import {
 import { listScriptRecords, type ScriptStepRecord } from './script-db';
 import { importTestCaseFile, MAX_TEST_CASE_FILE_SIZE } from './test-case-import/service';
 import { handleAppiumRecorderRequest } from './appium-recorder/routes';
+import { getAppiumVersion } from './appium-recorder/managed-appium';
 import { handleRemoteAgentRequest } from './remote-agents/routes';
 import { isRemoteDeviceId, listRemoteAndroidDevices, sendRemoteCommand } from './remote-agents/registry';
 import { getAdbCommand } from './android-sdk';
 import { readAndroidDeviceInfo } from './android-device-info';
-
-async function readBody<T>(req: IncomingMessage) {
-  let body = '';
-  req.on('data', (chunk) => {
-    body += chunk;
-  });
-
-  return await new Promise<T>((resolve) => {
-    req.on('end', () => {
-      resolve(JSON.parse(body || '{}') as T);
-    });
-  });
-}
-
-async function readRawBody(req: IncomingMessage) {
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk) => {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  });
-
-  return await new Promise<Buffer>((resolve) => {
-    req.on('end', () => {
-      resolve(Buffer.concat(chunks));
-    });
-  });
-}
 
 function execFileText(command: string, args: string[] = []) {
   return new Promise<string>((resolve, reject) => {
@@ -637,6 +615,12 @@ export function createApiMiddleware() {
     const requestUrl = new URL(req.url || '/', 'http://localhost');
     const pathname = requestUrl.pathname;
     const allowLocalDevice = isLocalRequest(req);
+    if ((pathname === '/api/config' || pathname.startsWith('/api/config/') || pathname === '/api/test-model') && !canManageConfig(req)) {
+      res.statusCode = 403;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ message: '参数配置仅允许在本机页面访问' }));
+      return;
+    }
     let selectedDeviceId = getSelectedDeviceId(req, res);
     if (!allowLocalDevice && selectedDeviceId && !isRemoteDeviceId(selectedDeviceId)) {
       selectedDeviceId = '';
@@ -667,7 +651,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ sessions: listDeviceSessions() }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '读取设备会话失败' }));
       }
@@ -679,7 +663,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ locks: listActiveDeviceLocks() }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '读取设备锁失败' }));
       }
@@ -704,16 +688,37 @@ export function createApiMiddleware() {
         const limit = Number(requestUrl.searchParams.get('limit') || 30);
         res.end(JSON.stringify({ operations: listOperations(limit) }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '读取执行记录失败' }));
       }
       return;
     }
 
+    if (pathname === '/api/analytics' && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      try {
+        const days = Number(requestUrl.searchParams.get('days') || 0);
+        if (![0, 7, 30, 90].includes(days)) { res.statusCode = 400; res.end(JSON.stringify({ message: '请选择有效的统计范围' })); return; }
+        res.end(JSON.stringify(getTestAnalytics(days)));
+      } catch (error) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ message: error instanceof Error ? error.message : '统计数据加载失败' }));
+      }
+      return;
+    }
+
+    if (pathname === '/api/appium-version' && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(JSON.stringify(await getAppiumVersion()));
+      return;
+    }
+
     if (req.url === '/api/config' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.end(JSON.stringify(loadConfig()));
+      res.end(JSON.stringify(publicConfig(loadConfig())));
       return;
     }
 
@@ -732,7 +737,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true }));
       } catch (error) {
-        res.statusCode = error instanceof ConfigValidationError ? 400 : 500;
+        res.statusCode = requestErrorStatus(error, error instanceof ConfigValidationError ? 400 : 500);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -756,7 +761,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ devices, currentDeviceId: selectedDeviceId }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -781,7 +786,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true, currentDeviceId: selectedDeviceId }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -817,7 +822,7 @@ export function createApiMiddleware() {
           res.end(stdout);
         });
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -847,7 +852,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true, ...result }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -876,7 +881,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true, ...result }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -894,7 +899,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ deviceId, details }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '读取设备信息失败' }));
       }
@@ -918,7 +923,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ deviceId, ...displayInfo }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -961,7 +966,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ success: true, ...result }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -1042,7 +1047,7 @@ export function createApiMiddleware() {
           skippedReason: result.skippedReason,
         }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '启动 Android Playground 失败' }));
       }
@@ -1088,7 +1093,7 @@ export function createApiMiddleware() {
           skippedReason: result.skippedReason,
         }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '重启 Android Playground 失败' }));
       }
@@ -1108,7 +1113,11 @@ export function createApiMiddleware() {
             family?: string;
           };
         }>(req);
-        const model = parsed.model || {};
+        const model = { ...parsed.model };
+        const stored = loadConfig();
+        const savedModel = parsed.modelKey === 'promptOptimizer' ? stored.appium.promptOptimizer?.model
+          : parsed.modelKey && ['midscene', 'scriptOptimizer', 'appium'].includes(parsed.modelKey) ? stored[parsed.modelKey as 'midscene' | 'scriptOptimizer' | 'appium'].model : undefined;
+        model.apiKey = resolveSavedModelKey(model, savedModel);
 
         if (parsed.save && !['midscene', 'scriptOptimizer', 'appium', 'promptOptimizer'].includes(parsed.modelKey || '')) {
           throw new ConfigValidationError('请选择有效的模型配置');
@@ -1136,7 +1145,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ ...result, saved: parsed.save === true }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -1148,7 +1157,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ apps: listAppPresetRecords() }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -1166,7 +1175,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ app }));
       } catch (error) {
-        res.statusCode = 400;
+        res.statusCode = requestErrorStatus(error, 400);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '保存 App 配置失败' }));
       }
@@ -1180,7 +1189,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify(removeAppPresetRecord(parsed.id)));
       } catch (error) {
-        res.statusCode = 400;
+        res.statusCode = requestErrorStatus(error, 400);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '删除 App 配置失败' }));
       }
@@ -1196,7 +1205,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify(result));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -1210,12 +1219,12 @@ export function createApiMiddleware() {
           throw new Error('文件大小不能超过 10MB');
         }
         const fileName = requestUrl.searchParams.get('fileName') || '';
-        const buffer = await readRawBody(req);
+        const buffer = await readRawBody(req, MAX_TEST_CASE_FILE_SIZE);
         const result = await importTestCaseFile({ fileName, buffer });
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify(result));
       } catch (error) {
-        res.statusCode = 400;
+        res.statusCode = requestErrorStatus(error, 400);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '测试用例文件解析失败' }));
       }
@@ -1229,7 +1238,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ valid: true }));
       } catch (error) {
-        res.statusCode = 400;
+        res.statusCode = requestErrorStatus(error, 400);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '代码格式错误' }));
       }
@@ -1241,7 +1250,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ scripts: listScriptRecords() }));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -1257,7 +1266,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify(deleteGeneratedScript({ id: parsed.id })));
       } catch (error) {
-        res.statusCode = 500;
+        res.statusCode = requestErrorStatus(error);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
       }
@@ -1277,7 +1286,7 @@ export function createApiMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify(result));
       } catch (error) {
-        res.statusCode = 400;
+        res.statusCode = requestErrorStatus(error, 400);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ message: error instanceof Error ? error.message : '保存代码失败' }));
       }
@@ -1474,7 +1483,7 @@ export function createApiMiddleware() {
         return;
       }
     } catch (error) {
-      res.statusCode = 500;
+      res.statusCode = requestErrorStatus(error);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.end(JSON.stringify({ message: error instanceof Error ? error.message : 'Unknown error' }));
     }

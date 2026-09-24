@@ -20,6 +20,7 @@ export type RemoteCommand = {
   type: RemoteCommandType;
   deviceId: string;
   payload?: Record<string, unknown>;
+  cancelled?: boolean;
 };
 
 export type RemoteCommandResult = {

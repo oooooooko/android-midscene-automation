@@ -14,12 +14,14 @@ defineProps<{
   isSavingModelConfig: boolean;
   isSavingAppPreset: boolean;
   appiumSaveStatus?: string;
+  appiumSaveFailed?: boolean;
   modelTestStatus: { midscene: string; scriptOptimizer: string; appium?: string; promptOptimizer?: string };
 }>();
 
 defineEmits<{
   testModel: [key: 'midscene' | 'scriptOptimizer' | 'appium' | 'promptOptimizer'];
   saveModelConfig: [];
+  retryAppiumSave: [];
   saveAppPreset: [];
   editAppPreset: [app: AppPreset];
   deleteAppPreset: [id: string];
@@ -115,6 +117,8 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
         :prompt-optimizer-test-status="modelTestStatus.promptOptimizer"
         @test-prompt-optimizer-model="$emit('testModel', 'promptOptimizer')"
         :save-status="appiumSaveStatus"
+        :save-failed="appiumSaveFailed"
+        @retry-save="$emit('retryAppiumSave')"
         @test-model="$emit('testModel', 'appium')"
       />
     </section>
@@ -123,13 +127,40 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 
 <style scoped>
 .config-tabs {
+  display: flex;
+  width: 100%;
   max-width: 100%;
   flex-wrap: wrap;
+  gap: 28px;
+  margin: 0;
+  padding: 0 28px;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border);
+  border-radius: 0;
+  background: var(--ui-surface);
 }
-
-@media (max-width: 640px) {
-  :deep(.config-model-grid) {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.config-tabs .subnav__item {
+  min-height: 46px;
+  padding: 10px 2px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  font-size: 14px;
+}
+.config-tabs .subnav__item--active {
+  border-bottom-color: var(--ui-primary);
+  background: transparent;
+  color: var(--ui-primary);
+  box-shadow: none;
+}
+.config-page > [role="tabpanel"] { padding: 24px; }
+:deep(.config-module-card > .el-card__header) { padding: 18px 24px; font-size: 16px; font-weight: 500; }
+:deep(.config-module-card > .el-card__body) { padding: 24px; background: var(--ui-surface); }
+:deep(.el-form-item) { margin-bottom: 22px; }
+:deep(.el-form-item__label) { margin-bottom: 8px; font-size: 14px; }
+:deep(.el-input__wrapper), :deep(.el-select__wrapper) { min-height: 36px; }
+:deep(.config-grid) { margin-bottom: 0; gap: 24px; }
+@media (max-width: 1000px) {
+  :deep(.config-model-grid) { grid-template-columns: minmax(0, 1fr); }
+  :deep(.config-model-grid > section + section) { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--ui-border); }
 }
 </style>

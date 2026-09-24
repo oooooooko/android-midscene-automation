@@ -8,12 +8,14 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('owned device instrumentation is cleaned after success, abort and failed session creation; external servers are untouched', async () => {
+test('replay survives command idle periods and cleans sessions after success, abort and creation failure', async () => {
   const root = await mkdtemp(join(tmpdir(), 'managed-cleanup-'));
   const env = { ...process.env };
   const original = { execFile: childProcess.execFile, spawn: childProcess.spawn, fetch: globalThis.fetch };
   const calls: string[][] = [];
   let mode = 'success', stopped = false;
+  let elapsedMs = 0, lastCommandMs = 0, commandTimeoutMs = 60_000;
+  let keyCommands = 0, deletedSessions = 0;
   let controller = new AbortController();
   try {
     const sdk = join(root, 'sdk');
@@ -44,8 +46,20 @@ test('owned device instrumentation is cleaned after success, abort and failed se
       const path = new URL(String(input)).pathname;
       if (path === '/session' && init?.method === 'POST') {
         if (mode === 'creation-failure') return Response.json({ value: { error: 'session not created', message: 'creation failed' } }, { status: 500 });
+        const capabilities = JSON.parse(String(init.body)).capabilities.alwaysMatch;
+        commandTimeoutMs = (capabilities['appium:newCommandTimeout'] ?? 60) * 1000;
+        lastCommandMs = elapsedMs;
         return Response.json({ value: { sessionId: 'test-session' } });
       }
+      if (path.endsWith('/press_keycode')) {
+        keyCommands++;
+        // Model Appium's idle expiry without waiting a real minute or touching a device.
+        if (commandTimeoutMs && elapsedMs - lastCommandMs > commandTimeoutMs) {
+          return Response.json({ value: { error: 'invalid session id', message: 'New Command Timeout expired' } }, { status: 404 });
+        }
+        lastCommandMs = elapsedMs;
+      }
+      if (path === '/session/test-session' && init?.method === 'DELETE') deletedSessions++;
       return Response.json({ value: {} });
     };
     const { replayAppiumScript } = await import('./appium-runner');
@@ -53,19 +67,35 @@ test('owned device instrumentation is cleaned after success, abort and failed se
       id: 'cleanup', name: 'cleanup', deviceId: 'test-device', appPackage: '', appActivity: '', createdAt: '', updatedAt: '',
       steps: [{ id: 'log', type: 'log' as const, label: 'log', value: 'ok' }],
     };
-    for (mode of ['success', 'abort', 'creation-failure', 'cleanup-failure', 'external']) {
+    for (mode of ['success', 'long-idle', 'abort', 'creation-failure', 'cleanup-failure', 'external', 'external-abort']) {
       calls.length = 0;
+      elapsedMs = lastCommandMs = keyCommands = deletedSessions = 0;
       controller = new AbortController();
-      if (mode === 'external') process.env.APPIUM_SERVER_URL = 'http://external.invalid';
-      const result = await replayAppiumScript(script, 'test-device', line => {
-        if (mode === 'abort' && line.includes('Appium session 已创建')) controller.abort();
+      const external = mode.startsWith('external');
+      const aborted = mode.endsWith('abort');
+      const longIdle = mode.endsWith('long-idle');
+      if (external) process.env.APPIUM_SERVER_URL = 'http://external.invalid';
+      else delete process.env.APPIUM_SERVER_URL;
+      const replayScript = longIdle ? { ...script, steps: [
+        ...script.steps,
+        { id: 'home', type: 'key' as const, label: 'Home', keyCode: 3 },
+      ] } : script;
+      const result = await replayAppiumScript(replayScript, 'test-device', line => {
+        // ADB operations and model inference do not reset Appium's command timer.
+        if (longIdle && line.includes('[节点 1] 完成')) elapsedMs += 120_000;
+        if (aborted && line.includes('Appium session 已创建')) controller.abort();
       }, controller.signal);
-      assert.equal(calls.length, mode === 'external' ? 0 : 2);
-      if (mode !== 'external') {
+      assert.equal(calls.length, external ? 0 : 2);
+      assert.equal(deletedSessions, mode === 'creation-failure' || (aborted && !external) ? 0 : 1, 'release the replay session even when idle expiry is disabled');
+      if (!external) {
         assert.deepEqual(calls.map(args => args.slice(0, 5)), Array(2).fill(['-s', 'test-device', 'shell', 'am', 'force-stop']));
         assert.deepEqual(calls.map(args => args.at(-1)).sort(), ['io.appium.uiautomator2.server', 'io.appium.uiautomator2.server.test']);
       }
-      if (mode === 'abort') assert.equal(result.stopped, true);
+      if (longIdle) {
+        assert.equal(keyCommands, 1, 'execute Home after the long interval without Appium commands');
+        assert.equal(result.success, true, result.output);
+      }
+      if (aborted) assert.equal(result.stopped, true);
       if (mode === 'creation-failure') assert.equal(result.success, false);
       if (mode === 'cleanup-failure') assert.match(result.output, /UiAutomator2 清理失败/);
     }

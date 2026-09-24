@@ -216,3 +216,11 @@ export function listOperationEventRecords(operationId: string) {
     ORDER BY seq ASC;
   `).map(rowToEvent);
 }
+
+// Analytics only reads metadata, never model prompts, outputs or credentials.
+export function listOperationAnalytics() {
+  initOperationRepository();
+  return querySql<Pick<OperationRow, 'script_name' | 'started_at' | 'finished_at' | 'status'>>(`
+    SELECT script_name, started_at, finished_at, status FROM operations WHERE kind = 'script_run';
+  `);
+}

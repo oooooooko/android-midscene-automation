@@ -5,8 +5,14 @@ import type { MidsceneModelProvider } from './config/midscene-model-presets';
 import type { AiRecognitionModel } from './appium-recorder/ai-recognition';
 import type { AiDeduplicationConfig } from './appium-recorder/ai-deduplication';
 
-export type MenuKey = 'generator' | 'automation' | 'config' | 'appium';
+export type MenuKey = 'analysis' | 'generator' | 'automation' | 'config' | 'appium' | 'about';
 export type GeneratorMode = 'ai' | 'manual';
+
+export type AppiumVersionInfo = {
+  version: string | null;
+  source: 'local' | 'server';
+  message: string;
+};
 
 export type GeneratorForm = {
   promptTitle: string;

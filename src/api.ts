@@ -2,6 +2,7 @@ import type { ScriptStep } from './script-generator';
 import type { MidsceneModelProvider } from './config/midscene-model-presets';
 import type {
   AndroidDevice,
+  AppiumVersionInfo,
   AppPreset,
   ConfigForm,
   DeviceLock,
@@ -40,6 +41,11 @@ async function postJson<T>(url: string, body?: unknown, options: { signal?: Abor
     throw new Error(`无法连接本地后端 ${url}：${error instanceof Error ? error.message : '网络请求失败'}`);
   });
   return readJson<T>(response);
+}
+
+export async function getAppiumVersion() {
+  const response = await fetch(`${APP_BASE}/api/appium-version`, { signal: AbortSignal.timeout(8000) });
+  return readJson<AppiumVersionInfo>(response);
 }
 
 // 读取已保存的脚本列表，自动化测试页面左侧脚本列表使用。
@@ -301,4 +307,9 @@ export async function runScript(
   if (buffer.trim()) {
     onEvent(JSON.parse(buffer) as RunScriptStreamEvent);
   }
+}
+
+export async function getTestAnalytics(days = 0) {
+  const response = await fetch(`${APP_BASE}/api/analytics?days=${days}`, { signal: AbortSignal.timeout(15000) });
+  return readJson<import('./analytics/summary').AnalysisResponse>(response);
 }

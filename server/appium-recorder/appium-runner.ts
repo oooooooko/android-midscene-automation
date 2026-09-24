@@ -139,8 +139,9 @@ function normalizeTextForContains(value: string) {
 }
 
 function adbTap(deviceId: string, x: number, y: number) {
+  throwIfReplayStopped();
   return new Promise<void>((resolve, reject) => {
-    execFile(getAdbCommand(), ['-s', deviceId, 'shell', 'input', 'tap', String(Math.round(x)), String(Math.round(y))], (error, _stdout, stderr) => {
+    execFile(getAdbCommand(), ['-s', deviceId, 'shell', 'input', 'tap', String(Math.round(x)), String(Math.round(y))], { timeout: 10000, signal: replayContext.getStore()?.signal }, (error, _stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
@@ -150,7 +151,8 @@ function adbTap(deviceId: string, x: number, y: number) {
   });
 }
 
-export function launchAppOnDevice(deviceId: string, packageName: string) {
+export function launchAppOnDevice(deviceId: string, packageName: string, signal = replayContext.getStore()?.signal) {
+  signal?.throwIfAborted();
   if (!packageName) return Promise.reject(new Error('启动 APP 缺少包名'));
   return new Promise<void>((resolve, reject) => {
     execFile(getAdbCommand(), [
@@ -163,7 +165,7 @@ export function launchAppOnDevice(deviceId: string, packageName: string) {
       '-c',
       'android.intent.category.LAUNCHER',
       '1',
-    ], { maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+    ], { maxBuffer: 4 * 1024 * 1024, timeout: 30000, signal }, (error, stdout, stderr) => {
       const output = `${stdout || ''}\n${stderr || ''}`.trim();
       if (error || /no activities found|monkey aborted/i.test(output)) {
         reject(new Error(output || error?.message || `ADB 启动 ${packageName} 失败`));
@@ -174,7 +176,8 @@ export function launchAppOnDevice(deviceId: string, packageName: string) {
   });
 }
 
-export function clearAppDataOnDevice(deviceId: string, packageName: string) {
+export function clearAppDataOnDevice(deviceId: string, packageName: string, signal = replayContext.getStore()?.signal) {
+  signal?.throwIfAborted();
   if (!packageName) return Promise.reject(new Error('清理 App 缓存缺少包名'));
   return new Promise<void>((resolve, reject) => {
     execFile(getAdbCommand(), [
@@ -184,7 +187,7 @@ export function clearAppDataOnDevice(deviceId: string, packageName: string) {
       'pm',
       'clear',
       packageName,
-    ], { maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+    ], { maxBuffer: 4 * 1024 * 1024, timeout: 30000, signal }, (error, stdout, stderr) => {
       const output = `${stdout || ''}\n${stderr || ''}`.trim();
       if (error || !/^success$/im.test(output)) {
         reject(new Error(output || error?.message || `ADB 清理 ${packageName} 失败`));
@@ -196,6 +199,7 @@ export function clearAppDataOnDevice(deviceId: string, packageName: string) {
 }
 
 function adbSwipe(deviceId: string, step: Required<AppiumRecordedStepRecord>['swipe']) {
+  throwIfReplayStopped();
   return new Promise<void>((resolve, reject) => {
     execFile(getAdbCommand(), [
       '-s',
@@ -208,7 +212,7 @@ function adbSwipe(deviceId: string, step: Required<AppiumRecordedStepRecord>['sw
       String(Math.round(step.endX)),
       String(Math.round(step.endY)),
       String(Math.round(step.duration)),
-    ], (error, _stdout, stderr) => {
+    ], { timeout: Math.max(10000, step.duration + 5000), signal: replayContext.getStore()?.signal }, (error, _stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
@@ -294,7 +298,8 @@ async function appiumRequest<T>(
   try {
     const result = await timedAppiumFetch(requestUrl, {
       ...init,
-      signal: options?.ignoreAbort ? undefined : context?.signal || init?.signal,
+      signal: options?.ignoreAbort ? undefined : (context?.signal && init?.signal
+        ? AbortSignal.any([context.signal, init.signal]) : context?.signal || init?.signal),
       headers: {
         'Content-Type': 'application/json',
         ...(init?.headers || {}),
@@ -415,6 +420,8 @@ async function createSession(deviceId: string) {
           'appium:udid': deviceId,
           'appium:autoLaunch': false,
           'appium:noReset': true,
+          // 托管进程由 finally 释放；外部服务保留回收期限，避免创建请求取消后遗留永久会话。
+          'appium:newCommandTimeout': usesManagedAppiumServer() ? 0 : 60,
           'appium:skipDeviceInitialization': true,
           'appium:ignoreHiddenApiPolicyError': true,
         },
@@ -803,7 +810,7 @@ async function runStep(
 
   if (step.type === 'launchApp') {
     const packageName = step.value || '';
-    if (await isAppInForeground(deviceId, packageName).catch(() => false)) {
+    if (await isAppInForeground(deviceId, packageName).catch(error => { throwIfReplayStopped(error); return false; })) {
       return `APP 已在前台，跳过启动 ${packageName}`;
     }
     await launchAppOnDevice(deviceId, packageName);
@@ -1566,6 +1573,7 @@ export async function replayAppiumScript(
     );
     let sessionId = '';
     let sessionCreationStarted = false;
+    let stopHeartbeat: (() => Promise<void>) | undefined;
     let success = false;
     let stopped = false;
     let recording: Awaited<ReturnType<typeof startReplayVideo>> | undefined;
@@ -1593,6 +1601,18 @@ export async function replayAppiumScript(
         lines.push('检测到 UiAutomation 连接冲突，正在清理残留进程并重试...');
         await resetUiAutomator2(targetDeviceId);
         sessionId = await createSession(targetDeviceId);
+      }
+      if (!managedAppium) {
+        const heartbeatAbort = new AbortController();
+        let heartbeatTask: Promise<unknown> | undefined;
+        const timer = setInterval(() => {
+          if (heartbeatTask || signal?.aborted) return;
+          heartbeatTask = appiumRequest(`/session/${sessionId}/timeouts`, { signal: heartbeatAbort.signal }, { timeoutMs: 5000 })
+            .catch(error => { if (!heartbeatAbort.signal.aborted && !signal?.aborted) lines.push(`Appium 保活失败：${errorDetail(error)}`); })
+            .finally(() => { heartbeatTask = undefined; });
+        }, 15000);
+        timer.unref();
+        stopHeartbeat = async () => { clearInterval(timer); heartbeatAbort.abort(); await heartbeatTask; };
       }
       lines.push(`Appium session 已创建：${sessionId}`);
       if (runOptions.recordVideo) {
@@ -1660,6 +1680,7 @@ export async function replayAppiumScript(
           lines.push('[录屏提示] 本次录像未能完整保存。请检查报告目录的写入权限、磁盘空间及设备连接；录像保存失败不等同于流程节点失败，请以节点执行日志为准。');
         }
       }
+      await stopHeartbeat?.();
       let managedAppiumStopped = false;
       if (signal?.aborted && managedAppium) {
         await managedAppium.stop();
@@ -1669,7 +1690,7 @@ export async function replayAppiumScript(
           `/session/${sessionId}`,
           { method: 'DELETE' },
           { ignoreAbort: true, timeoutMs: 2000 },
-        ).catch(() => undefined);
+        ).catch(error => { lines.push(`Appium 会话清理失败：${errorDetail(error)}${managedAppium ? '' : '；外部服务将在命令空闲 60 秒后回收会话'}`); });
       }
       if (managedAppium) {
         if (!managedAppiumStopped) await managedAppium.stop();

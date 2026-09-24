@@ -1,5 +1,5 @@
 import { resolveReportSummary } from '../appium-recorder/report-summary';
-import { onScopeDispose, shallowRef, watch } from 'vue';
+import { computed, onScopeDispose, shallowRef, watch } from 'vue';
 import type { ConfigForm } from '../types';
 import { isHexColor } from '../appium-recorder/flow-appearance';
 import { resolveAiDeduplication } from '../appium-recorder/ai-deduplication';
@@ -8,7 +8,10 @@ import { resolveAiDeduplication } from '../appium-recorder/ai-deduplication';
 export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigForm['appium'], 'model' | 'promptOptimizer'>) => Promise<unknown>, onError: (error: unknown) => void) {
   const saving = shallowRef(false);
   const status = shallowRef('');
-  let initialized = false, saved = '', pending: string | undefined;
+  const saved = shallowRef('');
+  const initialized = shallowRef(false);
+  const failed = shallowRef(false);
+  let pending: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // 模型只能通过“测试并保存”提交，自动保存仅观察其余设置。
   function snapshotSettings() {
@@ -19,7 +22,8 @@ export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigF
       customPresets: reportSummary.customPresets,
     } } : {}) });
   }
-  function initialize() { saved = snapshotSettings(); initialized = true; }
+  function initialize() { saved.value = snapshotSettings(); initialized.value = true; }
+  const dirty = computed(() => initialized.value && snapshotSettings() !== saved.value);
   async function flush() {
     if (saving.value || pending === undefined) return;
     saving.value = true;
@@ -27,22 +31,27 @@ export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigF
       while (pending !== undefined) {
         const snapshot = pending;
         pending = undefined;
-        if (snapshot === saved) { status.value = '已自动保存'; continue; }
+        if (snapshot === saved.value) { status.value = '已自动保存'; continue; }
         status.value = '正在自动保存…';
         try {
           await save(JSON.parse(snapshot));
-          saved = snapshot;
+          saved.value = snapshot;
+          failed.value = false;
           if (snapshotSettings() === snapshot) status.value = '已自动保存';
         } catch (error) {
-          status.value = '自动保存失败，请重新修改后重试';
+          status.value = '自动保存失败，修改已保留';
+          failed.value = true;
           onError(error);
-          // 不无限重试失败请求；若用户期间有新修改，继续保存最新快照。
+          // 保留失败快照，等待显式重试或下次修改，避免离线时无限请求。
+          pending = pending ?? snapshot;
+          break;
         }
       }
     } finally { saving.value = false; }
   }
-  watch(snapshotSettings, snapshot => {
-    if (!initialized) return;
+  function queue(snapshot: string) {
+    if (!initialized.value) return;
+    failed.value = false;
     clearTimeout(timer);
     pending = undefined;
     const value = config.appium;
@@ -56,7 +65,9 @@ export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigF
     pending = snapshot;
     status.value = '等待自动保存…';
     timer = setTimeout(() => { void flush(); }, 350);
-  }, { flush: 'sync' });
+  }
+  watch(snapshotSettings, queue, { flush: 'sync' });
+  function retry() { queue(snapshotSettings()); clearTimeout(timer); return flush(); }
   onScopeDispose(() => { clearTimeout(timer); pending = undefined; });
-  return { initialize, saving, status };
+  return { initialize, saving, status, failed, dirty, retry };
 }

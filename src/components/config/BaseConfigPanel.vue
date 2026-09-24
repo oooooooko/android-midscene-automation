@@ -31,7 +31,7 @@ defineEmits<{
         </div>
       </template>
 
-      <el-form label-position="top">
+      <el-form label-position="top" class="runtime-config-form">
         <el-form-item label="Android SDK 路径">
           <el-input
             v-model="configForm.runtime.androidSdkPath"
@@ -69,7 +69,7 @@ defineEmits<{
         </el-form-item>
         <div class="app-preset-actions">
           <el-button v-if="appPresetForm.id" :disabled="isSavingAppPreset" @click="$emit('cancelAppPresetEdit')">取消编辑</el-button>
-          <el-button native-type="submit" :loading="isSavingAppPreset">{{ appPresetForm.id ? '保存修改' : '添加' }}</el-button>
+          <el-button type="primary" native-type="submit" :loading="isSavingAppPreset">{{ appPresetForm.id ? '保存修改' : '添加' }}</el-button>
         </div>
       </el-form>
 
@@ -92,6 +92,10 @@ defineEmits<{
 </template>
 
 <style scoped>
+.runtime-config-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.runtime-config-form :deep(.el-form-item) { margin-bottom: 0; }
+@media (max-width: 1000px) { .runtime-config-form { grid-template-columns: minmax(0, 1fr); } }
+
 .app-preset-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .app-preset-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
 .app-preset-layout .app-preset-list { margin-top: 0; padding-left: 24px; border-left: 1px solid var(--ui-border); }

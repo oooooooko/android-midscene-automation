@@ -89,7 +89,7 @@ const openModelConfigGuide = () => {
       <section>
         <div class="panel-header panel-header--sub">
           <span>Midscene 模型</span>
-          <el-button
+          <el-button type="primary" plain
             :loading="testingModelKey === 'midscene'"
             :disabled="!!testingModelKey"
             @click="$emit('testModel', 'midscene')"
@@ -118,7 +118,7 @@ const openModelConfigGuide = () => {
               />
             </el-form-item>
             <el-form-item label="API Key">
-              <el-input v-model="configForm.midscene.model.apiKey" show-password />
+              <el-input v-model="configForm.midscene.model.apiKey" placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换" show-password />
             </el-form-item>
           </template>
           <template v-else>
@@ -168,7 +168,7 @@ const openModelConfigGuide = () => {
       <section>
         <div class="panel-header panel-header--sub">
           <span>脚本优化模型</span>
-          <el-button
+          <el-button type="primary" plain
             :loading="testingModelKey === 'scriptOptimizer'"
             :disabled="!!testingModelKey"
             @click="$emit('testModel', 'scriptOptimizer')"
@@ -181,7 +181,7 @@ const openModelConfigGuide = () => {
             <el-input v-model="configForm.scriptOptimizer.model.baseUrl" />
           </el-form-item>
           <el-form-item label="API Key">
-            <el-input v-model="configForm.scriptOptimizer.model.apiKey" show-password />
+            <el-input v-model="configForm.scriptOptimizer.model.apiKey" placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换" show-password />
           </el-form-item>
           <el-form-item label="Model Name">
             <el-input v-model="configForm.scriptOptimizer.model.name" />
@@ -197,6 +197,5 @@ const openModelConfigGuide = () => {
 </template>
 
 <style scoped>
-.config-midscene-card :deep(.el-card__body) { background: var(--ui-bg-soft, #f8f9fb); }
 .config-model-input { width: 100%; }
 </style>

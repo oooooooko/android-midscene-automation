@@ -12,8 +12,10 @@ defineProps<{
   testStatus?: string;
   promptOptimizerTestStatus?: string;
   saveStatus?: string;
+  saveFailed?: boolean;
 }>();
-defineEmits<{ testModel: []; testPromptOptimizerModel: [] }>();
+defineEmits<{
+  retrySave: []; testModel: []; testPromptOptimizerModel: [] }>();
 </script>
 
 <template>
@@ -22,6 +24,7 @@ defineEmits<{ testModel: []; testPromptOptimizerModel: [] }>();
       <header class="appium-section-heading">
         <div><h2 id="appium-models-title">模型服务</h2><p>不同任务使用独立模型，配置修改需测试通过后保存。</p></div>
         <span v-if="saveStatus" class="config-save-status" role="status">{{ saveStatus }}</span>
+        <el-button v-if="saveFailed" link type="primary" @click="$emit('retrySave')">重试保存</el-button>
       </header>
       <div class="appium-model-grid">
         <AppiumModelSettings v-model="configForm.appium.model" title="AI 识别模型" badge="视觉"

@@ -1,3 +1,4 @@
+import { readBody, requestErrorStatus } from '../request-body';
 import type { AiObservationConfig } from '../../src/appium-recorder/ai-recognition';
 import { execFile } from 'node:child_process';
 import { sendReplayVideo } from './video-response';
@@ -23,7 +24,7 @@ import {
   type AppiumRecordedStepRecord,
 } from './repository';
 import { clearAppDataOnDevice, launchAppOnDevice, replayAppiumScript } from './appium-runner';
-import { isRemoteDeviceId, sendRemoteCommand } from '../remote-agents/registry';
+import { isRemoteDeviceId, sendRemoteCommand, stopRemoteReplay } from '../remote-agents/registry';
 import { getAdbCommand } from '../android-sdk';
 import { createAppiumScriptExport } from './script-export';
 import { resolveReportSummary } from '../../src/appium-recorder/report-summary';
@@ -43,21 +44,10 @@ function sendStreamEvent(res: ServerResponse, payload: unknown) {
   res.write(`${JSON.stringify(payload)}\n`);
 }
 
-async function readBody<T>(req: IncomingMessage) {
-  let body = '';
-  req.on('data', (chunk) => {
-    body += chunk;
-  });
-  return await new Promise<T>((resolve) => {
-    req.on('end', () => {
-      resolve(JSON.parse(body || '{}') as T);
-    });
-  });
-}
 
 function execFileText(command: string, args: string[] = []) {
   return new Promise<string>((resolve, reject) => {
-    execFile(command, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(command, args, { maxBuffer: 20 * 1024 * 1024, timeout: 10000 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
@@ -386,6 +376,10 @@ export async function handleAppiumRecorderRequest(
       const parsed = await readBody<{ deviceId?: string }>(req);
       const deviceId = parsed.deviceId || selectedDeviceId;
       assertDeviceAllowed(deviceId);
+      if (isRemoteDeviceId(deviceId)) {
+        sendJson(res, { success: true, stopped: stopRemoteReplay(deviceId) });
+        return true;
+      }
       const controller = replayAbortControllers.get(deviceId);
       controller?.abort();
       sendJson(res, { success: true, stopped: Boolean(controller) });
@@ -444,10 +438,6 @@ export async function handleAppiumRecorderRequest(
           globalVariables: getPresetVariables(),
           linkedScripts: linkedScriptSnapshot(script),
         }) as Awaited<ReturnType<typeof replayAppiumScript>>;
-        if (result.history) {
-          try { saveRunHistory({ ...result.history, scriptId: script.id, deviceId }); }
-          catch { result.output += '\n历史记录保存失败'; }
-        }
         const { history: _history, ...response } = result;
         if (streamOutput) {
           result.output?.split(/\r?\n/).forEach((line) => sendStreamEvent(res, { type: 'log', line }));
@@ -504,7 +494,7 @@ export async function handleAppiumRecorderRequest(
       sendStreamEvent(res, { type: 'error', message });
       res.end();
     } else {
-      sendJson(res, { message }, 500);
+      sendJson(res, { message }, requestErrorStatus(error));
     }
     return true;
   }

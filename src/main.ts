@@ -1,10 +1,10 @@
 import { createApp } from 'vue';
 import ElementPlus from 'element-plus';
+import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import 'element-plus/dist/index.css';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import App from './App.vue';
 import './style.css';
-import './ui-refresh.css';
 
-createApp(App).use(ElementPlus).mount('#app');
+createApp(App).use(ElementPlus, { locale: zhCn }).mount('#app');

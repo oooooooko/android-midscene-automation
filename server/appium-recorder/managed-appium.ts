@@ -1,5 +1,41 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer } from 'node:net';
+import type { AppiumVersionInfo } from '../../src/types';
+
+function appiumExecutable() {
+  return process.env.APPIUM_EXECUTABLE?.trim() || (process.platform === 'win32' ? 'appium.cmd' : 'appium');
+}
+
+export async function getAppiumVersion(): Promise<AppiumVersionInfo> {
+  const source = usesManagedAppiumServer() ? 'local' : 'server';
+  try {
+    let output: unknown;
+    if (source === 'server') {
+      const url = process.env.APPIUM_SERVER_URL!.trim().replace(/\/+$/, '');
+      const response = await fetch(`${url}/status`, { signal: AbortSignal.timeout(3000) });
+      if (!response.ok) throw new Error('Appium status request failed');
+      const payload = await response.json() as { value?: { build?: { version?: unknown } } } | null;
+      output = payload?.value?.build?.version;
+    } else {
+      output = await new Promise<string>((resolve, reject) => {
+        execFile(appiumExecutable(), ['--version'], {
+          timeout: 5000, maxBuffer: 64 * 1024, windowsHide: true, shell: process.platform === 'win32',
+        }, (error, stdout) => error ? reject(error) : resolve(stdout));
+      });
+    }
+    const version = typeof output === 'string'
+      ? output.match(/^\s*v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)\s*$/m)?.[1]
+      : undefined;
+    return { version: version ?? null, source, message: version
+      ? (source === 'local' ? '本机已安装 · Android 自动化引擎' : '当前配置的 Appium 服务')
+      : '未返回有效版本号，请检查 Appium 安装或服务状态' };
+  } catch (error) {
+    const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
+    return { version: null, source, message: source === 'server'
+      ? '暂时无法连接 Appium 服务，请检查服务后刷新'
+      : missing ? '未检测到 Appium，请安装或检查可执行文件路径' : '读取 Appium 版本失败，请检查安装后刷新' };
+  }
+}
 
 type ManagedAppiumServer = {
   serverUrl: string;
@@ -110,7 +146,7 @@ export async function startManagedAppiumServer(
 ): Promise<ManagedAppiumServer> {
   const port = await reserveLocalPort();
   const serverUrl = `http://127.0.0.1:${port}`;
-  const executable = process.env.APPIUM_EXECUTABLE?.trim() || (process.platform === 'win32' ? 'appium.cmd' : 'appium');
+  const executable = appiumExecutable();
   const args = [
     '--address',
     '127.0.0.1',
