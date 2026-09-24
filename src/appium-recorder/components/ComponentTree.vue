@@ -69,9 +69,9 @@ watch(
 </template>
 
 <style scoped>
-.appium-tree-container { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.appium-tree { flex: 1; height: auto; overflow-x: hidden; }
-.appium-tree :deep(.el-tree) { min-width: 0; }
-.appium-tree-node { flex: 1; min-width: 0; overflow: hidden; }
-.appium-tree-node__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appium-tree-container { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.appium-tree { flex: 1; height: auto; overflow: auto; }
+.appium-tree :deep(.el-tree) { width: max-content; min-width: 100%; }
+.appium-tree-node { flex: 1 0 auto; }
+.appium-tree-node__label { white-space: nowrap; }
 </style>

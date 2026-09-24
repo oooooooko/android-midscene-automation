@@ -14,11 +14,11 @@ defineProps<{
   isSavingModelConfig: boolean;
   isSavingAppPreset: boolean;
   appiumSaveStatus?: string;
-  modelTestStatus: { midscene: string; scriptOptimizer: string; appium?: string };
+  modelTestStatus: { midscene: string; scriptOptimizer: string; appium?: string; promptOptimizer?: string };
 }>();
 
 defineEmits<{
-  testModel: [key: 'midscene' | 'scriptOptimizer' | 'appium'];
+  testModel: [key: 'midscene' | 'scriptOptimizer' | 'appium' | 'promptOptimizer'];
   saveModelConfig: [];
   saveAppPreset: [];
   editAppPreset: [app: AppPreset];
@@ -112,6 +112,8 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
         :config-form="configForm"
         :testing-model-key="testingModelKey"
         :test-status="modelTestStatus.appium"
+        :prompt-optimizer-test-status="modelTestStatus.promptOptimizer"
+        @test-prompt-optimizer-model="$emit('testModel', 'promptOptimizer')"
         :save-status="appiumSaveStatus"
         @test-model="$emit('testModel', 'appium')"
       />

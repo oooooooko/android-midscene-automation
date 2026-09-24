@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import CoordinatePointPicker from './CoordinatePointPicker.vue';
 import type { AppiumRecordedStep, AppiumSelector } from '../types';
 import { normalizeVisualChangeConfig } from '../visual-change';
 import { longPressMode } from '../long-press';
@@ -99,6 +100,12 @@ function patchTapCoordinate(axis: 'centerX' | 'centerY', value: number | undefin
     ? { label: `点击坐标 ${fallback.centerX},${fallback.centerY}` } : {}) });
 }
 
+function applyTapPoint(point: { x: number; y: number }) {
+  const fallback = { ...props.step.fallback, strategy: 'bounds' as const, centerX: point.x, centerY: point.y };
+  patchStep({ fallback, ...(/^点击坐标 \d+,\d+$/.test(props.step.label)
+    ? { label: `点击坐标 ${point.x},${point.y}` } : {}) });
+}
+
 function patchVisualChange(patch: Partial<VisualChangeConfig>) {
   patchStep({
     visualChange: normalizeVisualChangeConfig({
@@ -158,7 +165,7 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         <el-form-item v-if="step.type === 'aiRecognition'">
           <el-checkbox :model-value="step.aiTimeoutEnabled === true" :disabled="disabled" @update:model-value="patchStep({ aiTimeoutEnabled: $event === true })">启用超时</el-checkbox>
         </el-form-item>
-        <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop'].includes(step.type) && (step.type !== 'aiRecognition' || step.aiTimeoutEnabled === true)" :label="step.type === 'aiRecognition' && step.aiObservation ? '模型请求超时 ms' : '超时时间 ms'">
+        <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop', 'continueLoop'].includes(step.type) && (step.type !== 'aiRecognition' || step.aiTimeoutEnabled === true)" :label="step.type === 'aiRecognition' && step.aiObservation ? '模型请求超时 ms' : '超时时间 ms'">
           <el-input-number
             :model-value="step.timeoutMs ?? (step.type === 'delay' ? 1000 : DEFAULT_NODE_TIMEOUT_MS)"
             :disabled="disabled"
@@ -196,11 +203,12 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           <el-input-number :model-value="step.fallback?.centerY ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 Y" @update:model-value="patchTapCoordinate('centerY', $event)" />
         </el-form-item>
       </div>
+      <CoordinatePointPicker v-if="step.type === 'coordinateTap'" :disabled="disabled" @select="applyTapPoint" />
       <StageLogSettings v-if="step.type === 'log'" :step="step" :disabled="disabled" @update="patchStep" />
       <VariableExtractionSettings v-if="step.type === 'extractVariable'" :step="step" :disabled="disabled" @update="patchStep" />
       <ScriptParameterSettings v-if="step.type === 'runScript'" :step="step" :disabled="disabled" @update="patchStep" />
       <LoopSettings v-if="step.type === 'loop'" :step="step" :disabled="disabled" @update="patchStep" />
-      <BreakLoopSettings v-if="step.type === 'breakLoop'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
+      <BreakLoopSettings v-if="step.type === 'breakLoop' || step.type === 'continueLoop'" :step="step" :steps="steps" :disabled="disabled" :mode="step.type === 'continueLoop' ? 'continue' : 'break'" @update="patchStep" />
       <TextClickSettings v-if="step.type === 'textClick'" :step="step" :disabled="disabled" @update="patchStep" />
       <AiRecognitionSettings v-if="step.type === 'aiRecognition'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
       <el-form-item

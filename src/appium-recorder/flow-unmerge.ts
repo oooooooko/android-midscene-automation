@@ -28,7 +28,7 @@ export function unmergeBranches(steps: AppiumRecordedStep[], conditionId: string
   const shared = new Set([...common, ...added.map(step => step.id)]);
   // 普通新增操作可分配到任一侧；控制节点和跨节点配对不做猜测性复制。
   if (added.some(step => defaultFlowKind(step) === 'condition'
-    || ['visualChange', 'breakLoop', 'endFlow'].includes(step.type) || step.mergeUndo)) {
+    || ['visualChange', 'breakLoop', 'continueLoop', 'endFlow'].includes(step.type) || step.mergeUndo)) {
     throw new Error('公共流程新增了判断、循环、终止或配对节点，请先移出这些节点再取消合并');
   }
   if (added.some(step => edges.some(key => step.flow?.[key]
@@ -98,7 +98,7 @@ export function unmergeBranches(steps: AppiumRecordedStep[], conditionId: string
     const siblings = branchSteps(next, conditionId, other);
     const appended = siblings.slice(-added.length);
     const previous = siblings[siblings.length - appended.length - 1];
-    if (previous && (defaultFlowKind(previous) === 'condition' || ['endFlow', 'breakLoop'].includes(previous.type))) {
+    if (previous && (defaultFlowKind(previous) === 'condition' || ['endFlow', 'breakLoop', 'continueLoop'].includes(previous.type))) {
       throw new Error('另一侧末尾是判断、循环或终止操作，新增节点不能安全追加，请仅保留在原来源分支');
     }
     if (previous?.flow?.successTargetId) {

@@ -1,3 +1,4 @@
+import { resolveReportSummary } from '../src/appium-recorder/report-summary';
 // Run: npx tsx --test server/appium-auto-save.test.ts
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -8,7 +9,7 @@ import type { ConfigForm } from '../src/types';
 
 test('loads quietly, serializes rapid edits, validates colors and surfaces save errors', async () => {
   const scope = effectScope();
-  const form = reactive({ appium: { model: { baseUrl: '', apiKey: '', name: '' } } } as ConfigForm);
+  const form = reactive({ appium: { reportSummary: resolveReportSummary(), model: { baseUrl: '', apiKey: '', name: '' } } } as ConfigForm);
   const submissions: Omit<ConfigForm['appium'], 'model'>[] = [];
   const errors: unknown[] = [];
   let release: (() => void) | undefined;

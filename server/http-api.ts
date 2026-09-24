@@ -1,3 +1,4 @@
+import { resolveReportSummary } from '../src/appium-recorder/report-summary';
 // The Midscene Admin HTTP API — extracted from vite.config.ts so the exact
 // same middleware serves the standalone dev/preview flow AND the DSH plugin.
 // It is a Connect-style handler: (req, res, next). Callers that have no next
@@ -724,7 +725,8 @@ export function createApiMiddleware() {
         }
         const current = loadConfig();
         const config = req.url === '/api/config/appium'
-          ? { ...current, appium: { ...current.appium, ...parsed.appium, model: current.appium.model } }
+          ? { ...current, appium: { ...current.appium, ...parsed.appium, model: current.appium.model, promptOptimizer: current.appium.promptOptimizer,
+            reportSummary: { ...resolveReportSummary(current.appium.reportSummary), ...parsed.appium?.reportSummary } } }
           : { ...current, runtime: parsed.runtime ?? current.runtime };
         saveConfig(config);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1097,7 +1099,7 @@ export function createApiMiddleware() {
       try {
         const parsed = await readBody<{
           save?: boolean;
-          modelKey?: 'midscene' | 'scriptOptimizer' | 'appium';
+          modelKey?: 'midscene' | 'scriptOptimizer' | 'appium' | 'promptOptimizer';
           model?: {
             provider?: import('../src/config/midscene-model-presets').MidsceneModelProvider;
             baseUrl?: string;
@@ -1108,7 +1110,7 @@ export function createApiMiddleware() {
         }>(req);
         const model = parsed.model || {};
 
-        if (parsed.save && !['midscene', 'scriptOptimizer', 'appium'].includes(parsed.modelKey || '')) {
+        if (parsed.save && !['midscene', 'scriptOptimizer', 'appium', 'promptOptimizer'].includes(parsed.modelKey || '')) {
           throw new ConfigValidationError('请选择有效的模型配置');
         }
         if (parsed.save && parsed.modelKey === 'midscene' && !model.family?.trim()) {
@@ -1127,7 +1129,9 @@ export function createApiMiddleware() {
           const key = parsed.modelKey!;
           // 测试期间其他配置可能已保存，此时重新读取，只更新已通过测试的模型。
           const current = loadConfig();
-          saveConfig({ ...current, [key]: { ...current[key], model: { ...current[key].model, ...model } } });
+          if (key === 'promptOptimizer') {
+            saveConfig({ ...current, appium: { ...current.appium, promptOptimizer: { model: { baseUrl: model.baseUrl || '', apiKey: model.apiKey || '', name: model.name || '' } } } });
+          } else saveConfig({ ...current, [key]: { ...current[key], model: { ...current[key].model, ...model } } });
         }
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(JSON.stringify({ ...result, saved: parsed.save === true }));

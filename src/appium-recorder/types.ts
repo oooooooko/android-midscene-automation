@@ -1,4 +1,4 @@
-import type { AiObservationConfig } from './ai-recognition';
+import type { AiInvalidResultBranch, AiObservationConfig } from './ai-recognition';
 import type { TestVariable, VariableExtraction, ScriptReturn } from './variables';
 import type { ImageCheckConfig } from './image-check';
 
@@ -99,6 +99,7 @@ export type AppiumRecordedStep = {
     | 'endFlow'
     | 'loop'
     | 'breakLoop'
+    | 'continueLoop'
     | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
@@ -124,10 +125,12 @@ export type AppiumRecordedStep = {
   timeoutMs?: number;
   aiTimeoutEnabled?: boolean;
   aiBranchEnabled?: boolean;
+  aiInvalidResultBranch?: AiInvalidResultBranch;
   aiObservation?: AiObservationConfig;
   timeoutBranch?: 'stop' | 'yes' | 'no';
   longPressMode?: 'element' | 'coordinates';
   breakLoopTargetId?: string;
+  continueLoopTargetId?: string;
   loop?: {
     maxIterations: number;
     exitWhen: 'never' | 'exists' | 'notExists';

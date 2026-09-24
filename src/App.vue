@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { resolveReportSummary } from './appium-recorder/report-summary';
 import { isAiRecognitionModelConfigured } from './appium-recorder/ai-recognition';
 import { resolveAiDeduplication } from './appium-recorder/ai-deduplication';
 import { resolveAiPromptPresets } from './appium-recorder/ai-prompt-presets';
@@ -11,6 +12,7 @@ import {
   Loading,
   Monitor,
   Operation,
+  QuestionFilled,
   RefreshLeft,
   Setting,
   VideoPause,
@@ -39,6 +41,7 @@ import AppiumPage from './appium-recorder/AppiumPage.vue';
 import { normalizeFlowBackground, normalizeFlowLineColor } from './appium-recorder/flow-appearance';
 import ConfigPage from './pages/ConfigPage.vue';
 import GeneratorPage from './pages/GeneratorPage.vue';
+import HelpCenterDialog from './components/help/HelpCenterDialog.vue';
 import type {
   AndroidDevice,
   ConfigForm,
@@ -66,6 +69,7 @@ const isSavingAppPreset = ref(false);
 const isRunningScript = ref(false);
 const isStoppingScript = ref(false);
 const showGeneratedCode = ref(false);
+const helpCenterVisible = shallowRef(false);
 const generatedCodeOverride = shallowRef<string | null>(null);
 const generatedCodeDraft = shallowRef('');
 const generatedCodeEditing = shallowRef(false);
@@ -105,6 +109,7 @@ const modelTestStatus = reactive({
   midscene: '',
   scriptOptimizer: '',
   appium: '',
+  promptOptimizer: '',
 });
 const aiRecognitionModelConfigured = shallowRef(false);
 const actionDialog = reactive({
@@ -156,7 +161,7 @@ const appPresetForm = reactive({
 });
 
 const configForm = reactive<ConfigForm>({
-  appium: { model: { baseUrl: '', apiKey: '', name: '' }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
+  appium: { reportSummary: resolveReportSummary(), model: { baseUrl: '', apiKey: '', name: '' }, promptOptimizer: { model: { baseUrl: '', apiKey: '', name: '' } }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
   runtime: {
     androidSdkPath: '',
     reportOutputPath: '',
@@ -671,7 +676,9 @@ const loadConfig = async () => {
   Object.assign(configForm.midscene.env, payload.midscene.env || {});
   Object.assign(configForm.scriptOptimizer.model, payload.scriptOptimizer.model);
   Object.assign(configForm.appium.model, payload.appium?.model || { baseUrl: '', apiKey: '', name: '' });
+  Object.assign(configForm.appium.promptOptimizer!.model, payload.appium?.promptOptimizer?.model || { baseUrl: '', apiKey: '', name: '' });
   configForm.appium.screenshotReport = payload.appium?.screenshotReport === true;
+  configForm.appium.reportSummary = resolveReportSummary(payload.appium?.reportSummary);
   configForm.appium.aiDeduplication = resolveAiDeduplication(payload.appium?.aiDeduplication);
   configForm.appium.aiPromptPresets = resolveAiPromptPresets(payload.appium?.aiPromptPresets);
   configForm.appium.flowBackgroundColor = normalizeFlowBackground(payload.appium?.flowBackgroundColor);
@@ -794,19 +801,25 @@ const removeAppPreset = async (id: string) => {
   }
 };
 
-const testModel = async (key: 'midscene' | 'scriptOptimizer' | 'appium') => {
+const testModel = async (key: 'midscene' | 'scriptOptimizer' | 'appium' | 'promptOptimizer') => {
   if (testingModelKey.value) return;
   testingModelKey.value = key;
   errorMessage.value = '';
   modelTestStatus[key] = '';
-  const model = { ...configForm[key].model };
+  const model = { ...(key === 'promptOptimizer'
+      ? configForm.appium.promptOptimizer!.model
+      : configForm[key].model) };
 
   try {
     const payload = await api.testModel({ modelKey: key, model, save: true });
     if (!payload.saved) throw new Error('模型未保存，请重试');
-    modelTestStatus[key] = `测试通过，配置已保存${payload.content ? `：${payload.content}` : ''}`;
+    const successMessage = `测试通过，配置已保存${payload.content ? `：${payload.content}` : ''}`;
+    modelTestStatus[key] = '';
     if (key === 'appium') aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(model);
-    ElMessage.success('测试通过，模型配置已保存');
+    void ElMessageBox.alert(successMessage, '模型测试成功', {
+      type: 'success',
+      confirmButtonText: '确定',
+    }).catch(() => {});
   } catch (error) {
     modelTestStatus[key] = `未保存：${error instanceof Error ? error.message : '测试失败'}`;
   } finally {
@@ -1441,6 +1454,18 @@ onUnmounted(() => {
           <span>参数配置</span>
         </el-menu-item>
       </el-menu>
+      <div class="layout-sidebar__footer">
+        <el-tooltip content="帮助与版本" placement="right">
+          <button
+            type="button"
+            class="layout-sidebar__help"
+            aria-label="打开帮助与版本信息"
+            @click="helpCenterVisible = true"
+          >
+            <el-icon><QuestionFilled /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
     </aside>
 
     <div class="layout-main">
@@ -1580,6 +1605,7 @@ onUnmounted(() => {
           :app-presets="appPresets"
           :ai-recognition-model-configured="aiRecognitionModelConfigured"
           :ai-prompt-presets="configForm.appium.aiPromptPresets"
+          :report-summary="configForm.appium.reportSummary"
           :flow-background-color="configForm.appium.flowBackgroundColor"
           :flow-line-color="configForm.appium.flowLineColor"
           :device-actions="deviceActions"
@@ -1596,7 +1622,10 @@ onUnmounted(() => {
           :refresh-device-preview="refreshDevicePreview"
           :swipe-device="swipeDevice"
         />
+
       </main>
     </div>
+
+    <HelpCenterDialog v-model="helpCenterVisible" />
   </div>
 </template>

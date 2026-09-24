@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, shallowRef } from 'vue';
 import type { MenuInstance, PopoverInstance } from 'element-plus';
-import { PASTE_COMMAND, type FlowActionGroup, type InsertAction } from '../flow-graph';
+import { PASTE_COMMAND, type FlowActionGroup, type FlowActionSubgroup, type InsertAction } from '../flow-graph';
 import { actionDescriptions } from '../action-descriptions';
 
 const props = defineProps<{
@@ -20,6 +20,10 @@ const triggerRef = shallowRef<HTMLElement>();
 const menuRef = shallowRef<HTMLElement>();
 const menuControlRef = shallowRef<MenuInstance>();
 const menuMounted = shallowRef(false);
+
+function isSubgroup(item: FlowActionGroup['actions'][number]): item is FlowActionSubgroup {
+  return 'actions' in item;
+}
 
 async function openMenu() {
   // 每次打开重新创建面板，避免上次选中的操作被当成当前值而无法重复添加。
@@ -55,7 +59,7 @@ async function handleMenuKeydown(event: KeyboardEvent) {
   } else if (group) {
     menuControlRef.value?.open(group);
     await nextTick();
-    target.querySelector<HTMLElement>('.el-menu-item:not(.is-disabled)')?.focus();
+    target.querySelector<HTMLElement>('[role="menuitem"]:not(.is-disabled)')?.focus();
   } else if (event.key !== 'ArrowRight') {
     target.click();
   }
@@ -119,25 +123,51 @@ function selectAction(value: string) {
             @click="openGroupOnClick($event, group.title)"
           >
             <template #title>{{ group.title }}</template>
-            <el-tooltip
-              v-for="action in group.actions"
-              :key="action.type"
-              :content="actionDescriptions[action.type]"
-              placement="right"
-              effect="dark"
-              :show-after="350"
-              :hide-after="0"
-              :enterable="false"
-              :popper-options="{ modifiers: [{ name: 'preventOverflow', options: { altAxis: true, padding: 8 } }] }"
-              popper-class="appium-action-description"
-            >
-              <el-menu-item
-                :index="action.type"
-                :disabled="isActionDisabled(action.type)"
+            <template v-for="item in group.actions" :key="isSubgroup(item) ? item.label : item.type">
+              <el-sub-menu
+                v-if="isSubgroup(item)"
+                :index="`${group.title}/${item.label}`"
+                :data-group="`${group.title}/${item.label}`"
+                :aria-label="item.label"
+                tabindex="-1"
+                :teleported="true"
+                popper-class="appium-action-submenu appium-action-submenu--third"
+                @click.stop="openGroupOnClick($event, `${group.title}/${item.label}`)"
               >
-                {{ action.label }}
-              </el-menu-item>
-            </el-tooltip>
+                <template #title>{{ item.label }}</template>
+                <el-tooltip
+                  v-for="action in item.actions"
+                  :key="action.type"
+                  :content="actionDescriptions[action.type]"
+                  placement="right"
+                  effect="dark"
+                  :show-after="350"
+                  :hide-after="0"
+                  :enterable="false"
+                  :popper-options="{ modifiers: [{ name: 'preventOverflow', options: { altAxis: true, padding: 8 } }] }"
+                  popper-class="appium-action-description"
+                >
+                  <el-menu-item :index="action.type" :disabled="isActionDisabled(action.type)">
+                    {{ action.label }}
+                  </el-menu-item>
+                </el-tooltip>
+              </el-sub-menu>
+              <el-tooltip
+                v-else
+                :content="actionDescriptions[item.type]"
+                placement="right"
+                effect="dark"
+                :show-after="350"
+                :hide-after="0"
+                :enterable="false"
+                :popper-options="{ modifiers: [{ name: 'preventOverflow', options: { altAxis: true, padding: 8 } }] }"
+                popper-class="appium-action-description"
+              >
+                <el-menu-item :index="item.type" :disabled="isActionDisabled(item.type)">
+                  {{ item.label }}
+                </el-menu-item>
+              </el-tooltip>
+            </template>
           </el-sub-menu>
           <el-menu-item v-if="clipboardCount" :index="PASTE_COMMAND" class="appium-action-paste">
             粘贴 {{ clipboardCount }} 个节点

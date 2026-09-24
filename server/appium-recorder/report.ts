@@ -1,4 +1,6 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { generateReplaySummary } from './report-summary';
+import { resolveReportSummary, type ReportSummaryConfig } from '../../src/appium-recorder/report-summary';
+import { mkdir, writeFile, rename, rm } from 'node:fs/promises';
 import { stripReplayLogTime } from './replay-log';
 import { join, relative } from 'node:path';
 import type { ReplayVideo } from './replay-video';
@@ -8,6 +10,7 @@ import { loadConfig } from '../config';
 import { saveAppiumReplayReport, type AppiumRecordedScriptRecord, type AppiumRecordedStepRecord } from './repository';
 import { flowBranchLabel } from '../../src/appium-recorder/flow-labels';
 import type { ImageCheckResult } from '../../src/appium-recorder/image-check';
+import type { AiRecognitionModel } from '../../src/appium-recorder/ai-recognition';
 
 type ReportImageCheck = ImageCheckResult & { nodeId: string; nodeNumber: number; nodeLabel: string; scriptName: string; settings: string };
 
@@ -803,6 +806,11 @@ function createReplayHtml(input: {
 }
 
 export async function createAppiumReplayReport(input: {
+  reportSummary?: ReportSummaryConfig;
+  reportSummaryModel?: AiRecognitionModel;
+  linkedScripts?: AppiumRecordedScriptRecord[];
+  redact?: (text: string) => string;
+  onSummaryStatus?: (status: string) => void;
   screenshotReport?: boolean;
   video?: ReplayVideo;
   script: AppiumRecordedScriptRecord;
@@ -892,6 +900,27 @@ export async function createAppiumReplayReport(input: {
     writeFile(logPath, `${persistedOutput}\n`, 'utf8'),
     ...(htmlReportPath ? [writeFile(htmlReportPath, html, 'utf8')] : []),
   ]);
+  let summaryStatus = '';
+  const summaryConfig = input.reportSummary ?? resolveReportSummary(loadConfig().appium.reportSummary);
+  if (summaryConfig.enabled) {
+    input.onSummaryStatus?.('正在生成回放报告总结…');
+    try {
+      const summaryModel = input.reportSummaryModel ?? loadConfig().appium.promptOptimizer?.model ?? { baseUrl: '', apiKey: '', name: '' };
+      const summary = await generateReplaySummary(summaryConfig, summaryModel, input);
+      const summaryTempPath = `${filePath}.summary.tmp`;
+      try {
+        await writeFile(summaryTempPath, input.redact ? input.redact(summary) : summary, 'utf8');
+        await rename(summaryTempPath, filePath);
+      } finally { await rm(summaryTempPath, { force: true }).catch(() => undefined); }
+      summaryStatus = '回放报告总结已生成';
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误';
+      summaryStatus = `回放报告总结失败，已保留基础报告：${detail}`;
+    }
+    if (input.redact) summaryStatus = input.redact(summaryStatus);
+    await writeFile(logPath, `${persistedOutput}\n${summaryStatus}\n`, 'utf8');
+    input.onSummaryStatus?.(summaryStatus);
+  }
   const record = saveAppiumReplayReport({
     scriptId: input.script.id,
     scriptName: input.script.name,
@@ -902,5 +931,5 @@ export async function createAppiumReplayReport(input: {
     startedAt: input.startedAt.toISOString(),
     completedAt: input.completedAt.toISOString(),
   });
-  return { id: record.id, filePath, fileName, logPath, logFileName, htmlReportPath, htmlFileName };
+  return { summaryStatus, id: record.id, filePath, fileName, logPath, logFileName, htmlReportPath, htmlFileName };
 }

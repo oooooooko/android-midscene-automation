@@ -1,3 +1,4 @@
+import { resolveReportSummary } from '../../src/appium-recorder/report-summary';
 import { execFile } from 'node:child_process';
 import { VariableScope, variableContext, resolveVariableStep } from './variables';
 import { getPresetVariables } from './variable-store';
@@ -9,7 +10,7 @@ import { adbScreenshotBase64 } from './screenshot';
 import { loadConfig } from '../config';
 import { timestampReplayLog } from './replay-log';
 import { checkImage } from './image-check';
-import { recognizeDeviceScreen } from './ai-recognition';
+import { recognizeDeviceScreen, resolveAiInvalidResultFallback } from './ai-recognition';
 import { IMAGE_CHECK_MODES, type ImageCheckResult } from '../../src/appium-recorder/image-check';
 import { formatStageLog } from '../../src/appium-recorder/stage-log';
 import { openGalleryOnDevice } from './open-gallery';
@@ -1346,6 +1347,16 @@ async function replayFlowSteps(
           await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'stopped', '已终止');
           throw new ReplayStoppedError();
         }
+        const invalidResultFallback = step.type === 'aiRecognition'
+          ? resolveAiInvalidResultFallback(error, step.aiInvalidResultBranch)
+          : null;
+        if (invalidResultFallback !== null) {
+          const status = `AI 未返回有效 true/false，按兜底配置进入 ${invalidResultFallback ? 'true' : 'false'} 分支`;
+          lines.push(`[节点 ${index + 1}] ${status}；${errorDetail(error)}`);
+          await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', status);
+          index = traversal.branch(step, invalidResultFallback);
+          continue;
+        }
         if (error instanceof ConditionTimeoutError && (step.timeoutBranch === 'yes' || step.timeoutBranch === 'no')) {
           const branch = step.timeoutBranch;
           const status = `判断超时，按配置进入${branch === 'yes' ? '左' : '右'}侧分支（${flowBranchLabel(step, branch)}）`;
@@ -1372,6 +1383,12 @@ async function replayFlowSteps(
         lines.push(`[循环 ${exited.loop.label}] 第 ${exited.iteration} 轮主动退出`);
         await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', `已退出循环：${exited.loop.label}`);
         index = exited.next;
+        continue;
+      } else if (step.type === 'continueLoop') {
+        const continued = traversal.continue(step);
+        lines.push(`[循环 ${continued.loop.label}] 第 ${continued.iteration} 轮提前结束，进入下一轮判断`);
+        await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'after', `继续下一轮：${continued.loop.label}`);
+        index = continued.next;
         continue;
       } else if (step.type === 'runScript') {
         await replayLinkedScript(sessionId, deviceId, step, lines, stack);
@@ -1478,7 +1495,7 @@ export async function replayAppiumScript(
   deviceId: string,
   onOutput?: (line: string) => void,
   signal?: AbortSignal,
-  runOptions: { screenshotReport?: boolean; recordVideo?: boolean; parameters?: TestVariable[]; globalVariables?: TestVariable[]; linkedScripts?: AppiumRecordedScriptRecord[] } = {},
+  runOptions: { screenshotReport?: boolean; recordVideo?: boolean; reportSummaryEnabled?: boolean; reportSummaryPrompt?: string; parameters?: TestVariable[]; globalVariables?: TestVariable[]; linkedScripts?: AppiumRecordedScriptRecord[] } = {},
 ) {
   const targetDeviceId = deviceId || script.deviceId;
   if (!targetDeviceId) throw new Error('未检测到可用设备');
@@ -1504,6 +1521,14 @@ export async function replayAppiumScript(
   };
   registerSecrets(script);
 
+  const appiumConfig = loadConfig().appium;
+  const configuredReportSummary = resolveReportSummary(appiumConfig.reportSummary);
+  const reportSummary = resolveReportSummary({
+    ...configuredReportSummary,
+    enabled: runOptions.reportSummaryEnabled ?? configuredReportSummary.enabled,
+    prompt: runOptions.reportSummaryPrompt?.trim() || configuredReportSummary.prompt,
+  });
+  const reportSummaryModel = appiumConfig.promptOptimizer?.model;
   const startedAt = new Date();
   const appVersion = await readAppVersion(targetDeviceId, script.appPackage).catch(() => '');
   const lines: string[] = [];
@@ -1686,6 +1711,11 @@ export async function replayAppiumScript(
     let htmlReportPath = '';
     try {
       const report = await createAppiumReplayReport({
+        reportSummary,
+        reportSummaryModel,
+        linkedScripts: scope.scrub([...scripts.values()].filter(item => item.id !== script.id)),
+        redact: text => scope.redact(text),
+        onSummaryStatus: status => { lines.push(status); },
         screenshotReport: context.screenshotReport,
         script: scope.scrub(script),
         deviceId: targetDeviceId,

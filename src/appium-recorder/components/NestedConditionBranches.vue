@@ -6,53 +6,10 @@ import type { AppiumRecordedStep } from '../types';
 import { buildConditionLayouts, FLOW_BRANCH_GAP, FLOW_NODE_WIDTH } from '../flow-layout';
 import FlowStepEditor from './FlowStepEditor.vue';
 import FlowActionMenu from './FlowActionMenu.vue';
+import type { FlowActionGroup, InsertAction } from '../flow-graph';
 
 type BranchName = 'yes' | 'no';
 type FlowKind = 'action' | 'condition' | 'assertion';
-type InsertAction =
-  | 'delay'
-  | 'tap'
-  | 'input'
-  | 'clearInput'
-  | 'coordinateTap'
-  | 'longPress'
-  | 'keyBack'
-  | 'keyHome'
-  | 'keyRecent'
-  | 'keyPower'
-  | 'swipe'
-  | 'pinch'
-  | 'launchApp'
-  | 'stopApp'
-  | 'openGallery'
-  | 'endFlow'
-  | 'loop'
-  | 'breakLoop'
-  | 'clearAppData'
-  | 'popupCondition'
-  | 'checkboxState'
-  | 'checkedState'
-  | 'radioButtonState'
-  | 'aiRecognition'
-  | 'imageCheck'
-  | 'textClick'
-  | 'tapIfExists'
-  | 'inputIfExists'
-  | 'clearIfExists'
-  | 'backIfExists'
-  | 'waitFor'
-  | 'assertExists'
-  | 'assertText'
-  | 'waitDisappear'
-  | 'waitActivity'
-  | 'runScript'
-  | 'extractVariable'
-  | 'noop'
-  | 'log'
-  | 'visualChangeStart'
-  | 'visualChangeEnd'
-  | 'visualChange';
-
 const PASTE_COMMAND = '__paste_flow_nodes__';
 
 const props = defineProps<{
@@ -86,7 +43,7 @@ const layout = computed(() => buildConditionLayouts(props.steps).get(props.condi
   yesAxis: 25,
   noAxis: 75,
 });
-const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; label: string }> }> = [
+const actionGroups: FlowActionGroup[] = [
   {
     title: '组件操作',
     actions: [
@@ -126,8 +83,13 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
       { type: 'waitFor', label: '等待出现' },
       { type: 'waitDisappear', label: '等待元素消失' },
       { type: 'waitActivity', label: '等待 Activity' },
-      { type: 'visualChangeStart', label: '检测画面变化开始' },
-      { type: 'visualChangeEnd', label: '检测画面变化结束' },
+      {
+        label: '检测画面变化',
+        actions: [
+          { type: 'visualChangeStart', label: '开始检测' },
+          { type: 'visualChangeEnd', label: '结束检测' },
+        ],
+      },
     ],
   },
   {
@@ -142,8 +104,14 @@ const actionGroups: Array<{ title: string; actions: Array<{ type: InsertAction; 
     actions: [
       { type: 'noop', label: '空节点' },
       { type: 'endFlow', label: '终止流程' },
-      { type: 'loop', label: '有界循环' },
-      { type: 'breakLoop', label: '退出循环' },
+      {
+        label: '循环',
+        actions: [
+          { type: 'loop', label: '有界循环' },
+          { type: 'continueLoop', label: '继续下一次循环' },
+          { type: 'breakLoop', label: '退出循环' },
+        ],
+      },
       { type: 'log', label: '输出日志' },
       { type: 'runScript', label: '连接脚本' },
     ],
@@ -166,6 +134,7 @@ function typeLabel(step: AppiumRecordedStep) {
     endFlow: '终止流程',
     loop: '有界循环',
     breakLoop: '退出循环',
+    continueLoop: '继续下一次循环',
     log: '输出日志',
     checkboxState: 'Checkbox 状态',
     checkedState: '判断勾选',

@@ -40,6 +40,9 @@ select {
 }
 
 .layout-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-right: 1px solid #e4e7ed;
   background: #001529;
 }
@@ -64,6 +67,8 @@ select {
 }
 
 .layout-menu {
+  flex: 1;
+  min-height: 0;
   border-right: 0;
   background: transparent;
 }
@@ -73,6 +78,38 @@ select {
   --el-menu-text-color: rgba(255, 255, 255, 0.85);
   --el-menu-hover-bg-color: #0a2540;
   --el-menu-active-color: #fff;
+}
+
+.layout-sidebar__footer {
+  display: flex;
+  justify-content: flex-end;
+  height: 52px;
+  background: #fff;
+}
+
+.layout-sidebar__help {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.layout-sidebar__help:hover,
+.layout-sidebar__help:focus-visible {
+  background: transparent;
+  color: #6b7280;
+  outline: none;
+}
+
+.layout-sidebar__help .el-icon {
+  font-size: 17px;
 }
 
 .layout-main {
@@ -515,50 +552,6 @@ select {
   color: #909399;
   font-size: 12px;
   line-height: 18px;
-}
-
-.appium-activity-lock-alert {
-  align-items: flex-start;
-}
-
-.appium-activity-lock-alert .el-alert__content {
-  min-width: 0;
-}
-
-.appium-activity-lock-alert__details {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  margin-top: 6px;
-  color: #b88230;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.appium-activity-lock-alert__details > div {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 6px;
-  min-width: 0;
-}
-
-.appium-activity-lock-alert__details strong {
-  font-weight: 600;
-}
-
-.appium-activity-lock-alert__details code {
-  min-width: 0;
-  color: inherit;
-  font-family: inherit;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  white-space: normal;
-}
-
-.appium-activity-lock-alert__details p {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
 }
 
 .appium-action-dropdown__item {
@@ -1402,7 +1395,6 @@ select {
 .appium-replay-dialog.el-dialog {
   display: flex;
   padding: 16px;
-  width: min(820px, calc(100vw - 32px)) !important;
   height: min(620px, calc(100vh - 64px));
   min-width: 420px;
   min-height: 280px;

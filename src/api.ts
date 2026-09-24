@@ -115,14 +115,14 @@ export function saveConfig(input: Pick<ConfigForm, 'runtime'>) {
   return postJson<{ success?: boolean } | ConfigForm>(`${APP_BASE}/api/config`, input);
 }
 
-export function saveAppiumConfig(appium: Omit<ConfigForm['appium'], 'model'>) {
+export function saveAppiumConfig(appium: Omit<ConfigForm['appium'], 'model' | 'promptOptimizer'>) {
   return postJson<{ success: boolean }>(`${APP_BASE}/api/config/appium`, { appium });
 }
 
 // 测试指定模型配置是否可用，通常用于保存前验证 baseUrl/apiKey/model。
 export function testModel(input: {
   save?: boolean;
-  modelKey: 'midscene' | 'scriptOptimizer' | 'appium';
+  modelKey: 'midscene' | 'scriptOptimizer' | 'appium' | 'promptOptimizer';
   model: {
     provider?: MidsceneModelProvider;
     baseUrl: string;

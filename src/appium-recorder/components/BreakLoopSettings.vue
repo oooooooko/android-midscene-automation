@@ -3,14 +3,30 @@ import { computed } from 'vue';
 import type { AppiumRecordedStep } from '../types';
 import { enclosingLoops } from '../bounded-loop';
 
-const props = defineProps<{ step: AppiumRecordedStep; steps: AppiumRecordedStep[]; disabled?: boolean }>();
+const props = defineProps<{
+  step: AppiumRecordedStep;
+  steps: AppiumRecordedStep[];
+  disabled?: boolean;
+  mode?: 'break' | 'continue';
+}>();
 const emit = defineEmits<{ update: [patch: Partial<AppiumRecordedStep>] }>();
 const loops = computed(() => enclosingLoops(props.steps, props.step));
+const isContinue = computed(() => props.mode === 'continue');
+const fieldLabel = computed(() => isContinue.value ? '继续目标循环' : '退出目标循环');
+const targetId = computed(() => (
+  isContinue.value ? props.step.continueLoopTargetId : props.step.breakLoopTargetId
+) || loops.value[0]?.id);
+
+function updateTarget(value: string) {
+  emit('update', isContinue.value
+    ? { continueLoopTargetId: value }
+    : { breakLoopTargetId: value });
+}
 </script>
 
 <template>
-  <el-form-item label="退出目标循环">
-    <el-select class="break-loop-target" popper-class="break-loop-target-popper" :model-value="step.breakLoopTargetId || loops[0]?.id" :disabled="disabled" aria-label="退出目标循环" @update:model-value="emit('update', { breakLoopTargetId: $event })">
+  <el-form-item :label="fieldLabel">
+    <el-select class="break-loop-target" popper-class="break-loop-target-popper" :model-value="targetId" :disabled="disabled" :aria-label="fieldLabel" @update:model-value="updateTarget">
       <el-option class="break-loop-target-option" v-for="(loop, index) in loops" :key="loop.id" :value="loop.id" :label="`${loop.label}（${index === 0 ? '当前循环' : `外层 ${index}`} · 节点 ${steps.findIndex(item => item.id === loop.id) + 1}）`" />
     </el-select>
   </el-form-item>

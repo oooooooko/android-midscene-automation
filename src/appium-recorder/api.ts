@@ -17,6 +17,16 @@ export async function validateAiBranchQuestion(prompt: string, signal?: AbortSig
   }));
 }
 
+export async function optimizeAppiumPrompt(input: {
+  kind: 'aiRecognition' | 'reportSummary';
+  prompt: string;
+  condition?: boolean;
+}, signal?: AbortSignal) {
+  return readJson<{ prompt: string }>(await fetch(`${APP_BASE}/api/appium-recorder/prompts/optimize`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
+  }));
+}
+
 export function captureImageCheckRegion(deviceId: string, region: AppiumVisualChangeRegion, screenWidth: number, screenHeight: number) {
   return postJson<{ base64: string; screenWidth: number; screenHeight: number }>(`${APP_BASE}/api/appium-recorder/image-check/capture`, { deviceId, region, screenWidth, screenHeight });
 }
@@ -138,7 +148,7 @@ type ReplayStreamEvent =
   | { type: 'error'; message: string };
 
 export async function replayAppiumScript(
-  input: { id: string; deviceId?: string; recordVideo?: boolean; parameters?: import('./variables').TestVariable[] },
+  input: { id: string; deviceId?: string; recordVideo?: boolean; reportSummaryEnabled?: boolean; reportSummaryPrompt?: string; parameters?: import('./variables').TestVariable[] },
   onOutput?: (line: string) => void,
 ) {
   const response = await fetch(`${APP_BASE}/api/appium-recorder/scripts/${encodeURIComponent(input.id)}/replay`, {
@@ -147,7 +157,13 @@ export async function replayAppiumScript(
       'Content-Type': 'application/json',
       Accept: 'application/x-ndjson',
     },
-    body: JSON.stringify({ deviceId: input.deviceId, parameters: input.parameters, recordVideo: input.recordVideo }),
+    body: JSON.stringify({
+      deviceId: input.deviceId,
+      parameters: input.parameters,
+      recordVideo: input.recordVideo,
+      reportSummaryEnabled: input.reportSummaryEnabled,
+      reportSummaryPrompt: input.reportSummaryPrompt,
+    }),
   });
   if (!response.ok || !response.body) return readJson<ReplayResult>(response);
 
@@ -175,6 +191,10 @@ export async function replayAppiumScript(
   consumeLine(buffer);
   if (!result) throw new Error('回放结束但未返回执行结果');
   return result;
+}
+
+export function checkReportSummaryModel() {
+  return postJson<{ enabled: boolean; available: boolean; message?: string }>(`${APP_BASE}/api/appium-recorder/report-summary/check`);
 }
 
 export function stopAppiumReplay(deviceId?: string) {

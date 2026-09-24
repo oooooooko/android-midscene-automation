@@ -29,7 +29,7 @@ test('Appium autosave is isolated from manual config, persists and rejects inval
     if (body.model === 'slow') {
       await new Promise<void>(resolve => { releaseModel = resolve; modelStarted?.(); });
     }
-    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }));
+    res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'OK' } }] }));
   });
   try {
     await new Promise<void>(resolve => modelServer.listen(0, '127.0.0.1', resolve));
@@ -73,6 +73,52 @@ test('Appium autosave is isolated from manual config, persists and rejects inval
         if (other !== key) assert.deepEqual(after[other], before[other]);
       }
     }
+    assert.equal((await post('/api/appium-recorder/prompts/optimize', {
+      kind: 'aiRecognition', prompt: '检查有没有广告', condition: true,
+    })).status, 500, 'prompt optimization requires its own tested model');
+    const unavailableSummaryModel = await post('/api/appium-recorder/report-summary/check', {});
+    assert.equal(unavailableSummaryModel.status, 200);
+    const unavailableSummaryStatus = await unavailableSummaryModel.json() as { available: boolean; message?: string };
+    assert.equal(unavailableSummaryStatus.available, false);
+    assert.equal(unavailableSummaryStatus.message, '模型配置不完整');
+    const promptOptimizerBefore = await (await fetch(base + '/api/config')).json() as AppConfig;
+    assert.equal((await post('/api/test-model', { modelKey: 'promptOptimizer', model: { ...model, name: 'fail' }, save: true })).status, 500);
+    assert.deepEqual(await (await fetch(base + '/api/config')).json(), promptOptimizerBefore);
+    assert.equal((await post('/api/test-model', { modelKey: 'promptOptimizer', model, save: true })).status, 200);
+    stored = await (await fetch(base + '/api/config')).json() as AppConfig;
+    assert.equal(stored.appium.promptOptimizer?.model.name, 'pass');
+    const optimizedRecognition = await post('/api/appium-recorder/prompts/optimize', {
+      kind: 'aiRecognition', prompt: '检查有没有广告', condition: true,
+    });
+    assert.equal(optimizedRecognition.status, 200);
+    assert.deepEqual(await optimizedRecognition.json(), { prompt: 'OK' });
+    const optimizedSummary = await post('/api/appium-recorder/prompts/optimize', {
+      kind: 'reportSummary', prompt: '总结出图时间',
+    });
+    assert.equal(optimizedSummary.status, 200);
+    assert.deepEqual(await optimizedSummary.json(), { prompt: 'OK' });
+    // Summary settings auto-save independently and reuse the prompt optimizer model.
+    const summaryBefore = await (await fetch(base + '/api/config')).json() as AppConfig;
+    assert.equal(summaryBefore.appium.reportSummary?.enabled, false);
+    const customReportPreset = { name: '支付流程', prompt: '输出支付流程的步骤和结果' };
+    assert.equal((await post('/api/config/appium', { appium: { reportSummary: {
+      enabled: true, prompt: '输出用例表格', customPresets: [customReportPreset], model,
+    } } })).status, 200);
+    let summaryConfig = await (await fetch(base + '/api/config')).json() as AppConfig;
+    assert.equal(summaryConfig.appium.reportSummary?.prompt, '输出用例表格');
+    assert.deepEqual(summaryConfig.appium.reportSummary?.customPresets, [customReportPreset]);
+    assert.equal('model' in summaryConfig.appium.reportSummary!, false);
+    assert.equal(summaryConfig.appium.promptOptimizer?.model.name, 'pass');
+    const summaryModelStatus = await post('/api/appium-recorder/report-summary/check', {});
+    assert.equal(summaryModelStatus.status, 200);
+    assert.deepEqual(await summaryModelStatus.json(), { enabled: true, available: true });
+    await post('/api/config/appium', { appium: { reportSummary: { enabled: false, prompt: '恢复测试格式', customPresets: [customReportPreset], model: { name: 'stale' } } } });
+    summaryConfig = await (await fetch(base + '/api/config')).json() as AppConfig;
+    assert.equal('model' in summaryConfig.appium.reportSummary!, false);
+    assert.deepEqual(summaryConfig.appium.reportSummary?.customPresets, [customReportPreset]);
+    assert.equal(summaryConfig.appium.promptOptimizer?.model.name, 'pass');
+    assert.deepEqual(summaryConfig.appium.model, summaryBefore.appium.model);
+    assert.equal((await post('/api/config/appium', { appium: { reportSummary: { prompt: '' } } })).status, 400);
     // A slow test must not revert an appearance edit saved while it was running.
     const started = new Promise<void>(resolve => { modelStarted = resolve; });
     const slowTest = post('/api/test-model', { modelKey: 'appium', model: { ...model, name: 'slow' }, save: true });
@@ -85,6 +131,7 @@ test('Appium autosave is isolated from manual config, persists and rejects inval
     await post('/api/config', { runtime: initial.runtime });
     stored = await (await fetch(base + '/api/config')).json() as AppConfig;
     assert.equal(stored.appium.model.name, 'slow');
+    assert.equal(stored.appium.promptOptimizer?.model.name, 'pass');
     assert.equal(stored.midscene.model.name, 'pass');
     assert.equal(stored.appium.flowLineColor, '#123456');
     assert.equal(loadModelConfigFromDb()?.appium?.model?.name, 'slow');

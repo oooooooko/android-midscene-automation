@@ -1,3 +1,4 @@
+import type { ReportSummaryConfig } from './appium-recorder/report-summary';
 import type { AiPromptPreset } from './appium-recorder/ai-prompt-presets';
 import type { ScriptStep } from './script-generator';
 import type { MidsceneModelProvider } from './config/midscene-model-presets';
@@ -14,7 +15,7 @@ export type GeneratorForm = {
 };
 
 export type ConfigForm = {
-  appium: { model: AiRecognitionModel; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
+  appium: { reportSummary?: ReportSummaryConfig; model: AiRecognitionModel; promptOptimizer?: { model: AiRecognitionModel }; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;

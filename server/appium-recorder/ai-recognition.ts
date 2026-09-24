@@ -17,16 +17,28 @@ export function aiAnswerText(content: string | null | undefined) {
   return (content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1').trim();
 }
 
+export class AiInvalidResultError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiInvalidResultError';
+  }
+}
+
+export function resolveAiInvalidResultFallback(error: unknown, branch?: 'yes' | 'no'): boolean | null {
+  if (!(error instanceof AiInvalidResultError) || (branch !== 'yes' && branch !== 'no')) return null;
+  return branch === 'yes';
+}
+
 export function parseAiRecognitionResult(content: string | null | undefined): { result: boolean; reason: string } {
   // 只接受 JSON 布尔值；字符串 "false"、不确定或格式错误不能误走 false 分支。
   const text = aiAnswerText(content);
   let value: unknown;
-  try { value = JSON.parse(text); } catch { throw new Error('AI 识别未返回有效 JSON 结果'); }
+  try { value = JSON.parse(text); } catch { throw new AiInvalidResultError('AI 识别未返回有效 JSON 结果'); }
   if (!value || typeof value !== 'object' || !('result' in value) || typeof value.result !== 'boolean') {
     if (value && typeof value === 'object' && 'result' in value && value.result === null) {
-      throw new Error(`AI 无法判断，无法进入分支：${'reason' in value && typeof value.reason === 'string' ? value.reason.slice(0, 2000) : '未返回确定的判断结果'}`);
+      throw new AiInvalidResultError(`AI 无法判断：${'reason' in value && typeof value.reason === 'string' ? value.reason.slice(0, 2000) : '未返回确定的判断结果'}`);
     }
-    throw new Error('AI 识别结果必须包含布尔值 result（true/false）');
+    throw new AiInvalidResultError('AI 识别结果必须包含布尔值 result（true/false）');
   }
   const reason = 'reason' in value && typeof value.reason === 'string' ? value.reason.trim() : '';
   return { result: value.result, reason: reason.slice(0, 2000) };
@@ -96,7 +108,7 @@ export async function recognizeDeviceScreen(input: {
       // 先记录正文再解析，格式错误或被截断的回答也可排查；不记录请求与鉴权信息。
       const content = (choice?.message.content || '').split(model.apiKey).join('[REDACTED]');
       input.onModelOutput?.(content || '（空响应）');
-      if (choice?.finish_reason !== 'stop') throw new Error('AI 识别响应未完整返回');
+      if (choice?.finish_reason !== 'stop') throw new AiInvalidResultError('AI 识别响应未完整返回');
       if (input.aiBranchEnabled === false && observationConfig?.mode !== 'untilMatch') {
         const reason = aiAnswerText(content);
         if (!reason) throw new Error('AI 识别未返回回答内容');

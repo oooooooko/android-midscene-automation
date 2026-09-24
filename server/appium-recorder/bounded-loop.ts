@@ -1,5 +1,5 @@
 import type { AppiumRecordedStep } from '../../src/appium-recorder/types';
-import { enclosingLoop, enclosingLoops, breakLoopTarget, validateLoopSteps } from '../../src/appium-recorder/bounded-loop';
+import { enclosingLoop, enclosingLoops, breakLoopTarget, continueLoopTarget, validateLoopSteps } from '../../src/appium-recorder/bounded-loop';
 import { defaultFlowKind } from '../../src/appium-recorder/flow-labels';
 
 /** Virtual returns keep the saved flow graph acyclic and preserve branch layout. */
@@ -104,6 +104,17 @@ export class BoundedLoopTraversal {
       this.active.delete(inner.id);
     }
     return { loop: owner, iteration: this.iteration(owner), next: this.exit(owner) };
+  }
+
+  continue(step: AppiumRecordedStep) {
+    const owner = continueLoopTarget(this.steps, step);
+    if (!this.active.has(owner.id)) throw new Error('目标循环当前未执行');
+    // 跳到外层循环时，内层循环的当前轮同时结束，但目标循环仍保持活动状态。
+    for (const inner of enclosingLoops(this.steps, step)) {
+      if (inner.id === owner.id) break;
+      this.active.delete(inner.id);
+    }
+    return { loop: owner, iteration: this.iteration(owner), next: this.target(owner.id) };
   }
 
   context(step: AppiumRecordedStep) {

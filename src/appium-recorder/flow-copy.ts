@@ -184,6 +184,7 @@ export function pasteFlowClipboard(
     delete step.mergeUndo;
     step.id = idMap.get(source.id) || createId();
     if (step.breakLoopTargetId) step.breakLoopTargetId = idMap.get(step.breakLoopTargetId) || step.breakLoopTargetId;
+    if (step.continueLoopTargetId) step.continueLoopTargetId = idMap.get(step.continueLoopTargetId) || step.continueLoopTargetId;
     const flow = { ...(step.flow || {}) };
     for (const key of targetKeys) {
       const mappedId = flow[key] ? idMap.get(flow[key] || '') : '';

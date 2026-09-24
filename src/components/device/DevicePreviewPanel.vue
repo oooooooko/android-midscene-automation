@@ -31,6 +31,7 @@ const props = defineProps<{
   selectedBounds?: DeviceOverlayBounds;
   selectedRegion?: DeviceOverlayBounds;
   regionSelection?: boolean;
+  pointSelection?: boolean;
   regionDrawMode?: boolean;
   deviceWidth?: number;
   deviceHeight?: number;
@@ -45,6 +46,7 @@ const emit = defineEmits<{
   previewError: [];
   refreshPreview: [];
   tap: [point: { x: number; y: number }];
+  cancelPointSelection: [];
   regionSelect: [region: DeviceRegionSelection];
   swipe: [gesture: {
     startX: number;
@@ -257,6 +259,14 @@ function handlePointerUp(event: PointerEvent) {
     return;
   }
 
+  if (props.pointSelection) {
+    if (!props.interactionDisabled) emit('tap', {
+      x: Math.min(point.x, (props.deviceWidth || imageSize.value.width) - 1),
+      y: Math.min(point.y, (props.deviceHeight || imageSize.value.height) - 1),
+    });
+    return;
+  }
+
   if (session.mode !== 'gesture') {
     const bounds = draftRegion.value || boundsFromPoints('selected-region', session.start, point);
     draftRegion.value = null;
@@ -299,7 +309,7 @@ function handlePointerCancel(event: PointerEvent) {
           <el-tag v-if="compact" :type="available ? 'success' : 'info'">
             {{ available ? '已连接' : '未连接' }}
           </el-tag>
-          <el-tooltip v-if="compact" :content="enlarged ? '退出设备放大' : '放大设备预览'" placement="top" :show-after="200"><el-button class="recorder-panel-tool" size="small" :icon="enlarged ? Close : FullScreen" :aria-label="enlarged ? '退出设备放大' : '放大设备预览'" @click="enlarged = !enlarged" /></el-tooltip>
+          <el-tooltip v-if="compact && !pointSelection" :content="enlarged ? '退出设备放大' : '放大设备预览'" placement="top" :show-after="200"><el-button class="recorder-panel-tool" size="small" :icon="enlarged ? Close : FullScreen" :aria-label="enlarged ? '退出设备放大' : '放大设备预览'" @click="enlarged = !enlarged" /></el-tooltip>
           <el-tooltip content="刷新画面" placement="top" :show-after="200">
           <el-button
             :text="!compact"
@@ -339,7 +349,7 @@ function handlePointerCancel(event: PointerEvent) {
         :key="action.key"
         type="button"
         class="device-action-button"
-        :disabled="interactionDisabled || regionSelection"
+        :disabled="interactionDisabled || regionSelection || pointSelection"
         :aria-label="action.label"
         @click="emit('triggerKey', action.keyCode)"
       >
@@ -348,6 +358,10 @@ function handlePointerCancel(event: PointerEvent) {
       </button>
     </div>
 
+    <div v-if="pointSelection" class="device-point-selection">
+      <span>请点击画面获取坐标</span>
+      <el-button size="small" text @click="emit('cancelPointSelection')">取消取点</el-button>
+    </div>
     <div
       ref="previewRef"
       class="device-preview"
@@ -364,7 +378,7 @@ function handlePointerCancel(event: PointerEvent) {
       >
         <div
           class="device-preview__surface"
-          :class="{ 'device-preview__surface--selecting': regionSelection }"
+          :class="{ 'device-preview__surface--selecting': regionSelection || pointSelection }"
           @pointerdown="handlePointerDown"
           @pointermove="handlePointerMove"
           @pointerup="handlePointerUp"
@@ -445,6 +459,7 @@ function handlePointerCancel(event: PointerEvent) {
 </template>
 
 <style scoped>
+.device-point-selection { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 12px; color: var(--el-color-primary); }
 .device-preview-title { display: flex; align-items: center; gap: 8px; }
 .device-preview-card--compact { display: flex; flex-direction: column; min-height: 0; }
 .device-preview-card--compact :deep(> .el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; gap: 8px; }

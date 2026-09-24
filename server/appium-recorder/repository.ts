@@ -1,4 +1,4 @@
-import { validateAiObservation, type AiObservationConfig } from '../../src/appium-recorder/ai-recognition';
+import { validateAiInvalidResultBranch, validateAiObservation, type AiInvalidResultBranch, type AiObservationConfig } from '../../src/appium-recorder/ai-recognition';
 import {
   createId,
   querySql,
@@ -44,6 +44,7 @@ export type AppiumRecordedStepRecord = {
     | 'endFlow'
     | 'loop'
     | 'breakLoop'
+    | 'continueLoop'
     | 'clearAppData'
     | 'waitDisappear'
     | 'assertText'
@@ -102,10 +103,12 @@ export type AppiumRecordedStepRecord = {
   timeoutMs?: number;
   aiTimeoutEnabled?: boolean;
   aiBranchEnabled?: boolean;
+  aiInvalidResultBranch?: AiInvalidResultBranch;
   aiObservation?: AiObservationConfig;
   timeoutBranch?: 'stop' | 'yes' | 'no';
   longPressMode?: 'element' | 'coordinates';
   breakLoopTargetId?: string;
+  continueLoopTargetId?: string;
   loop?: {
     maxIterations: number;
     exitWhen: 'never' | 'exists' | 'notExists';
@@ -380,7 +383,10 @@ export function saveAppiumRecordedScript(input: {
   if (input.variables !== undefined) validateVariables(input.variables);
   for (const step of steps) {
     // 读取旧脚本必须容错，让用户能打开并修正无效配置；仅在写入时校验。
-    if (step.type === 'aiRecognition') validateAiObservation(step.aiObservation);
+    if (step.type === 'aiRecognition') {
+      validateAiObservation(step.aiObservation);
+      validateAiInvalidResultBranch(step.aiInvalidResultBranch);
+    }
     if (step.type === 'imageCheck') validateImageCheck(step.imageCheck);
     if (step.type === 'extractVariable') validateExtraction(step.extractVariable);
     if (step.type === 'runScript') { validateVariables(step.parameters); validateReturns(step.returns); }

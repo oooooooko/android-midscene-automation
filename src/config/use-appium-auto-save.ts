@@ -1,16 +1,24 @@
+import { resolveReportSummary } from '../appium-recorder/report-summary';
 import { onScopeDispose, shallowRef, watch } from 'vue';
 import type { ConfigForm } from '../types';
 import { isHexColor } from '../appium-recorder/flow-appearance';
 import { resolveAiDeduplication } from '../appium-recorder/ai-deduplication';
 
 // 串行提交最新快照，较慢的旧请求不会在新请求后覆盖配置。
-export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigForm['appium'], 'model'>) => Promise<unknown>, onError: (error: unknown) => void) {
+export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigForm['appium'], 'model' | 'promptOptimizer'>) => Promise<unknown>, onError: (error: unknown) => void) {
   const saving = shallowRef(false);
   const status = shallowRef('');
   let initialized = false, saved = '', pending: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // 模型只能通过“测试并保存”提交，自动保存仅观察其余设置。
-  function snapshotSettings() { const { model: _model, ...settings } = config.appium; return JSON.stringify(settings); }
+  function snapshotSettings() {
+    const { model: _model, promptOptimizer: _promptOptimizer, reportSummary, ...settings } = config.appium;
+    return JSON.stringify({ ...settings, ...(reportSummary ? { reportSummary: {
+      enabled: reportSummary.enabled,
+      prompt: reportSummary.prompt,
+      customPresets: reportSummary.customPresets,
+    } } : {}) });
+  }
   function initialize() { saved = snapshotSettings(); initialized = true; }
   async function flush() {
     if (saving.value || pending === undefined) return;
@@ -43,8 +51,8 @@ export function useAppiumAutoSave(config: ConfigForm, save: (value: Omit<ConfigF
       status.value = '颜色格式有误，尚未保存';
       return;
     }
-    try { resolveAiDeduplication(value.aiDeduplication); }
-    catch { status.value = '去重参数有误，尚未保存'; return; }
+    try { resolveAiDeduplication(value.aiDeduplication); resolveReportSummary(value.reportSummary); }
+    catch { status.value = '配置参数有误，尚未保存'; return; }
     pending = snapshot;
     status.value = '等待自动保存…';
     timer = setTimeout(() => { void flush(); }, 350);

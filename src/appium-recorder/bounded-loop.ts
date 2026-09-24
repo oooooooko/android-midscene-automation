@@ -42,8 +42,15 @@ export function breakLoopTarget(steps: readonly AppiumRecordedStep[], step: Appi
   return target;
 }
 
+export function continueLoopTarget(steps: readonly AppiumRecordedStep[], step: AppiumRecordedStep) {
+  const loops = enclosingLoops(steps, step);
+  const target = step.continueLoopTargetId ? loops.find((loop) => loop.id === step.continueLoopTargetId) : loops[0];
+  if (!target) throw new Error('继续循环目标必须是当前节点所属的循环体，目标可能已删除或不在当前分支');
+  return target;
+}
+
 export function validateLoopSteps(steps: readonly AppiumRecordedStep[]) {
-  if (!steps.some((step) => step.type === 'loop' || step.type === 'breakLoop')) return;
+  if (!steps.some((step) => ['loop', 'breakLoop', 'continueLoop'].includes(step.type))) return;
   const byId = new Map(steps.map((step) => [step.id, step]));
   if (byId.size !== steps.length) throw new Error('流程节点 ID 重复');
   for (const step of steps) {
@@ -58,6 +65,7 @@ export function validateLoopSteps(steps: readonly AppiumRecordedStep[]) {
     }
     if (step.type === 'loop') validateLoop(step);
     if (step.type === 'breakLoop') breakLoopTarget(steps, step);
+    if (step.type === 'continueLoop') continueLoopTarget(steps, step);
     if (step.type === 'loop' && step.flow?.yesTargetId) {
       const target = byId.get(step.flow.yesTargetId);
       if (!target || target.flow?.parentConditionId !== step.id || target.flow.parentBranch !== 'yes') throw new Error('循环入口必须指向所属循环体');

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, provide, reactive, shallowRef, watch } from 'vue';
 import { flowBackgroundKey, normalizeFlowBackground, flowLineColorKey, normalizeFlowLineColor } from './flow-appearance';
+import { useCoordinatePicker } from './coordinate-preview';
 import { DEFAULT_NODE_TIMEOUT_MS } from './node-timeout';
 import { aiPromptPresetsKey, DEFAULT_AI_PROMPT_PRESETS, type AiPromptPreset } from './ai-prompt-presets';
 import AiRecognitionPromptInput from './components/AiRecognitionPromptInput.vue';
@@ -17,9 +18,10 @@ import { insertBeforeSharedStep } from './flow-insert';
 import VariableExtractionSettings from './components/VariableExtractionSettings.vue';
 import ScriptParameterSettings from './components/ScriptParameterSettings.vue';
 import { validateVariables, validateExtraction, validateReturns, type TestVariable } from './variables';
-import { defaultLoopConfig, enclosingLoops, breakLoopTarget, validateLoop, validateLoopSteps } from './bounded-loop';
+import { breakLoopTarget, continueLoopTarget, defaultLoopConfig, enclosingLoops, validateLoop, validateLoopSteps } from './bounded-loop';
 import {
   clearAppiumDeviceAppData,
+  checkReportSummaryModel,
   deleteAppiumScript,
   downloadAppiumScript,
   getAppiumScripts,
@@ -46,6 +48,7 @@ import VisualChangeDialog from './components/VisualChangeDialog.vue';
 import ImageCheckDialog from './components/ImageCheckDialog.vue';
 import AiRecognitionTestDialog from './components/AiRecognitionTestDialog.vue';
 import { validateAiRecognitionPrompt } from './ai-recognition';
+import { DEFAULT_REPORT_SUMMARY_PROMPT, REPORT_SUMMARY_PROMPT_PRESETS, type ReportSummaryConfig } from './report-summary';
 import { createImageCheckConfig, validateImageCheck, type ImageCheckConfig } from './image-check';
 import {
   createFlowClipboard,
@@ -101,10 +104,12 @@ const AUTO_TREE_REFRESH_INTERVAL_MS = 1800;
 const readonlyFlowActionGroups: FlowActionGroup[] = [];
 const readonlyFlowSelectedIndexes: number[] = [];
 const recordReplayVideo = shallowRef(false);
+const selectedReportTemplateName = shallowRef('');
 
 const props = defineProps<{
   aiRecognitionModelConfigured?: boolean;
   aiPromptPresets?: AiPromptPreset[];
+  reportSummary?: ReportSummaryConfig;
   flowBackgroundColor?: string;
   flowLineColor?: string;
   active: boolean;
@@ -134,6 +139,11 @@ const props = defineProps<{
 provide(flowBackgroundKey, computed(() => normalizeFlowBackground(props.flowBackgroundColor)));
 provide(flowLineColorKey, computed(() => normalizeFlowLineColor(props.flowLineColor)));
 const availableAiPromptPresets = computed(() => props.aiPromptPresets ?? DEFAULT_AI_PROMPT_PRESETS);
+const availableReportTemplates = computed(() => [
+  ...REPORT_SUMMARY_PROMPT_PRESETS,
+  ...(props.reportSummary?.customPresets || []),
+]);
+const selectedReportTemplate = computed(() => availableReportTemplates.value.find(item => item.name === selectedReportTemplateName.value));
 provide(aiPromptPresetsKey, availableAiPromptPresets);
 const selectedDeviceId = computed(() => props.playgroundDeviceId);
 const tree = shallowRef<AppiumNode | null>(null);
@@ -180,6 +190,7 @@ const duplicatingScriptId = shallowRef('');
 const renamingScriptId = shallowRef('');
 const downloadingScriptId = shallowRef('');
 const replaying = shallowRef(false);
+const preparingReplay = shallowRef(false);
 const stoppingReplay = shallowRef(false);
 const activeReplayDeviceId = shallowRef('');
 const recordingTap = shallowRef(false);
@@ -241,16 +252,9 @@ const linkedScriptTarget = computed(() => scripts.value.find((script) => script.
 const linkedScriptPreviewScript = computed(() => (
   scripts.value.find((script) => script.id === linkedScriptPreviewScriptId.value) || null
 ));
-const compatibleLinkableScripts = computed(() => linkableScripts.value.filter((script) => (
-  script.appPackage === form.appPackage
-  && (
-    Boolean(linkedScriptBranchTarget.value)
-    || (
-      Boolean(linkedScriptExpectedActivity.value)
-      && script.appActivity === linkedScriptExpectedActivity.value
-    )
-  )
-)));
+const compatibleLinkableScripts = computed(() => linkableScripts.value.filter(
+  (script) => script.appPackage === form.appPackage,
+));
 const hasSelectedAppPackage = computed(() => props.appPresets.some((app) => app.packageName === form.appPackage));
 const scriptActivityMismatch = computed(() => {
   const expectedActivity = selectedScript.value?.appActivity?.trim();
@@ -262,8 +266,8 @@ const recordingBusy = computed(() => (
   || resolvingNavigation.value
   || Boolean(pendingNavigation.value)
 ));
-const recordingLocked = computed(() => recordingBusy.value || replaying.value);
-const newScriptDisabled = computed(() => saving.value || replaying.value || recordingBusy.value || launchingApp.value || importingScript.value);
+const recordingLocked = computed(() => recordingBusy.value || replaying.value || preparingReplay.value);
+const newScriptDisabled = computed(() => saving.value || replaying.value || preparingReplay.value || recordingBusy.value || launchingApp.value || importingScript.value);
 const overlayBounds = computed(() => flattenNodes(tree.value).flatMap((node) => (
   node.bounds ? [{ id: node.id, ...node.bounds }] : []
 )));
@@ -279,6 +283,13 @@ const visualChangeSelectedRegion = computed(() => {
 const visualChangeRegionSelectionEnabled = computed(() => (
   (visualChangeDialogVisible.value && visualChangeConfig.value.mode === 'region') || imageCheckDraft.value?.imageCheck?.target === 'region'
 ));
+
+const coordinatePicker = useCoordinatePicker(
+  computed(() => Boolean(selectedDeviceId.value) && !recordingLocked.value && !visualChangeRegionSelectionEnabled.value),
+  () => workspaceRef.value?.showPreview(),
+);
+const pickingCoordinate = coordinatePicker.picking;
+watch([selectedDeviceId, () => props.active], () => coordinatePicker.cancel());
 
 function stepWithBranchTarget(step: AppiumRecordedStep, branchTarget: BranchTarget) {
   return {
@@ -955,6 +966,10 @@ async function executeFlowStep(index: number) {
 }
 
 function selectNodeFromPoint(point: { x: number; y: number }) {
+  if (pickingCoordinate.value) {
+    coordinatePicker.select(point);
+    return;
+  }
   const node = findSmallestNodeAtPoint(tree.value, point.x, point.y);
   if (node) {
     selectedNode.value = node;
@@ -1144,16 +1159,8 @@ function openLinkedScriptDialog(index?: number, branchTarget?: BranchTarget) {
   }
   linkedScriptBranchTarget.value = branchTarget || null;
   linkedScriptExpectedActivity.value = expectedActivityAfterStep(index);
-  if (!linkedScriptBranchTarget.value && !linkedScriptExpectedActivity.value) {
-    ElMessage.warning('无法确定当前插入点的 Activity，请先刷新组件树');
-    return;
-  }
   if (!compatibleLinkableScripts.value.length) {
-    ElMessage.warning(
-      linkedScriptBranchTarget.value
-        ? '没有属于当前 App 的可连接脚本'
-        : `没有入口 Activity 为 ${linkedScriptExpectedActivity.value} 的可连接脚本`,
-    );
+    ElMessage.warning('没有属于当前 App 的可连接脚本');
     linkedScriptExpectedActivity.value = '';
     linkedScriptBranchTarget.value = null;
     return;
@@ -1175,16 +1182,6 @@ function addLinkedScriptStep() {
   }
   if (script.appPackage !== form.appPackage) {
     ElMessage.error('连接脚本必须属于当前 App');
-    return;
-  }
-  if (
-    !linkedScriptBranchTarget.value
-    && (!linkedScriptExpectedActivity.value || script.appActivity !== linkedScriptExpectedActivity.value)
-  ) {
-    ElMessage.error(
-      `无法连接：插入点 Activity 为 ${linkedScriptExpectedActivity.value || '-'}，`
-      + `目标脚本入口 Activity 为 ${script.appActivity || '-'}`,
-    );
     return;
   }
   const editingIndex = linkedScriptEditingId.value ? steps.value.findIndex(step => step.id === linkedScriptEditingId.value) : -1;
@@ -1386,6 +1383,31 @@ async function addAction(
       },
     }).catch(() => null);
     if (result) return insertStep({ ...step, breakLoopTargetId: scoped.breakLoopTargetId }, index, branchTarget);
+    return;
+  }
+  if (action === 'continueLoop') {
+    const step: AppiumRecordedStep = { id: createStepId(), type: 'continueLoop', label: '继续下一次循环', flow: { nodeKind: 'action' } };
+    const scoped = reactive(branchTarget ? stepWithBranchTarget(step, branchTarget) : step);
+    const loops = enclosingLoops(steps.value, scoped);
+    if (!loops.length) { ElMessage.warning('继续下一次循环只能添加在循环体内'); return; }
+    scoped.continueLoopTargetId = loops[0]!.id;
+    const result = await ElMessageBox({
+      title: '添加继续下一次循环',
+      message: h(ElForm, { labelPosition: 'top' }, () => h(BreakLoopSettings, {
+        step: scoped,
+        steps: steps.value,
+        mode: 'continue',
+        onUpdate: (patch) => Object.assign(scoped, patch),
+      })),
+      showCancelButton: true, confirmButtonText: '添加', cancelButtonText: '取消',
+      beforeClose: (action, _instance, done) => {
+        if (action === 'confirm') {
+          try { continueLoopTarget(steps.value, scoped); } catch (error) { ElMessage.warning((error as Error).message); return; }
+        }
+        done();
+      },
+    }).catch(() => null);
+    if (result) return insertStep({ ...step, continueLoopTargetId: scoped.continueLoopTargetId }, index, branchTarget);
     return;
   }
   if (action === 'imageCheck') {
@@ -1714,6 +1736,14 @@ async function addBranchAction(index: number, branch: BranchName, action: Record
   applyBranchTargetToInsertedStep(inserted, branchTarget);
 }
 
+function continueOnActivityChange() {
+  if (!pendingNavigation.value || resolvingNavigation.value) return;
+  // 跨页面继续录制时，入口仍是首次录制页面，不能改成跳转后的页面。
+  form.appActivity ||= pendingNavigation.value.beforeActivity;
+  pendingNavigation.value = null;
+  ElMessage.success('已继续录制，后续操作将加入当前脚本');
+}
+
 async function saveOnActivityChange() {
   const pending = pendingNavigation.value;
   if (!pending || resolvingNavigation.value) return;
@@ -1726,7 +1756,7 @@ async function saveOnActivityChange() {
       id: selectedScriptId.value || undefined,
       name: scriptName,
       appPackage: form.appPackage,
-      appActivity: pending.beforeActivity || form.appActivity,
+      appActivity: form.appActivity || pending.beforeActivity,
       deviceId: selectedDeviceId.value,
       steps: steps.value,
       variables: scriptVariables.value,
@@ -2075,6 +2105,7 @@ async function saveScript() {
 }
 
 async function replayScript() {
+  if (preparingReplay.value || replaying.value) return;
   if (!selectedScript.value) {
     ElMessage.warning('请选择已保存脚本');
     return;
@@ -2083,6 +2114,32 @@ async function replayScript() {
     const saved = await saveScript();
     if (!saved || !selectedScript.value) return;
   }
+  let reportSummaryEnabled = false;
+  let reportSummaryPrompt: string | undefined;
+  if (props.reportSummary?.enabled) {
+    preparingReplay.value = true;
+    try {
+      const status = await checkReportSummaryModel();
+      if (status.available) {
+        reportSummaryEnabled = true;
+        reportSummaryPrompt = selectedReportTemplate.value?.prompt || DEFAULT_REPORT_SUMMARY_PROMPT;
+      } else {
+        await ElMessageBox.alert(
+          `当前提示词优化模型不可用${status.message ? `：${status.message}` : ''}。本次将跳过 AI 总结并生成默认格式的基础报告。`,
+          '回放报告总结不可用',
+          { type: 'warning', confirmButtonText: '继续回放' },
+        ).catch(() => {});
+      }
+    } catch (error) {
+      await ElMessageBox.alert(
+        `无法检测提示词优化模型：${error instanceof Error ? error.message : '未知错误'}。本次将跳过 AI 总结并生成默认格式的基础报告。`,
+        '回放报告总结不可用',
+        { type: 'warning', confirmButtonText: '继续回放' },
+      ).catch(() => {});
+    } finally {
+      preparingReplay.value = false;
+    }
+  }
   replaying.value = true;
   stoppingReplay.value = false;
   activeReplayDeviceId.value = selectedDeviceId.value;
@@ -2090,7 +2147,13 @@ async function replayScript() {
   try {
     await pauseAutoTreeRefresh();
     const result = await replayAppiumScript(
-      { id: selectedScript.value.id, deviceId: activeReplayDeviceId.value, recordVideo: recordReplayVideo.value },
+      {
+        id: selectedScript.value.id,
+        deviceId: activeReplayDeviceId.value,
+        recordVideo: recordReplayVideo.value,
+        reportSummaryEnabled,
+        reportSummaryPrompt,
+      },
       (line) => {
         replayOutput.value += `${replayOutput.value ? '\n' : ''}${line}`;
       },
@@ -2185,17 +2248,26 @@ watch(
         <el-button
           type="primary"
           :icon="VideoPlay"
-          :loading="replaying"
+          :loading="replaying || preparingReplay"
           :disabled="!selectedScript"
           @click="replayScript"
         >
           回放
         </el-button>
-        <el-popover trigger="click" placement="bottom" :width="260">
-          <template #reference><el-button type="primary" :icon="ArrowDown" :disabled="replaying" aria-label="回放设置" title="回放设置" class="replay-settings-toggle" /></template>
-          <el-tooltip content="使用内置服务端后台录制，无需安装 scrcpy 或 FFmpeg。含敏感变量的运行不录制；分享 HTML 报告时需同时携带 MP4。" placement="bottom" :show-after="300">
-            <el-checkbox v-model="recordReplayVideo" :disabled="replaying">录制回放视频</el-checkbox>
-          </el-tooltip>
+        <el-popover trigger="click" placement="bottom" :width="320">
+          <template #reference><el-button type="primary" :icon="ArrowDown" :disabled="replaying || preparingReplay" aria-label="回放设置" title="回放设置" class="replay-settings-toggle" /></template>
+          <div class="replay-settings-panel">
+            <el-tooltip content="使用内置服务端后台录制，无需安装 scrcpy 或 FFmpeg。含敏感变量的运行不录制；分享 HTML 报告时需同时携带 MP4。" placement="bottom" :show-after="300">
+              <el-checkbox v-model="recordReplayVideo" :disabled="replaying || preparingReplay">录制回放视频</el-checkbox>
+            </el-tooltip>
+            <div class="replay-report-template">
+              <span>报告模板</span>
+              <el-select v-model="selectedReportTemplateName" clearable :disabled="replaying || preparingReplay || !reportSummary?.enabled" placeholder="默认测试报告（未选择时使用）">
+                <el-option v-for="template in availableReportTemplates" :key="template.name" :label="template.name" :value="template.name" />
+              </el-select>
+              <small v-if="!reportSummary?.enabled">需先在参数配置中开启回放报告总结。</small>
+            </div>
+          </div>
         </el-popover>
       </el-button-group>
       <el-button
@@ -2225,6 +2297,8 @@ watch(
         :selected-bounds="selectedBounds"
         :selected-region="visualChangeSelectedRegion"
         :region-selection="visualChangeRegionSelectionEnabled"
+        :point-selection="pickingCoordinate"
+        @cancel-point-selection="coordinatePicker.cancel()"
         :region-draw-mode="visualChangePicking || imageCheckPicking"
         :device-width="deviceWidth"
         :device-height="deviceHeight"
@@ -2265,23 +2339,6 @@ watch(
                     />
                   </el-select>
                 </div>
-                <details
-                  v-if="scriptActivityMismatch"
-                  class="appium-activity-summary"
-                >
-                  <summary>当前页面与脚本绑定的 Activity 不一致</summary>
-                  <div class="appium-activity-lock-alert__details">
-                    <div>
-                      <strong>脚本绑定</strong>
-                      <code>{{ selectedScript?.appActivity || '-' }}</code>
-                    </div>
-                    <div>
-                      <strong>当前 Activity</strong>
-                      <code>{{ currentActivity || '正在获取' }}</code>
-                    </div>
-                    <p>不影响脚本编辑；如需录制当前页面的组件操作，请确认设备页面及所选组件。</p>
-                  </div>
-                </details>
               </section>
 
               <section class="appium-workbench__section appium-workbench__flow">
@@ -2437,7 +2494,7 @@ watch(
       :show-close="false"
     >
       <div class="appium-navigation-dialog">
-        <p>当前录制仅支持单个 Activity。检测到 Activity 已跳转，请先保存当前脚本。</p>
+        <p>检测到 Activity 已跳转。可以继续在当前脚本中录制后续操作，或保存当前脚本并开始录制新页面。</p>
         <dl>
           <div>
             <dt>点击前</dt>
@@ -2451,6 +2508,7 @@ watch(
       </div>
       <template #footer>
         <div class="appium-navigation-footer">
+          <el-button :disabled="resolvingNavigation" @click="continueOnActivityChange">继续录制</el-button>
           <el-button type="primary" :loading="resolvingNavigation" @click="saveOnActivityChange">保存脚本</el-button>
         </div>
       </template>
@@ -2467,7 +2525,7 @@ watch(
         <el-form-item :label="linkedScriptBranchTarget ? '分支录制 Activity' : '插入点 Activity'">
           <code class="appium-linked-script-activity">{{ linkedScriptExpectedActivity || '-' }}</code>
         </el-form-item>
-        <el-form-item :label="linkedScriptBranchTarget ? '选择同一 App 的脚本（回放时等待入口 Activity）' : '选择入口 Activity 匹配的脚本'">
+        <el-form-item label="选择同一 App 的脚本">
           <div class="appium-linked-script-picker">
             <el-select
               v-model="linkedScriptTargetId"
@@ -2491,6 +2549,11 @@ watch(
             </el-button>
           </div>
         </el-form-item>
+        <el-alert v-if="linkedScriptTarget" :closable="false" type="info" show-icon
+          :title="linkedScriptTarget.appActivity
+            ? `回放时等待进入 ${linkedScriptTarget.appActivity}，请在前序步骤中完成页面跳转。`
+            : '此脚本未绑定入口 Activity，将直接从当前画面执行。请确保前序步骤已进入目标页面。'"
+        />
         <ScriptParameterSettings :step="linkedParameters" @update="Object.assign(linkedParameters, $event)" />
       </el-form>
       <template #footer>
@@ -2589,9 +2652,6 @@ watch(
 <style scoped>
 .appium-script-icon { display: inline-flex; }
 .appium-script-icon .el-button { width: 30px; height: 30px; min-height: 30px; padding: 0; margin: 0; }
-.appium-activity-summary { margin: 8px 0; color: #946000; font-size: 12px; }
-.appium-activity-summary summary { cursor: pointer; line-height: 20px; }
-.appium-activity-summary[open] .appium-activity-lock-alert__details { max-height: 110px; overflow: auto; margin-top: 6px; }
 :deep(.appium-recorder-card--workbench > .el-card__body) { overflow: hidden; }
 :deep(.appium-workbench-tabs > .el-tabs__content) { overflow: hidden; }
 :deep(.appium-workbench-tabs .el-tab-pane) { height: 100%; overflow: auto; }
@@ -2603,4 +2663,8 @@ watch(
 .appium-workbench__flow :deep(.appium-flow-canvas--vue:not(.appium-flow-canvas--dialog)) { flex: 1; height: auto; min-height: 120px; }
 .replay-button-group { display: inline-flex; flex-shrink: 0; }
 .replay-settings-toggle { padding-inline: 8px; }
+.replay-settings-panel { display: grid; gap: 14px; }
+.replay-report-template { display: grid; gap: 6px; }
+.replay-report-template > span { color: var(--el-text-color-regular); font-size: 13px; }
+.replay-report-template small { color: var(--el-text-color-secondary); line-height: 1.5; }
 </style>

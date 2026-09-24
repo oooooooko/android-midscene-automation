@@ -1,6 +1,6 @@
 {
   "name": "android-midscene-automation",
-  "version": "0.1.42",
+  "version": "0.2.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oooooooko/android-midscene-automation.git"
@@ -23,7 +23,8 @@
     "vite.config.ts",
     "README.md",
     "USAGE.md",
-    "AI_RECOGNITION_GUIDE.md",
+    "流程节点操作说明.md",
+    "AI识别操作说明.md",
     "FAQ.md",
     "CHANGELOG.md"
   ],

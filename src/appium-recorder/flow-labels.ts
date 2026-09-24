@@ -15,7 +15,7 @@ export function defaultFlowKind(step: AppiumRecordedStep): FlowKind {
   if (step.type === 'aiRecognition') return isAiBranchEnabled(step) ? 'condition' : 'action';
   if (step.type === 'extractVariable') return 'action';
   if (step.type === 'loop') return 'condition';
-  if (step.type === 'breakLoop') return 'action';
+  if (step.type === 'breakLoop' || step.type === 'continueLoop') return 'action';
   if (step.type === 'log' || step.type === 'openGallery' || step.type === 'endFlow') return 'action';
   if (isBooleanCondition(step)) return 'condition';
   if (step.flow?.nodeKind) return step.flow.nodeKind;
@@ -65,6 +65,7 @@ export function flowTypeLabel(step: AppiumRecordedStep) {
     endFlow: '终止流程',
     loop: '有界循环',
     breakLoop: '退出循环',
+    continueLoop: '继续下一次循环',
     clearAppData: '清理 APP 缓存',
     longPress: '长按',
     pinch: '双指缩放',
@@ -82,8 +83,9 @@ export function flowStepMeta(step: AppiumRecordedStep) {
   if (step.type === 'extractVariable') return `${step.extractVariable?.attribute || 'text'} → ${step.extractVariable?.name || '未设置变量名'}`;
   if (step.type === 'loop') return `最多 ${step.loop?.maxIterations ?? '?'} 次 · ${step.loop?.exitWhen === 'exists' ? '元素出现时退出' : step.loop?.exitWhen === 'notExists' ? '元素消失时退出' : '固定次数'}${step.loop?.exitWhen !== 'never' ? ` ${step.selector?.value || ''}` : ''}`;
   if (step.type === 'breakLoop') return step.breakLoopTargetId ? '退出指定循环，继续循环结束后的流程' : '退出当前循环，继续循环结束后的流程';
+  if (step.type === 'continueLoop') return step.continueLoopTargetId ? '结束本轮，进入指定循环的下一轮' : '结束本轮，进入当前循环的下一轮';
   if (step.type === 'log') return `${step.logPrefix ?? DEFAULT_LOG_PREFIX}:${step.value || ''}`;
-  if (step.type === 'aiRecognition') return `AI ${step.aiObservation?.mode === 'untilMatch' ? '命中即结束' : step.aiObservation ? '持续观察' : '识别'} · ${step.value || '未填写识别内容'}`;
+  if (step.type === 'aiRecognition') return `AI ${step.aiObservation?.mode === 'untilMatch' ? '命中即结束' : step.aiObservation ? '持续观察' : '识别'} · ${step.value || '未填写识别内容'}${step.aiInvalidResultBranch ? ` · 无有效结果→${step.aiInvalidResultBranch === 'yes' ? 'true' : 'false'}` : ''}`;
   if (step.type === 'longPress') {
     const target = longPressMode(step) === 'element'
       ? `元素 ${step.selector?.strategy || ''} ${step.selector?.value || ''}`

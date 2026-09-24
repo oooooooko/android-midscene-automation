@@ -63,7 +63,7 @@ export function mergeBranches(steps: AppiumRecordedStep[], conditionId: string, 
     }
   }
   function connectEnd(step: typeof next[number]) {
-    if (step.type === 'endFlow' || step.type === 'breakLoop') return;
+    if (step.type === 'endFlow' || step.type === 'breakLoop' || step.type === 'continueLoop') return;
     step.flow.successTargetId = commonId;
     if (defaultFlowKind(step) === 'condition') {
       for (const branch of (step.type === 'loop' ? ['no'] : ['yes', 'no']) as Branch[]) {

@@ -53,7 +53,6 @@ function update(key: 'background' | 'line', color: string) {
 </template>
 
 <style scoped>
-.flow-appearance-settings { margin-top: 20px; }
 .flow-appearance-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
 .flow-appearance-section { min-width: 0; }
 .flow-appearance-section + .flow-appearance-section { padding-left: 32px; border-left: 1px solid var(--ui-border); }

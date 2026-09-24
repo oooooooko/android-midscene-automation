@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { sendReplayVideo } from './video-response';
 import { loadConfig } from '../config';
 import { recognizeDeviceScreen, validateAiBranchQuestion } from './ai-recognition';
+import { optimizeAppiumPrompt } from './prompt-optimizer';
 import { getPresetVariables, savePresetVariables } from './variable-store';
 import type { TestVariable } from '../../src/appium-recorder/variables';
 import { deleteRunHistory, getRunHistory, listRunHistory, saveRunHistory } from './run-history';
@@ -25,6 +26,8 @@ import { clearAppDataOnDevice, launchAppOnDevice, replayAppiumScript } from './a
 import { isRemoteDeviceId, sendRemoteCommand } from '../remote-agents/registry';
 import { getAdbCommand } from '../android-sdk';
 import { createAppiumScriptExport } from './script-export';
+import { resolveReportSummary } from '../../src/appium-recorder/report-summary';
+import { testModelConnection } from '../model-tester';
 
 const treeDumpTasks = new Map<string, Promise<string>>();
 const replayingDevices = new Set<string>();
@@ -212,6 +215,39 @@ export async function handleAppiumRecorderRequest(
       return true;
     }
 
+    if (pathname === '/api/appium-recorder/prompts/optimize' && req.method === 'POST') {
+      const parsed = await readBody<{ kind?: unknown; prompt?: unknown; condition?: boolean }>(req);
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      res.once('close', abort);
+      try {
+        sendJson(res, await optimizeAppiumPrompt({
+          kind: parsed.kind as 'aiRecognition' | 'reportSummary',
+          prompt: parsed.prompt,
+          condition: parsed.condition === true,
+          signal: controller.signal,
+        }));
+      } finally { res.off('close', abort); }
+      return true;
+    }
+
+    if (pathname === '/api/appium-recorder/report-summary/check' && req.method === 'POST') {
+      const appium = loadConfig().appium;
+      const summary = resolveReportSummary(appium.reportSummary);
+      const model = appium.promptOptimizer?.model ?? { baseUrl: '', apiKey: '', name: '' };
+      try {
+        await testModelConnection(model);
+        sendJson(res, { enabled: true, available: true });
+      } catch (error) {
+        sendJson(res, {
+          enabled: true,
+          available: false,
+          message: error instanceof Error ? error.message : '提示词优化模型不可用',
+        });
+      }
+      return true;
+    }
+
     if (pathname === '/api/appium-recorder/ai-recognition/test' && req.method === 'POST') {
       const parsed = await readBody<{ deviceId?: string; prompt?: unknown; timeoutMs?: number; aiTimeoutEnabled?: boolean; aiBranchEnabled?: boolean; aiObservation?: AiObservationConfig }>(req);
       const deviceId = parsed.deviceId?.trim() || selectedDeviceId;
@@ -384,7 +420,7 @@ export async function handleAppiumRecorderRequest(
     }
     const replayMatch = pathname.match(/^\/api\/appium-recorder\/scripts\/([^/]+)\/replay$/);
     if (replayMatch && req.method === 'POST') {
-      const parsed = await readBody<{ deviceId?: string; parameters?: TestVariable[]; recordVideo?: boolean }>(req);
+      const parsed = await readBody<{ deviceId?: string; parameters?: TestVariable[]; recordVideo?: boolean; reportSummaryEnabled?: boolean; reportSummaryPrompt?: string }>(req);
       const script = getAppiumRecordedScript(decodeURIComponent(replayMatch[1]));
       if (!script) throw new Error('Appium 录制脚本不存在');
       const deviceId = parsed.deviceId || selectedDeviceId;
@@ -399,7 +435,15 @@ export async function handleAppiumRecorderRequest(
         res.flushHeaders();
       }
       if (isRemoteDeviceId(deviceId)) {
-        const result = await sendRemoteCommand(deviceId, 'replay', { script, screenshotReport: loadConfig().appium.screenshotReport === true, parameters: parsed.parameters, globalVariables: getPresetVariables(), linkedScripts: linkedScriptSnapshot(script) }) as Awaited<ReturnType<typeof replayAppiumScript>>;
+        const result = await sendRemoteCommand(deviceId, 'replay', {
+          script,
+          screenshotReport: loadConfig().appium.screenshotReport === true,
+          reportSummaryEnabled: parsed.reportSummaryEnabled,
+          reportSummaryPrompt: parsed.reportSummaryPrompt,
+          parameters: parsed.parameters,
+          globalVariables: getPresetVariables(),
+          linkedScripts: linkedScriptSnapshot(script),
+        }) as Awaited<ReturnType<typeof replayAppiumScript>>;
         if (result.history) {
           try { saveRunHistory({ ...result.history, scriptId: script.id, deviceId }); }
           catch { result.output += '\n历史记录保存失败'; }
@@ -426,7 +470,13 @@ export async function handleAppiumRecorderRequest(
           deviceId,
           streamOutput ? (line) => sendStreamEvent(res, { type: 'log', line }) : undefined,
           replayAbortController.signal,
-          { parameters: parsed.parameters, globalVariables: getPresetVariables(), recordVideo: parsed.recordVideo === true },
+          {
+            parameters: parsed.parameters,
+            globalVariables: getPresetVariables(),
+            recordVideo: parsed.recordVideo === true,
+            reportSummaryEnabled: parsed.reportSummaryEnabled,
+            reportSummaryPrompt: parsed.reportSummaryPrompt,
+          },
         );
         try { saveRunHistory(result.history); }
         catch { result.output += '\n历史记录保存失败'; }

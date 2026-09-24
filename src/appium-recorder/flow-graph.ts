@@ -29,6 +29,7 @@ export type InsertAction =
   | 'endFlow'
   | 'loop'
   | 'breakLoop'
+  | 'continueLoop'
   | 'clearAppData'
   | 'popupCondition'
   | 'checkboxState'
@@ -70,9 +71,11 @@ const FLOW_BRANCH_LABEL_GAP = 58;
 const FLOW_BRANCH_MIN_SPREAD = 260;
 const FLOW_BRANCH_SUBTREE_GAP = 80;
 
+export type FlowAction = { type: InsertAction; label: string };
+export type FlowActionSubgroup = { label: string; actions: FlowAction[] };
 export type FlowActionGroup = {
   title: string;
-  actions: Array<{ type: InsertAction; label: string }>;
+  actions: Array<FlowAction | FlowActionSubgroup>;
 };
 
 export type FlowGraphNodeData =
@@ -283,7 +286,7 @@ function estimateStepNodeHeight(label: { title: string; meta: string; note?: str
 }
 
 function withLaunchAppAction(groups: FlowActionGroup[]) {
-  if (groups.some((group) => group.actions.some((action) => action.type === 'launchApp'))) return groups;
+  if (groups.some((group) => group.actions.some((action) => 'type' in action && action.type === 'launchApp'))) return groups;
   const launchAction = { type: 'launchApp' as const, label: '启动 App' };
   let added = false;
   const nextGroups = groups.map((group) => {

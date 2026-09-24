@@ -1,6 +1,7 @@
 import type { AiDeduplicationConfig } from './ai-deduplication';
 
 export type AiRecognitionModel = { baseUrl: string; apiKey: string; name: string };
+export type AiInvalidResultBranch = 'yes' | 'no';
 export type AiObservationConfig = { durationMs: number; intervalMs: number; mode?: 'batch' | 'untilMatch' };
 export type AiObservationFrame = { elapsedMs: number; imageDataUrl: string };
 export type AiRecognitionResult = {
@@ -19,6 +20,12 @@ export function validateAiObservation(value: unknown): AiObservationConfig | und
   if (!Number.isInteger(intervalMs) || intervalMs < 500 || intervalMs > 10000) throw new Error('采样间隔需为 500～10000 ms');
   if (Math.ceil(durationMs / intervalMs) + 1 > MAX_AI_OBSERVATION_FRAMES) throw new Error('单次观察最多采集 30 帧，请增大采样间隔或缩短观察时长');
   return { durationMs, intervalMs, ...(mode ? { mode } : {}) };
+}
+
+export function validateAiInvalidResultBranch(value: unknown): AiInvalidResultBranch | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (value !== 'yes' && value !== 'no') throw new Error('AI 无有效结果兜底分支无效');
+  return value;
 }
 
 // 未保存此字段的是旧版判断节点，保留已有分支；新节点显式保存 false。

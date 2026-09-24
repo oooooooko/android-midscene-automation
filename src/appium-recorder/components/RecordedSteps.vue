@@ -96,8 +96,13 @@ const insertActionGroups: FlowActionGroup[] = [
       { type: 'waitFor', label: '等待出现' },
       { type: 'waitDisappear', label: '等待元素消失' },
       { type: 'waitActivity', label: '等待 Activity' },
-      { type: 'visualChangeStart', label: '检测画面变化开始节点' },
-      { type: 'visualChangeEnd', label: '检测画面变化结束节点' },
+      {
+        label: '检测画面变化',
+        actions: [
+          { type: 'visualChangeStart', label: '开始检测' },
+          { type: 'visualChangeEnd', label: '结束检测' },
+        ],
+      },
     ],
   },
   {
@@ -112,8 +117,14 @@ const insertActionGroups: FlowActionGroup[] = [
     actions: [
       { type: 'noop', label: '空节点' },
       { type: 'endFlow', label: '终止流程' },
-      { type: 'loop', label: '有界循环' },
-      { type: 'breakLoop', label: '退出循环' },
+      {
+        label: '循环',
+        actions: [
+          { type: 'loop', label: '有界循环' },
+          { type: 'continueLoop', label: '继续下一次循环' },
+          { type: 'breakLoop', label: '退出循环' },
+        ],
+      },
       { type: 'log', label: '输出日志' },
       { type: 'runScript', label: '连接脚本' },
     ],
@@ -122,7 +133,7 @@ const insertActionGroups: FlowActionGroup[] = [
 
 const mainActionGroups = insertActionGroups.map((group) => ({
   ...group,
-  actions: group.actions.filter((action) => action.type !== 'clearAppData'),
+  actions: group.actions.filter((action) => !('type' in action) || action.type !== 'clearAppData'),
 }));
 const startActionGroups = insertActionGroups;
 const hasClearAppDataStep = computed(() => props.steps.some((step) => step.type === 'clearAppData'));

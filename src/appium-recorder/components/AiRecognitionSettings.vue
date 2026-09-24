@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { Loading, QuestionFilled } from '@element-plus/icons-vue';
 import { isAiBranchEnabled, validateAiRecognitionPrompt, DEFAULT_AI_OBSERVATION, validateAiObservation, type AiObservationConfig } from '../ai-recognition';
-import { validateAiBranchQuestion } from '../api';
+import { optimizeAppiumPrompt, validateAiBranchQuestion } from '../api';
+import { flowBranchLabel } from '../flow-labels';
 import type { AppiumRecordedStep } from '../types';
 import { aiPromptPresetsKey, DEFAULT_AI_PROMPT_PRESETS } from '../ai-prompt-presets';
 import AiRecognitionPromptInput from './AiRecognitionPromptInput.vue';
@@ -12,14 +13,18 @@ const emit = defineEmits<{ update: [patch: Partial<AppiumRecordedStep>] }>();
 const prompt = ref(props.step.value || '');
 const promptPresets = inject(aiPromptPresetsKey, ref(DEFAULT_AI_PROMPT_PRESETS));
 const busy = ref(false);
+const optimizingPrompt = shallowRef(false);
 const error = ref('');
 const branch = computed(() => isAiBranchEnabled(props.step));
 const untilMatch = computed(() => props.step.aiObservation?.mode === 'untilMatch');
 const branchChoice = ref(branch.value);
+const fallbackEnabled = shallowRef(Boolean(props.step.aiInvalidResultBranch));
 watch(branch, value => { branchChoice.value = value; });
+watch(() => props.step.aiInvalidResultBranch, value => { fallbackEnabled.value = Boolean(value); });
 let controller: AbortController | undefined;
+let optimizeController: AbortController | undefined;
 watch(() => props.step.value, value => { prompt.value = value || ''; });
-onBeforeUnmount(() => controller?.abort());
+onBeforeUnmount(() => { controller?.abort(); optimizeController?.abort(); });
 
 function updateObservation(patch: Partial<AiObservationConfig>) {
   try {
@@ -33,6 +38,33 @@ async function toggleBranch(enabled: boolean) {
   branchChoice.value = enabled;
   await save(enabled);
   branchChoice.value = branch.value;
+}
+
+function toggleFallback(enabled: boolean) {
+  fallbackEnabled.value = enabled;
+  error.value = '';
+  if (!enabled) emit('update', { aiInvalidResultBranch: undefined });
+}
+
+async function optimizePrompt() {
+  if (busy.value || optimizingPrompt.value || props.disabled) return;
+  error.value = '';
+  optimizeController = new AbortController();
+  optimizingPrompt.value = true;
+  let optimized = '';
+  try {
+    optimized = (await optimizeAppiumPrompt({
+      kind: 'aiRecognition',
+      prompt: prompt.value,
+      condition: branch.value || untilMatch.value,
+    }, optimizeController.signal)).prompt;
+    prompt.value = optimized;
+  } catch (cause) {
+    if (!optimizeController.signal.aborted) error.value = cause instanceof Error ? cause.message : '提示词优化失败';
+  } finally {
+    optimizingPrompt.value = false;
+  }
+  if (optimized) await save(branch.value);
 }
 
 async function save(enabled: boolean, observation?: AiObservationConfig) {
@@ -112,9 +144,10 @@ async function save(enabled: boolean, observation?: AiObservationConfig) {
         </el-tooltip>
       </span>
     </template>
-    <AiRecognitionPromptInput v-model="prompt" :presets="promptPresets" :placeholder="untilMatch ? '例如：当前画面是否出现广告弹窗？' : ''" :disabled="disabled || busy" @change="error = ''; !branch && !untilMatch && save(false)" />
-    <div v-if="(branch || untilMatch) && prompt !== step.value" class="recognition-prompt-actions">
-      <el-button :disabled="disabled || busy" @click="save(branch)">验证并保存问题</el-button>
+    <AiRecognitionPromptInput v-model="prompt" :presets="promptPresets" :placeholder="untilMatch ? '例如：当前画面是否出现广告弹窗？' : ''" :disabled="disabled || busy || optimizingPrompt" @change="error = ''; !branch && !untilMatch && save(false)" />
+    <div class="recognition-prompt-actions">
+      <el-button :loading="optimizingPrompt" :disabled="disabled || busy || !prompt.trim()" @click="optimizePrompt">优化提示词</el-button>
+      <el-button v-if="(branch || untilMatch) && prompt !== step.value" :disabled="disabled || busy || optimizingPrompt" @click="save(branch)">验证并保存问题</el-button>
     </div>
   </el-form-item>
   <el-form-item>
@@ -123,6 +156,24 @@ async function save(enabled: boolean, observation?: AiObservationConfig) {
       <el-icon class="is-loading" aria-hidden="true"><Loading /></el-icon>
       正在验证…
     </span>
+  </el-form-item>
+  <el-form-item v-if="branch">
+    <el-checkbox :model-value="fallbackEnabled" :disabled="disabled || busy" @update:model-value="toggleFallback($event === true)">启用兜底</el-checkbox>
+    <el-tooltip placement="top" :show-after="200">
+      <template #content><div class="recognition-help-content">仅在模型返回空内容、无效格式、无法判断或没有返回 true/false 时生效。正常返回布尔结果时仍按识别结果进入分支；请求失败和超时不使用此兜底。</div></template>
+      <el-button class="recognition-help" text :icon="QuestionFilled" aria-label="AI 识别兜底说明" @click.prevent />
+    </el-tooltip>
+  </el-form-item>
+  <el-form-item v-if="branch && fallbackEnabled" label="兜底分支">
+    <el-select
+      :model-value="step.aiInvalidResultBranch || ''"
+      :disabled="disabled || busy"
+      placeholder="请选择左右分支"
+      @update:model-value="emit('update', { aiInvalidResultBranch: $event })"
+    >
+      <el-option :label="`进入左侧分支（${flowBranchLabel(step, 'yes')}）`" value="yes" />
+      <el-option :label="`进入右侧分支（${flowBranchLabel(step, 'no')}）`" value="no" />
+    </el-select>
   </el-form-item>
   <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
 </template>

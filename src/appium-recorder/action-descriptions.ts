@@ -21,6 +21,7 @@ export const actionDescriptions: Record<InsertAction, string> = {
   endFlow: '立即结束当前回放流程，后续节点不再执行。',
   loop: '重复执行循环体，支持固定次数或条件退出，必须设置最大次数。',
   breakLoop: '退出指定的当前或外层循环，继续执行该循环的结束路径。',
+  continueLoop: '跳过当前轮剩余节点，进入指定的当前或外层循环的下一轮；达到最大次数后执行循环结束路径。',
   clearAppData: '清除目标应用数据并重置应用状态，可能删除登录信息和本地设置，仅允许在流程开始处添加。',
   popupCondition: '判断目标组件是否存在，可进一步配置指定文本及精确或模糊匹配，按结果进入是或否分支。',
   checkboxState: '读取原生 Checkbox 的 checked 状态，按 true/false 分支执行。',

@@ -1,3 +1,4 @@
+import { resolveReportSummary, type ReportSummaryConfig } from '../src/appium-recorder/report-summary';
 import type { AiPromptPreset } from '../src/appium-recorder/ai-prompt-presets';
 import fs from 'node:fs';
 import { isHexColor, normalizeFlowBackground, normalizeFlowLineColor } from '../src/appium-recorder/flow-appearance';
@@ -12,7 +13,7 @@ import { resolveAiDeduplication, type AiDeduplicationConfig } from '../src/appiu
 import type { MidsceneModelProvider } from '../src/config/midscene-model-presets';
 
 export type AppConfig = {
-  appium: { model: AiRecognitionModel; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
+  appium: { reportSummary?: ReportSummaryConfig; model: AiRecognitionModel; promptOptimizer?: { model: AiRecognitionModel }; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;
@@ -50,7 +51,7 @@ export class ConfigValidationError extends Error {
 
 function defaultConfig(): AppConfig {
   return {
-    appium: { model: { baseUrl: '', apiKey: '', name: '' }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
+    appium: { reportSummary: resolveReportSummary(), model: { baseUrl: '', apiKey: '', name: '' }, promptOptimizer: { model: { baseUrl: '', apiKey: '', name: '' } }, aiDeduplication: resolveAiDeduplication(), screenshotReport: false },
     runtime: {
       androidSdkPath: '',
       reportOutputPath: '',
@@ -85,9 +86,15 @@ function normalizeEnv(env: unknown): Record<string, string> {
 
 function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConfig {
   const fallback = defaultConfig();
+  const legacySummaryModel = (config?.appium?.reportSummary as unknown as { model?: Partial<AiRecognitionModel> } | undefined)?.model;
+  const configuredPromptModel = config?.appium?.promptOptimizer?.model;
+  const promptModel = configuredPromptModel && Object.values(configuredPromptModel).some(value => typeof value === 'string' && value.trim())
+    ? configuredPromptModel
+    : legacySummaryModel;
   return {
     // 旧配置没有 Appium 模型时保留空值，不借用其他模型或改变已有配置。
     appium: {
+      reportSummary: resolveReportSummary(config?.appium?.reportSummary),
       aiPromptPresets: resolveAiPromptPresets(config?.appium?.aiPromptPresets),
       aiDeduplication: resolveAiDeduplication(config?.appium?.aiDeduplication),
       screenshotReport: config?.appium?.screenshotReport === true,
@@ -97,6 +104,12 @@ function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConf
         const value = config?.appium?.model?.[key as keyof AiRecognitionModel];
         return [key, typeof value === 'string' ? value.trim() : ''];
       })) as AiRecognitionModel,
+      promptOptimizer: {
+        model: Object.fromEntries(['baseUrl', 'apiKey', 'name'].map((key) => {
+          const value = promptModel?.[key as keyof AiRecognitionModel];
+          return [key, typeof value === 'string' ? value.trim() : ''];
+        })) as AiRecognitionModel,
+      },
     },
     runtime: {
       androidSdkPath: config?.runtime?.androidSdkPath?.trim() || fallback.runtime.androidSdkPath,
@@ -214,6 +227,8 @@ export function loadConfig(): AppConfig {
 }
 
 export function saveConfig(config: AppConfig) {
+  try { resolveReportSummary(config.appium?.reportSummary); }
+  catch (error) { throw new ConfigValidationError(error instanceof Error ? error.message : '回放报告总结配置无效'); }
   try { resolveAiPromptPresets(config.appium?.aiPromptPresets); }
   catch (error) { throw new ConfigValidationError(error instanceof Error ? error.message : 'AI 识别预设提示词无效'); }
   try { resolveAiDeduplication(config.appium?.aiDeduplication); }
