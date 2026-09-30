@@ -110,8 +110,9 @@ const { isRunningScript, isStoppingScript, executionLog, executionProcess, lastR
 const visitedMenus = reactive(new Set<MenuKey>([activeMenu.value]));
 const openMenus = ref<MenuKey[]>([...menuKeys]);
 const visibleMenuItems = computed(() => openMenus.value.map(key => menuItems.find(item => item.key === key)!));
-function closeMenu(key: MenuKey) {
+async function closeMenu(key: MenuKey) {
   if (openMenus.value.length === 1) return;
+  if (key === 'generator' && !(await confirmUnsavedGeneratorNavigation())) return;
   const index = openMenus.value.indexOf(key);
   openMenus.value.splice(index, 1);
   if (activeMenu.value === key) activeMenu.value = openMenus.value[Math.max(0, index - 1)];
@@ -144,6 +145,23 @@ const appPromptPrefix = computed(() => {
 const effectiveSourcePrompt = computed(() => `${appPromptPrefix.value}${sourcePrompt.value}`.trim());
 const generatedCodeFromSteps = computed(() => buildScript(form, steps.value));
 const generatedCode = computed(() => generatedCodeOverride.value ?? generatedCodeFromSteps.value);
+const generatorContentSnapshot = computed(() => JSON.stringify({
+  form: {
+    promptTitle: form.promptTitle,
+    testName: form.testName,
+    appPresetId: form.appPresetId,
+  },
+  sourcePrompt: sourcePrompt.value,
+  steps: steps.value,
+  generatedCodeOverride: generatedCodeOverride.value,
+  generatedCodeDraft: generatedCodeEditing.value ? generatedCodeDraft.value : '',
+}));
+const savedGeneratorSnapshot = shallowRef('');
+const generatorHasUnsavedContent = computed(() => (
+  showGeneratedCode.value
+  && Boolean(generatedCode.value.trim())
+  && generatorContentSnapshot.value !== savedGeneratorSnapshot.value
+));
 const selectedScript = computed(() => savedScripts.value.find((item) => item.id === selectedScriptId.value));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const deviceActions = [
@@ -155,8 +173,11 @@ const deviceActions = [
   { key: 'tasks', label: '任务', icon: tasksIcon, keyCode: 187 },
 ] as const;
 
-const selectMenu = (key: string) => {
-  activeMenu.value = key as MenuKey;
+const selectMenu = async (key: string) => {
+  const nextMenu = key as MenuKey;
+  if (nextMenu === activeMenu.value) return;
+  if (activeMenu.value === 'generator' && !(await confirmUnsavedGeneratorNavigation())) return;
+  activeMenu.value = nextMenu;
 };
 
 const resetGeneratedCodeEditor = () => {
@@ -165,11 +186,6 @@ const resetGeneratedCodeEditor = () => {
   generatedCodeEditing.value = false;
   generatedCodeEditSaving.value = false;
 };
-
-watch(activeGeneratorMode, () => {
-  showGeneratedCode.value = false;
-  resetGeneratedCodeEditor();
-});
 
 function formatScriptTime(value: string) {
   if (!value) return '';
@@ -455,16 +471,16 @@ const buildSourcePromptForSave = () => {
 
 const saveCurrentScript = async () => {
   const validInput = validateCurrentGeneratorInputs();
-  if (!validInput) return;
+  if (!validInput) return false;
 
   if (generatedCodeEditing.value) {
     ElMessage.error('请先保存或撤回代码修改');
-    return;
+    return false;
   }
 
   if (!showGeneratedCode.value || !generatedCode.value.trim()) {
     ElMessage.error('请先点击 AI 生成，生成代码后再保存脚本');
-    return;
+    return false;
   }
 
   const { scriptName, promptTitle } = validInput;
@@ -478,7 +494,7 @@ const saveCurrentScript = async () => {
         cancelButtonText: '取消',
       });
     } catch {
-      return;
+      return false;
     }
   }
 
@@ -495,10 +511,34 @@ const saveCurrentScript = async () => {
     });
 
     await loadSavedScripts(payload.script?.id || '');
+    savedGeneratorSnapshot.value = generatorContentSnapshot.value;
     await sleep(Math.max(0, 1200 - (Date.now() - startedAt)));
     closeActionDialog();
+    return true;
   } catch (error) {
     failActionDialog(error instanceof Error ? error.message : '保存脚本失败');
+    return false;
+  }
+};
+
+const confirmUnsavedGeneratorNavigation = async () => {
+  if (!generatorHasUnsavedContent.value) return true;
+
+  try {
+    await ElMessageBox.confirm(
+      '当前生成内容尚未保存。可以先保存脚本，或暂不保存并继续切换页面。',
+      '未保存的测试脚本',
+      {
+        type: 'warning',
+        confirmButtonText: '保存脚本',
+        cancelButtonText: '暂不保存',
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false,
+      },
+    );
+    return await saveCurrentScript();
+  } catch (action) {
+    return action === 'cancel';
   }
 };
 
@@ -554,7 +594,7 @@ const generateWithModel = async () => {
   errorMessage.value = '';
   const controller = new AbortController();
   aiGenerateAbortController = controller;
-  openActionDialog('AI生成', {
+  openActionDialog('AI 生成', {
     canRunInBackground: true,
     canCancel: true,
     cancelText: '终止',
@@ -674,7 +714,7 @@ watch(activeMenu, menu => {
   if (!openMenus.value.includes(menu)) openMenus.value.push(menu);
 }, { flush: 'sync' });
 const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-  if (!appiumAutoSave.dirty.value) return;
+  if (!appiumAutoSave.dirty.value && !generatorHasUnsavedContent.value) return;
   event.preventDefault();
   event.returnValue = '';
 };
@@ -695,7 +735,9 @@ onUnmounted(() => {
     <el-dialog
       v-model="actionDialog.visible"
       :title="actionDialog.title"
-      width="360px"
+      width="min(440px, calc(100vw - 32px))"
+      align-center
+      append-to-body
       :close-on-click-modal="false"
       :close-on-press-escape="!actionDialog.loading"
       :show-close="!actionDialog.loading"
@@ -712,7 +754,7 @@ onUnmounted(() => {
         <div v-if="actionDialog.loading" class="action-dialog__footer-actions">
           <el-button
             v-if="actionDialog.canCancel"
-            class="action-dialog__footer-button action-dialog__footer-button--secondary"
+            class="action-dialog__footer-button"
             :icon="VideoPause"
             :loading="actionDialog.canceling"
             @click="stopGenerateWithModel"
@@ -721,7 +763,8 @@ onUnmounted(() => {
           </el-button>
           <el-button
             v-if="actionDialog.canRunInBackground"
-            class="action-dialog__footer-button action-dialog__footer-button--primary"
+            type="primary"
+            class="action-dialog__footer-button"
             @click="sendActionDialogToBackground"
           >
             后台处理
@@ -729,7 +772,8 @@ onUnmounted(() => {
         </div>
         <el-button
           v-else
-          class="action-dialog__footer-button action-dialog__footer-button--primary"
+          type="primary"
+          class="action-dialog__footer-button"
           @click="closeActionDialog"
         >
           关闭

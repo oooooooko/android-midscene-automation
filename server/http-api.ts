@@ -79,7 +79,7 @@ function delay(ms: number) {
   });
 }
 
-// Work around @midscene/android-playground v1.12.x ESM __dirname usage on Node 24.
+// Keep the Android Playground launcher compatible with Node 24 ESM execution.
 const START_ANDROID_PLAYGROUND_WITHOUT_BROWSER = [
   "import { createRequire } from 'node:module';",
   'const require = createRequire(import.meta.url);',

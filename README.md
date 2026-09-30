@@ -2,6 +2,30 @@
 
 一个面向 Android App 的自动化测试工具，同时支持 Midscene AI 测试和 Appium 组件树录制回放。
 
+## 界面预览
+
+![](./screen/c1.jpg)
+
+### Midscene
+
+![](./screen/m1.jpg)
+
+![](./screen/m2.jpg)
+
+![](./screen/m3.jpg)
+
+### Appium
+
+![](./screen/a1.jpg)
+
+![](./screen/a2.jpg)
+
+![](./screen/a3.jpg)
+
+![](./screen/a4.jpg)
+
+![](./screen/a5.jpg)
+
 ## 支持的测试方式
 
 | 测试方式 | 页面入口 | 工作方式 | 模型要求 | 适用场景 |
@@ -1358,6 +1382,10 @@ Linux: ~/.local/share/android-midscene-automation
 
 # 项目更新记录
 
+## v0.2.4
+- Midscene Android、Android Playground、Core、Playground、Shared 和 Web 模块统一升级至 1.14.0。
+- 修复 Midscene 测试脚本生成过程中切换“AI 生成 / 自定义步骤编排”会清空生成状态和结果的问题；生成任务继续在后台执行，模式切换后保留已生成步骤与代码。
+
 ## v0.2.3
 - 修复长时间执行 ADB 操作、延时或 AI 识别后，Appium 因默认 60 秒命令空闲超时销毁会话，导致后续 Home 键、点击等节点报“invalid session id”的问题；托管服务关闭会话空闲计时，外部服务通过心跳保活并保留 60 秒空闲回收，避免创建请求取消或清理失败后遗留永久会话。
 - 为启动 App、清理数据、坐标点击与滑动补齐 ADB 超时和取消控制；终止前台检查后不再继续启动 App，异常结束仍清理会话。
@@ -1365,7 +1393,6 @@ Linux: ~/.local/share/android-midscene-automation
 - 修复远程设备无法手动终止回放的问题，通过独立心跳传递取消信号，兼容任务派发前取消，并阻止同一设备重复提交回放。
 
 ## v0.2.2
-- 更新浅色后台界面：蓝色主色、白色卡片、浅灰背景、可折叠侧边栏与顶部页签。
 - 新增“概览 → 分析页”，根据已保存脚本和真实执行记录分别汇总 Midscene、Appium 测试数据。
 - 修复配置加载失败后出现空白可保存表单的问题，增加独立错误提示和重试；后端断线后自动尝试重连并支持手动重连，保留页面编辑内容。
 - Appium 配置自动保存失败后保留最新待保存内容并提供“重试保存”；修复切换或关闭 Appium 页签后，离开页面时未保存草稿保护失效的问题。
