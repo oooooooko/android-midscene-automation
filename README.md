@@ -1502,8 +1502,11 @@ Linux: ~/.local/share/android-midscene-automation
 
 # 项目更新记录
 
+## v1.1.2
+- [Appium]修复登录等点击操作已经触发 Activity 跳转后，持续动画或频繁界面事件仍让 UiAutomator2 长时间等待、最终误报点击超时的问题；限制界面空闲等待时间，避免命令队列被长期占用。
+
 ## v1.1.1
-更新README.md
+- [文档]更新 README.md。
 
 ## v1.1.0
 - [Artemis]修复自定义模型返回 `<think>` 思考标签导致 Hopper 等节点 JSON 解析失败的问题：非 Google 模型的 Pydantic 结构化输出接入统一清理、提取和校验流程，显式提供 JSON Schema，格式错误时限次要求模型纠正。

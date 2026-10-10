@@ -50,6 +50,7 @@ type AppiumValueResponse<T> = {
 };
 
 const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
+const UIAUTOMATOR_IDLE_TIMEOUT_MS = 1000;
 const configuredAppiumServerUrl = () => (process.env.APPIUM_SERVER_URL || 'http://127.0.0.1:4723').replace(/\/+$/, '');
 
 class ReplayStoppedError extends Error {
@@ -420,6 +421,9 @@ async function createSession(deviceId: string) {
           'appium:udid': deviceId,
           'appium:autoLaunch': false,
           'appium:noReset': true,
+          // 实时画面、动画和频繁无障碍事件可能让 UiAutomator2 长时间等不到界面空闲。
+          // 节点已有显式等待，因此这里只保留很短的空闲窗口，避免点击已生效后请求仍占住命令队列。
+          'appium:settings': { waitForIdleTimeout: UIAUTOMATOR_IDLE_TIMEOUT_MS },
           // 托管进程由 finally 释放；外部服务保留回收期限，避免创建请求取消后遗留永久会话。
           'appium:newCommandTimeout': usesManagedAppiumServer() ? 0 : 60,
           'appium:skipDeviceInitialization': true,

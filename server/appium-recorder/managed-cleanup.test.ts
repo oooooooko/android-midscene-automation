@@ -47,6 +47,7 @@ test('replay survives command idle periods and cleans sessions after success, ab
       if (path === '/session' && init?.method === 'POST') {
         if (mode === 'creation-failure') return Response.json({ value: { error: 'session not created', message: 'creation failed' } }, { status: 500 });
         const capabilities = JSON.parse(String(init.body)).capabilities.alwaysMatch;
+        assert.deepEqual(capabilities['appium:settings'], { waitForIdleTimeout: 1000 }, 'bound UiAutomator idle waits for animated screens');
         commandTimeoutMs = (capabilities['appium:newCommandTimeout'] ?? 60) * 1000;
         lastCommandMs = elapsedMs;
         return Response.json({ value: { sessionId: 'test-session' } });
