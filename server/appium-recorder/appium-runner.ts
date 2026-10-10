@@ -536,9 +536,34 @@ async function imageCheckRegion(sessionId: string, step: AppiumRecordedStepRecor
 
 async function tapFallback(deviceId: string, step: AppiumRecordedStepRecord) {
   if (step.fallback?.strategy !== 'bounds' || !Number.isFinite(step.fallback.centerX) || !Number.isFinite(step.fallback.centerY)) {
-    throw new Error(`${step.label} 未找到元素，且没有可用坐标兜底`);
+    throw new Error(`${step.label} 没有可用点击坐标`);
   }
   await adbTap(deviceId, Number(step.fallback.centerX), Number(step.fallback.centerY));
+}
+
+async function tapLocatedElement(
+  sessionId: string,
+  deviceId: string,
+  elementId: string,
+  step?: AppiumRecordedStepRecord,
+) {
+  try {
+    const payload = await appiumRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${elementId}/rect`);
+    const rect = payload.value;
+    if (rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0) {
+      await adbTap(deviceId, rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return;
+    }
+  } catch (error) {
+    throwIfReplayStopped(error);
+    // 普通点击的外层会重新定位一次，避免列表刷新后使用已失效元素的旧位置。
+    if (isStaleElementError(error)) throw error;
+  }
+  if (step) {
+    await tapFallback(deviceId, step);
+    return;
+  }
+  throw new Error('无法读取目标元素的实时点击区域');
 }
 
 async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord) {
@@ -908,10 +933,7 @@ async function runStep(
   if (step.type === 'tapIfExists') {
     const elementId = await findOptionalElement(sessionId, step);
     if (!elementId) return '未出现，已跳过';
-    await appiumRequest(`/session/${sessionId}/element/${elementId}/click`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
+    await tapLocatedElement(sessionId, deviceId, elementId, step);
     return '已出现，已点击';
   }
 
@@ -962,10 +984,7 @@ async function runStep(
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const elementId = await findElement(sessionId, step);
-        await appiumRequest(`/session/${sessionId}/element/${elementId}/click`, {
-          method: 'POST',
-          body: JSON.stringify({}),
-        });
+        await tapLocatedElement(sessionId, deviceId, elementId, step);
         return;
       } catch (error) {
         throwIfReplayStopped(error);
@@ -1052,7 +1071,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
         const element = payload.value[0]!;
         const id = element[ELEMENT_KEY] || element.ELEMENT;
         if (!id) throw new Error('文字点击查询缺少元素 ID');
-        await appiumRequest(`/session/${sessionId}/element/${id}/click`, { method: 'POST', body: '{}' });
+        await tapLocatedElement(sessionId, deviceId, id);
         return true;
       }
       if (Date.now() >= deadline) {
