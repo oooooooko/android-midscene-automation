@@ -1,37 +1,21 @@
 # Android Midscene Automation
 
-一个面向 Android App 的自动化测试工具，同时支持 Midscene AI 测试和 Appium 组件树录制回放。
+一个面向 Android App 的自动化测试工具，集成 Appium 组件树录制回放、Artemis 自然语言任务执行和 Midscene AI 测试。
 
 ## 界面预览
 
-![](./screen/c1.jpg)
+![](./screen/1.jpg)
+![](./screen/2.jpg)
+![](./screen/3.jpg)
 
-### Midscene
-
-![](./screen/m1.jpg)
-
-![](./screen/m2.jpg)
-
-![](./screen/m3.jpg)
-
-### Appium
-
-![](./screen/a1.jpg)
-
-![](./screen/a2.jpg)
-
-![](./screen/a3.jpg)
-
-![](./screen/a4.jpg)
-
-![](./screen/a5.jpg)
 
 ## 支持的测试方式
 
 | 测试方式 | 页面入口 | 工作方式 | 模型要求 | 适用场景 |
 | --- | --- | --- | --- | --- |
-| Midscene | `Midscene > 测试脚本生成 / 自动化测试` | 使用自然语言生成和执行测试脚本，通过多模态模型理解设备画面 | **必须配置模型** | 页面元素难以稳定定位、希望使用自然语言快速编写测试 |
 | Appium | `Appium` | 读取 Android 组件树，按 selector、组件 ID 和流程图录制、回放 | **不需要配置任何模型** | 需要稳定、可重复、无模型消耗的传统自动化测试 |
+| Artemis | `Artemis` | 使用自然语言描述目标，AI 自主规划并操作设备，记录步骤、结果和任务笔记 | **必须配置模型**，独立配置 | 探索性测试、多步骤业务任务、画面检查与数据收集 |
+| Midscene | `Midscene > 测试脚本生成 / 自动化测试` | 使用自然语言生成和执行测试脚本，通过多模态模型理解设备画面 | **必须配置模型** | 页面元素难以稳定定位、希望使用自然语言快速编写测试 |
 
 使用 Midscene 前，请先进入“参数配置”完成 `Midscene 模型` 配置；需要 AI 生成脚本时，还要配置 `脚本优化模型`。模型配置不可用时，Midscene 脚本无法正常生成或执行。
 
@@ -39,7 +23,24 @@ Appium 方案完全不依赖大模型，不需要填写 Base URL、API Key、Mod
 
 ## 环境要求
 
-### Artemis 控制台集成（可选）
+- Node.js：运行主项目需要符合 Vite 7 的要求（20.19+ 或 22.12+）；同时使用 Artemis 前端时按其 Angular 依赖要求准备 Node.js，当前集成使用 22.22.3+（22 LTS）。
+- npm。
+- Android SDK / ADB，移动端自动化测试需要。
+- Appium 3.x 和 UiAutomator2 Driver，仅 Appium 录制回放方式需要。
+- uv 和 Python 3.12+，仅 Artemis 需要。
+
+安装 Appium 相关依赖：
+
+```sh
+npm install -g appium@3.5.0
+appium driver install uiautomator2
+```
+
+使用 Appium 方式前需要运行 `appium` 启动服务；只使用 Artemis 或 Midscene 时不需要安装或启动 Appium。
+
+## Artemis 使用说明
+
+### 启动与控制台集成
 
 菜单中的 **Artemis** 在主内容区嵌入独立的 Artemis 控制台，支持切换菜单后保留页面状态。首次连接和“重新连接”都会检查服务；未启动或未允许嵌入时显示操作提示。
 
@@ -67,19 +68,109 @@ Appium 方案完全不依赖大模型，不需要填写 Base URL、API Key、Mod
 
 当前集成面向本机使用。Artemis 与 Midscene/Appium 的任务队列、设备锁和结果各自独立，请不要同时控制同一台设备。
 
-- Node.js 18+
-- npm
-- Android SDK / ADB，移动端自动化测试需要
-- Appium 3.x 和 UiAutomator2 Driver，仅 Appium 录制回放方式需要
+### 首次配置与执行
 
-安装 Appium 相关依赖：
+1. 连接并解锁 Android 设备，开启 USB 调试，在终端运行 `adb devices -l`，确认设备状态为 `device`，并在手机上允许调试授权。
+2. 首次启动后，按下方说明配置 `artemis-main/.env` 和 `artemis-main/config/artemis.jsonc`，然后在“系统设置 → 自定义配置”点击“刷新配置”。
+3. 点击主项目菜单中的 **Artemis**，在 Artemis 控制台的设备选择入口选择实际连接的设备，再选择 **Flash** 或 **Pro** 执行模式。模式名称与模型名称不同，例如 Pro 模式也可以使用自定义的 MiniMax 模型。
+4. 输入自然语言任务并提交。任务应明确目标 App、操作范围和可观察的完成条件，例如：
+
+   > 打开 Android 设置，查看设备型号和 Android 版本，返回查到的信息后结束任务。
+
+5. 在执行视图查看步骤、模型调用、错误与结果；需要中止时使用停止按钮。选择历史任务可以查看对应记录。右上角中英文切换按钮用于切换控制台界面语言，任务描述可以使用中文。
+
+### 配置自定义模型
+
+Artemis 不读取主项目“参数配置”中的 Midscene 模型。其模型名称、节点和备用模型写在 JSONC 中，API Key 与接口地址写在 `.env` 中：
+
+| 你获得的参数 | Artemis 配置位置 | 示例字段 |
+| --- | --- | --- |
+| API Key | `artemis-main/.env` | `OPENAI_API_KEY` |
+| Base URL | `artemis-main/.env` | `OPENAI_BASE_URL` |
+| Model Name | `artemis-main/config/artemis.jsonc` | `default.model` 与 `default.fallback.model` |
+| 接口类型 | `artemis-main/config/artemis.jsonc` | OpenAI 兼容接口使用 `provider: "openai"` |
+
+首次准备 `.env` 时，从项目根目录执行以下命令；如果文件已存在，直接编辑已有文件：
 
 ```sh
-npm install -g appium@3.5.0
-appium driver install uiautomator2
+cp -n artemis-main/.env.example artemis-main/.env
 ```
 
-使用 Appium 方式前需要运行 `appium` 启动服务；只使用 Midscene 时不需要安装或启动 Appium。
+编辑 `.env`，使用模型服务商给出的 OpenAI 兼容接口地址和密钥。地址通常包含 `/v1`，应填写接口基地址，不要填写完整的 `/chat/completions` 请求路径：
+
+```dotenv
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://your-provider.example/v1
+```
+
+通过“编辑 JSONC”修改本地配置，例如：
+
+```jsonc
+{
+  "default": {
+    "provider": "openai",
+    "model": "your-model-name",
+    "fallback": {
+      "provider": "openai",
+      "model": "your-fallback-model-name"
+    }
+  },
+  "nodes": {}
+}
+```
+
+将占位名称替换为服务商提供的实际模型名称。没有其他备用模型时，`fallback` 可以使用同一模型，但不会提供跨模型容错。`nodes` 用于覆盖指定节点的模型；没有覆盖的节点继承 `default`。切换提供方时也要检查原有节点及其 `fallback`，避免仍引用其他提供方的模型。
+
+GLM、DeepSeek、MiniMax 等提供 OpenAI 兼容接口的服务可按此结构配置，但用于屏幕理解的模型还需要支持图片输入与所需的工具调用；接口兼容不代表每个模型型号都能完成设备任务。配置 Gemini 时使用 `provider: "google"`，并在 `.env` 中填写 `GOOGLE_API_KEY` 或 `GEMINI_API_KEY`。
+
+保存 JSONC 后点击“刷新配置”检查本地设置。出现“已配置”表示字段已读取，不代表 API Key、模型权限或多模态能力已通过在线验证。修改 Python 源码后需重启 Artemis；“刷新配置”不会重新加载源码。
+
+### Flash 与 Pro 模式
+
+| 模式 | 执行方式 | 适用任务 | 笔记与计划 |
+| --- | --- | --- | --- |
+| Flash | 根据当前画面直接决策、操作，流程较简洁 | 打开页面、短流程操作、简单查询 | 当前未提供笔记读写工具，页签可能为空 |
+| Pro | 先规划，再执行与校验，任务结束前进行最终检查 | 多步骤任务、需要过程证据或整理结果的测试 | 可生成计划和任务笔记 |
+
+Pro 任务完成设备操作后，仍可能继续回看截图、检查结果、等待步骤摘要和生成录像。计划全部勾选不代表服务已完成收尾，以最终任务状态为准。
+
+### 笔记与计划
+
+“笔记与计划”用于查看当前或历史任务中 AI 保存的记录，页面目前不提供直接编辑操作：
+
+- `task_plan.md`：任务步骤和执行进度，显示待执行、执行中及完成状态。
+- 其他笔记：保存采集数据、观察结果或任务总结；有多个文件时点击名称切换查看。
+
+在 Pro 模式的任务描述中明确要求记录，例如：
+
+> 打开设置，查看设备型号和 Android 版本。执行前制定任务计划，将查到的信息保存到 device_info 笔记中，完成后更新计划并返回结果。
+
+笔记按任务保存，用于同一任务内的持续记忆，不会自动成为所有后续任务共享的知识库。
+
+### 执行记录与本地配置
+
+默认执行数据保存在 `artemis-main/traces/`，临时数据保存在 `artemis-main/scratch/`；自定义 `TRACES_PATH` 或运行参数时，以实际配置的输出位置为准。
+
+| 路径 | 内容 | Git / npm 分发 |
+| --- | --- | --- |
+| `artemis-main/config/artemis.example.jsonc` | 不含密钥的公开默认配置 | 随源码分发 |
+| `artemis-main/config/artemis.jsonc` | 本机实际使用的模型与智能体配置 | 已忽略，不提交、不打包 |
+| `artemis-main/.env` | 本机模型密钥、Base URL 等设置 | 已忽略，不提交、不打包 |
+| `artemis-main/traces/` | 执行数据库、步骤截图、录像、回放数据、任务笔记和计划 | 已忽略，不提交、不打包 |
+| `artemis-main/scratch/` | 执行过程临时文件 | 已忽略，不提交、不打包 |
+
+执行记录写入本地不会自动执行 Git 提交或推送，正常 `git add .` 不会包含上述已忽略的文件。这里说明的是 Git/npm 分发范围；执行 AI 任务时，模型调用仍会向所配置的服务商发送任务所需的文本和图片。
+
+### Artemis 常见问题
+
+- **控制台无法连接**：检查启动终端的日志，确认 `uv`、Python、Node.js 和前端构建依赖可用，再运行 `npm run artemis`。若使用其他端口，检查 `ARTEMIS_URL`、`ARTEMIS_PORT` 和嵌入来源是否一致。
+- **模型仍显示“未设置”**：确认修改的是当前 `ARTEMIS_PROJECT_DIR` 下的 `.env` 与 `config/artemis.jsonc`，再点击“刷新配置”；主项目的 Midscene 配置不会同步到 Artemis。
+- **没有实际设备**：运行 `adb devices -l`，检查 USB 调试授权、设备连接，以及 Artemis 的 `ADB_HOST`、`ADB_PORT`。任务使用 Artemis 中选择的设备。
+- **视频工具链提示缺少 scrcpy / ffmpeg**：在“系统设置”的视频工具链检查中查看缺失项目，安装后确认启动 Artemis 的终端能找到工具；终端 PATH 改变后重新启动服务。
+- **任务看起来没有结束**：查看最近步骤和日志，区分正在操作、等待模型、错误暂停与 Pro 最终检查。记录任务 ID 可用于定位日志；需要结束当前任务时使用停止按钮。
+- **自定义模型输出解析失败**：本项目已为非 Google 模型的 Pydantic 结构化输出接入思考标签清理、JSON 提取和校验，格式错误时要求模型纠正一次；持续错误仍会报告失败。纯文本步骤摘要也会清理思考内容，避免将其计入摘要长度。
+
+上述模型适配修复属于本项目集成源码的修改，并不代表 Artemis 上游已包含相同修复。
 
 ## 启动
 
@@ -103,6 +194,7 @@ npx android-midscene-automation --port 5174
 
 ## 功能文档
 
+- [Artemis 使用说明](#artemis-使用说明)
 - [Appium 录制器使用说明](#appium-录制器使用说明)
 - [流程节点操作说明](./流程节点操作说明.md)
 - [AI 识别操作说明](./AI识别操作说明.md)
@@ -140,11 +232,11 @@ npm run dev
 http://127.0.0.1:5173/
 ```
 
-`npm run dev` 会同时启动前端页面和本地后端 API。后端不是独立进程，而是在 `vite.config.ts` 中通过 `server/http-api.ts` 挂载到 Vite dev server 的 Connect middleware。
+`npm run dev` 会同时启动前端页面、本地后端 API 和独立的 Artemis 服务。主项目后端不是独立进程，而是在 `vite.config.ts` 中通过 `server/http-api.ts` 挂载到 Vite dev server 的 Connect middleware。
 
 ## 模型配置
 
-模型配置仅用于 Midscene 和 AI 脚本生成，Appium 录制与回放不读取模型配置。首次使用 Midscene 时进入页面的“参数配置”：
+本节的“参数配置”仅用于 Midscene 和 AI 脚本生成，Appium 录制与回放不读取这些模型配置。Artemis 使用自己的 JSONC 与 `.env`，详见 [Artemis 使用说明](#artemis-使用说明)。首次使用 Midscene 时进入页面的“参数配置”：
 
 - `运行配置`：可选指定 Android SDK 根目录和 Appium 回放报告目录；留空时使用系统 SDK 与默认 `output` 目录。
 - `Midscene模型`：执行测试脚本时使用，支持“自定义提供方”和“使用 Codex”。
@@ -1409,6 +1501,9 @@ Linux: ~/.local/share/android-midscene-automation
 4. 回放期间组件树自动刷新会暂停，回放完成后会自动恢复。
 
 # 项目更新记录
+
+## v1.1.1
+更新README.md
 
 ## v1.1.0
 - [Artemis]修复自定义模型返回 `<think>` 思考标签导致 Hopper 等节点 JSON 解析失败的问题：非 Google 模型的 Pydantic 结构化输出接入统一清理、提取和校验流程，显式提供 JSON Schema，格式错误时限次要求模型纠正。

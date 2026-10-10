@@ -1,4 +1,7 @@
 # 更新记录
+## v1.1.1
+更新README.md
+
 ## v1.1.0
 - [Artemis]修复自定义模型返回 `<think>` 思考标签导致 Hopper 等节点 JSON 解析失败的问题：非 Google 模型的 Pydantic 结构化输出接入统一清理、提取和校验流程，显式提供 JSON Schema，格式错误时限次要求模型纠正。
 - [Artemis]修复 Flash 步骤摘要和历史压缩仍直接创建 Gemini 客户端的问题：非 Google 模型统一使用配置中的 summarizer 节点及其备用模型；模型初始化错误不再静默切换到 Gemini。
