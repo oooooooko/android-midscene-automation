@@ -19,6 +19,7 @@ function parseBounds(value: string): AppiumBounds | undefined {
   const top = Number(match[2]);
   const right = Number(match[3]);
   const bottom = Number(match[4]);
+  if (right <= left || bottom <= top) return undefined;
   return {
     left,
     top,

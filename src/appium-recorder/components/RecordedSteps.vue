@@ -367,6 +367,7 @@ function updateStep(index: number, step: AppiumRecordedStep) {
       class="appium-flow-dialog"
       align-center
       append-to-body
+      draggable
     >
       <div class="appium-flow-toolbar appium-flow-dialog__toolbar">
         <FlowNodeSearch v-model:query="searchQuery" :results="searchResults" :selected-id="searchTargetId" @select="focusSearchResult" />

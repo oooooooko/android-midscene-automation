@@ -118,6 +118,10 @@ export function importAppiumScript(input: unknown) {
   return postJson<{ script: AppiumRecordedScript }>(`${APP_BASE}/api/appium-recorder/scripts/import`, input);
 }
 
+export function importAppiumScripts(inputs: unknown[]) {
+  return postJson<{ scripts: AppiumRecordedScript[] }>(`${APP_BASE}/api/appium-recorder/scripts/import`, { files: inputs });
+}
+
 export async function downloadAppiumScript(id: string) {
   const response = await fetch(`${APP_BASE}/api/appium-recorder/scripts/${encodeURIComponent(id)}/export`);
   if (!response.ok) await readJson(response);

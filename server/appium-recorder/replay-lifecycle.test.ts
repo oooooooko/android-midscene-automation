@@ -70,7 +70,7 @@ test('ADB cancellation and deadlines cover actions; external sessions survive id
     // A local HTTP server models the idle lease at accelerated time, without a real device.
     globalThis.fetch = original.fetch;
     globalThis.setInterval = ((fn, ms, ...args) => original.setInterval(fn, ms === 15000 ? 15 : ms, ...args)) as typeof setInterval;
-    let active = false, timeoutSeconds = 0, heartbeats = 0, homeKeys = 0, deleted = 0;
+    let active = false, timeoutSeconds = 0, heartbeats = 0, gestures = 0, deleted = 0;
     let expiry: ReturnType<typeof setTimeout> | undefined;
     let createdResolve: () => void = () => {};
     const renew = () => { clearTimeout(expiry); expiry = setTimeout(() => { active = false; }, timeoutSeconds * 3); };
@@ -89,7 +89,7 @@ test('ADB cancellation and deadlines cover actions; external sessions survive id
       } else {
         renew();
         if (req.url?.endsWith('/timeouts')) heartbeats++;
-        if (req.url?.endsWith('/press_keycode')) homeKeys++;
+        if (req.url?.endsWith('/execute/sync')) gestures++;
         res.end('{"value":{}}');
       }
     });
@@ -97,9 +97,9 @@ test('ADB cancellation and deadlines cover actions; external sessions survive id
     process.env.APPIUM_SERVER_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     try {
       mode = 'long-idle'; controller = new AbortController();
-      const result = await run([{ id: 'wait', type: 'delay', label: 'idle', timeoutMs: 450 }, { id: 'home', type: 'key', label: 'Home', keyCode: 3 }]);
+      const result = await run([{ id: 'wait', type: 'delay', label: 'idle', timeoutMs: 450 }, { id: 'pinch', type: 'pinch', label: '缩放', pinch: { direction: 'out', centerX: 200, centerY: 300, percent: 0.5 } }]);
       assert.equal(result.success, true, result.output);
-      assert.equal(timeoutSeconds, 60); assert.ok(heartbeats > 3); assert.equal(homeKeys, 1); assert.equal(deleted, 1);
+      assert.equal(timeoutSeconds, 60); assert.ok(heartbeats > 3); assert.equal(gestures, 1); assert.equal(deleted, 1);
       const heartbeatCount = heartbeats;
       await new Promise(resolve => setTimeout(resolve, 40));
       assert.equal(heartbeats, heartbeatCount, 'heartbeat stops after cleanup');

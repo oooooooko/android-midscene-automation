@@ -475,6 +475,7 @@ export function deleteAppiumRecordedScript(id: string) {
 }
 
 export function importAppiumRecordedScript(input: {
+  sourceId?: string;
   variables?: TestVariable[];
   name: string;
   appPackage: string;
@@ -482,16 +483,45 @@ export function importAppiumRecordedScript(input: {
   deviceId?: string;
   steps: AppiumRecordedStepRecord[];
 }) {
+  return importAppiumRecordedScripts([input])[0];
+}
+
+export function importAppiumRecordedScripts(inputs: Array<{
+  sourceId?: string;
+  variables?: TestVariable[];
+  name: string;
+  appPackage: string;
+  appActivity?: string;
+  deviceId?: string;
+  steps: AppiumRecordedStepRecord[];
+}>) {
   initDb();
-  const baseName = input.name.trim() || '导入脚本';
-  const existingNames = new Set(listAppiumRecordedScripts().map((script) => script.name));
-  let name = baseName;
-  let suffix = 2;
-  while (existingNames.has(name)) {
-    name = `${baseName} (${suffix})`;
-    suffix += 1;
-  }
-  return saveAppiumRecordedScript({ ...input, name });
+  const usedNames = new Set(listAppiumRecordedScripts().map((script) => script.name));
+  const sourceIds = new Set<string>();
+  const planned = inputs.map((input) => {
+    const sourceId = input.sourceId?.trim() || '';
+    if (sourceId && sourceIds.has(sourceId)) throw new Error(`导入文件包含重复脚本 ID：${sourceId}`);
+    if (sourceId) sourceIds.add(sourceId);
+
+    const baseName = input.name.trim() || '导入脚本';
+    let name = baseName;
+    let suffix = 2;
+    while (usedNames.has(name)) name = `${baseName} (${suffix++})`;
+    usedNames.add(name);
+    return { ...input, sourceId, id: createId('appium_script'), name };
+  });
+  const importedIds = new Map(planned.filter(item => item.sourceId).map(item => [item.sourceId, item.id]));
+
+  return planned.map((input) => {
+    const steps = input.steps.map(step => (
+      step.type === 'runScript' && step.value && importedIds.has(step.value)
+        ? { ...step, value: importedIds.get(step.value) }
+        : step
+    ));
+    const script = saveAppiumRecordedScript({ ...input, id: input.id, steps });
+    if (!script) throw new Error(`脚本「${input.name}」导入失败`);
+    return script;
+  });
 }
 
 export function saveAppiumReplayReport(input: Omit<AppiumReplayReportRecord, 'id' | 'createdAt'>) {

@@ -16,14 +16,14 @@ test('real agent receives stop during replay and retries result delivery without
   const { listRemoteAndroidDevices } = await import('./registry');
   const { saveAppiumRecordedScript } = await import('../appium-recorder/repository');
   const { listRunHistory } = await import('../appium-recorder/run-history');
-  let sessions = 0, deletes = 0, keys = 0, resultAttempts = 0;
+  let sessions = 0, deletes = 0, gestures = 0, resultAttempts = 0;
   const server = createServer(async (req, res) => {
     if (req.url === '/session') {
       sessions++; res.setHeader('Content-Type', 'application/json'); res.end('{"value":{"sessionId":"test-session"}}'); return;
     }
     if (req.url?.startsWith('/session/')) {
       if (req.method === 'DELETE') deletes++;
-      if (req.url.endsWith('/press_keycode')) keys++;
+      if (req.url.endsWith('/execute/sync')) gestures++;
       res.setHeader('Content-Type', 'application/json'); res.end('{"value":{}}'); return;
     }
     if (req.url === '/api/remote-agents/result' && ++resultAttempts === 1) {
@@ -46,7 +46,7 @@ test('real agent receives stop during replay and retries result delivery without
     const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const script = saveAppiumRecordedScript({ name: 'remote-test', appPackage: 'example.test', steps: [
       { id: 'wait', type: 'delay', label: 'wait', timeoutMs: 60000 },
-      { id: 'home', type: 'key', label: 'Home', keyCode: 3 },
+      { id: 'pinch', type: 'pinch', label: '缩放', pinch: { direction: 'out', centerX: 200, centerY: 300, percent: 0.5 } },
     ] });
     agent = spawn(process.execPath, ['--import', 'tsx', resolve('remote-agent/index.ts'), '--server', base, '--agent-id', 'integration-agent'], {
       env: { ...process.env, ANDROID_MIDSCENE_DATA_ROOT: join(root, 'agent'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APPIUM_SERVER_URL: base, PATH: `${bin}:${process.env.PATH}` },
@@ -63,7 +63,7 @@ test('real agent receives stop during replay and retries result delivery without
     const result = await running;
     assert.equal(result.stopped, true, stderr);
     assert.equal(sessions, 1, 'retrying the result never replays device actions');
-    assert.equal(deletes, 1); assert.equal(keys, 0, 'Home must not run after cancellation');
+    assert.equal(deletes, 1); assert.equal(gestures, 0, 'the gesture must not run after cancellation');
     assert.equal(resultAttempts, 2, 'temporary result failure is retried');
     const history = listRunHistory(script.id);
     assert.equal(history.length, 1); assert.equal(history[0]?.status, 'stopped'); assert.equal(history[0]?.deviceId, deviceId);

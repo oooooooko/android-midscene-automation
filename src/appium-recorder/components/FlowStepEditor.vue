@@ -42,6 +42,15 @@ const visualChangeRoleLabel = computed(() => (
 const visualChangeConfigDisabled = computed(() => Boolean(
   props.disabled || visualChangeConfig.value.role === 'end',
 ));
+const showTapCoordinates = computed(() => (
+  props.step.type === 'coordinateTap'
+  || (['tap', 'tapIfExists'].includes(props.step.type) && props.step.fallback?.strategy === 'bounds')
+));
+const invalidTapCoordinates = computed(() => (
+  showTapCoordinates.value
+  && Number(props.step.fallback?.centerX) === 0
+  && Number(props.step.fallback?.centerY) === 0
+));
 
 function defaultKind(): FlowKind {
   return defaultFlowKind(props.step);
@@ -195,15 +204,6 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           <el-input-number :model-value="step.pinch?.percent ?? 0.5" :disabled="disabled" :min="0.01" :max="1" :step="0.05" controls-position="right" @update:model-value="patchPinch({ percent: $event ?? 0.5 })" />
         </el-form-item>
       </template>
-      <div v-if="step.type === 'coordinateTap'" class="appium-flow-editor__grid">
-        <el-form-item label="坐标 X">
-          <el-input-number :model-value="step.fallback?.centerX ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 X" @update:model-value="patchTapCoordinate('centerX', $event)" />
-        </el-form-item>
-        <el-form-item label="坐标 Y">
-          <el-input-number :model-value="step.fallback?.centerY ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 Y" @update:model-value="patchTapCoordinate('centerY', $event)" />
-        </el-form-item>
-      </div>
-      <CoordinatePointPicker v-if="step.type === 'coordinateTap'" :disabled="disabled" @select="applyTapPoint" />
       <StageLogSettings v-if="step.type === 'log'" :step="step" :disabled="disabled" @update="patchStep" />
       <VariableExtractionSettings v-if="step.type === 'extractVariable'" :step="step" :disabled="disabled" @update="patchStep" />
       <ScriptParameterSettings v-if="step.type === 'runScript'" :step="step" :disabled="disabled" @update="patchStep" />
@@ -428,6 +428,48 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           </el-select>
         </el-form-item>
       </div>
+      <section v-if="showTapCoordinates" class="appium-flow-editor__fallback">
+        <div class="appium-flow-editor__grid">
+          <el-form-item :label="step.type === 'coordinateTap' ? '坐标 X' : '备用坐标 X'">
+            <el-input-number :model-value="step.fallback?.centerX ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 X" @update:model-value="patchTapCoordinate('centerX', $event)" />
+          </el-form-item>
+          <el-form-item :label="step.type === 'coordinateTap' ? '坐标 Y' : '备用坐标 Y'">
+            <el-input-number :model-value="step.fallback?.centerY ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" aria-label="坐标 Y" @update:model-value="patchTapCoordinate('centerY', $event)" />
+          </el-form-item>
+        </div>
+        <el-alert
+          v-if="invalidTapCoordinates"
+          class="appium-flow-editor__fallback-alert"
+          type="warning"
+          show-icon
+          :closable="false"
+          title="备用坐标无效；组件定位失败时无法使用坐标兜底"
+        />
+        <CoordinatePointPicker :disabled="disabled" @select="applyTapPoint" />
+      </section>
     </el-form>
   </div>
 </template>
+
+<style scoped>
+.appium-flow-editor__fallback {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.appium-flow-editor__fallback :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.appium-flow-editor__fallback-alert {
+  padding: 8px 12px;
+}
+
+.appium-flow-editor__fallback-alert :deep(.el-alert__title) {
+  font-size: 13px;
+  line-height: 20px;
+}
+</style>

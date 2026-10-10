@@ -15,7 +15,7 @@ test('replay survives command idle periods and cleans sessions after success, ab
   const calls: string[][] = [];
   let mode = 'success', stopped = false;
   let elapsedMs = 0, lastCommandMs = 0, commandTimeoutMs = 60_000;
-  let keyCommands = 0, deletedSessions = 0;
+  let gestureCommands = 0, deletedSessions = 0;
   let controller = new AbortController();
   try {
     const sdk = join(root, 'sdk');
@@ -47,13 +47,13 @@ test('replay survives command idle periods and cleans sessions after success, ab
       if (path === '/session' && init?.method === 'POST') {
         if (mode === 'creation-failure') return Response.json({ value: { error: 'session not created', message: 'creation failed' } }, { status: 500 });
         const capabilities = JSON.parse(String(init.body)).capabilities.alwaysMatch;
-        assert.deepEqual(capabilities['appium:settings'], { waitForIdleTimeout: 1000 }, 'bound UiAutomator idle waits for animated screens');
+        assert.deepEqual(capabilities['appium:settings'], { waitForIdleTimeout: 0 }, 'disable UiAutomator idle waits for continuously updating screens');
         commandTimeoutMs = (capabilities['appium:newCommandTimeout'] ?? 60) * 1000;
         lastCommandMs = elapsedMs;
         return Response.json({ value: { sessionId: 'test-session' } });
       }
-      if (path.endsWith('/press_keycode')) {
-        keyCommands++;
+      if (path.endsWith('/execute/sync')) {
+        gestureCommands++;
         // Model Appium's idle expiry without waiting a real minute or touching a device.
         if (commandTimeoutMs && elapsedMs - lastCommandMs > commandTimeoutMs) {
           return Response.json({ value: { error: 'invalid session id', message: 'New Command Timeout expired' } }, { status: 404 });
@@ -70,7 +70,7 @@ test('replay survives command idle periods and cleans sessions after success, ab
     };
     for (mode of ['success', 'long-idle', 'abort', 'creation-failure', 'cleanup-failure', 'external', 'external-abort']) {
       calls.length = 0;
-      elapsedMs = lastCommandMs = keyCommands = deletedSessions = 0;
+      elapsedMs = lastCommandMs = gestureCommands = deletedSessions = 0;
       controller = new AbortController();
       const external = mode.startsWith('external');
       const aborted = mode.endsWith('abort');
@@ -79,7 +79,7 @@ test('replay survives command idle periods and cleans sessions after success, ab
       else delete process.env.APPIUM_SERVER_URL;
       const replayScript = longIdle ? { ...script, steps: [
         ...script.steps,
-        { id: 'home', type: 'key' as const, label: 'Home', keyCode: 3 },
+        { id: 'pinch', type: 'pinch' as const, label: '缩放', pinch: { direction: 'out' as const, centerX: 200, centerY: 300, percent: 0.5 } },
       ] } : script;
       const result = await replayAppiumScript(replayScript, 'test-device', line => {
         // ADB operations and model inference do not reset Appium's command timer.
@@ -93,7 +93,7 @@ test('replay survives command idle periods and cleans sessions after success, ab
         assert.deepEqual(calls.map(args => args.at(-1)).sort(), ['io.appium.uiautomator2.server', 'io.appium.uiautomator2.server.test']);
       }
       if (longIdle) {
-        assert.equal(keyCommands, 1, 'execute Home after the long interval without Appium commands');
+        assert.equal(gestureCommands, 1, 'execute an Appium gesture after the long interval without Appium commands');
         assert.equal(result.success, true, result.output);
       }
       if (aborted) assert.equal(result.stopped, true);

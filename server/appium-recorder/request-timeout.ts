@@ -7,6 +7,11 @@ export function withElementDeadline<T>(timeoutMs: number, action: () => Promise<
   return deadline.run(Date.now() + Math.max(1, timeoutMs), action);
 }
 
+export function remainingElementDeadlineMs() {
+  const value = deadline.getStore();
+  return value === undefined ? Number.POSITIVE_INFINITY : value - Date.now();
+}
+
 // 响应体也受同一个期限约束，避免收到 HTTP 头后继续无限等待。
 export async function timedAppiumFetch(url: string, init: RequestInit, timeoutMs: number) {
   const remaining = Math.max(1, Math.min(timeoutMs, (deadline.getStore() ?? Infinity) - Date.now()));

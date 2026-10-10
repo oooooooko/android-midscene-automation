@@ -790,7 +790,15 @@ onUnmounted(() => {
       width="760px"
       class="code-dialog"
     >
-      <div class="code-dialog__toolbar">
+      <el-input
+        v-if="codeDialog.editing"
+        v-model="codeDialog.draftCode"
+        type="textarea"
+        resize="none"
+        class="code-dialog__editor"
+      />
+      <pre v-else class="code-block code-dialog__body"><code>{{ codeDialog.code || '暂无代码' }}</code></pre>
+      <template #footer>
         <el-button :icon="CopyDocument" @click="copyDialogCode">复制</el-button>
         <el-button v-if="!codeDialog.editing" type="primary" :icon="Edit" @click="editCodeDialog">
           编辑
@@ -803,15 +811,7 @@ onUnmounted(() => {
             保存
           </el-button>
         </template>
-      </div>
-      <el-input
-        v-if="codeDialog.editing"
-        v-model="codeDialog.draftCode"
-        type="textarea"
-        resize="none"
-        class="code-dialog__editor"
-      />
-      <pre v-else class="code-block code-dialog__body"><code>{{ codeDialog.code || '暂无代码' }}</code></pre>
+      </template>
     </el-dialog>
 
     <AppSidebar :active-menu="activeMenu" :collapsed="sidebarCollapsed"

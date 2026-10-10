@@ -18,7 +18,7 @@ import { stopAppOnDevice } from './stop-app';
 import { DEFAULT_NODE_TIMEOUT_MS } from '../../src/appium-recorder/node-timeout';
 import { startReplayVideo, type ReplayVideo } from './replay-video';
 import { ConditionTimeoutError, AppiumServiceError } from './condition-timeout';
-import { AppiumRequestTimeoutError, timedAppiumFetch, withElementDeadline } from './request-timeout';
+import { AppiumRequestTimeoutError, remainingElementDeadlineMs, timedAppiumFetch, withElementDeadline } from './request-timeout';
 import { textClickSelector } from '../../src/appium-recorder/text-click';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -32,6 +32,7 @@ import { compareVisualChangeFrames, type VisualChangeRegion } from './visual-cha
 import { longPressMode, validateLongPress } from '../../src/appium-recorder/long-press';
 import { defaultFlowKind, flowBranchLabel } from '../../src/appium-recorder/flow-labels';
 import { isNativeStateCondition, nativeControlName, matchesNativeControl, parseNativeBoolean } from '../../src/appium-recorder/native-control-state';
+import { findHierarchyBounds, readFreshWindowHierarchy } from './tree-dump';
 
 type AppiumSessionResponse = {
   value?: {
@@ -50,7 +51,8 @@ type AppiumValueResponse<T> = {
 };
 
 const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
-const UIAUTOMATOR_IDLE_TIMEOUT_MS = 1000;
+const UIAUTOMATOR_IDLE_TIMEOUT_MS = 0;
+const MIN_ELEMENT_ATTEMPT_BUDGET_MS = 100;
 const configuredAppiumServerUrl = () => (process.env.APPIUM_SERVER_URL || 'http://127.0.0.1:4723').replace(/\/+$/, '');
 
 class ReplayStoppedError extends Error {
@@ -85,6 +87,7 @@ const replayContext = new AsyncLocalStorage<{
   softFailureCount: number;
   flowEnded?: boolean;
   selectVideoScript?: (id: string, name: string, force?: boolean) => Promise<void>;
+  sessionId?: string;
 }>();
 
 const appiumServerUrl = () => replayContext.getStore()?.serverUrl || configuredAppiumServerUrl();
@@ -143,6 +146,19 @@ function adbTap(deviceId: string, x: number, y: number) {
   throwIfReplayStopped();
   return new Promise<void>((resolve, reject) => {
     execFile(getAdbCommand(), ['-s', deviceId, 'shell', 'input', 'tap', String(Math.round(x)), String(Math.round(y))], { timeout: 10000, signal: replayContext.getStore()?.signal }, (error, _stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || error.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function adbKey(deviceId: string, keyCode: number) {
+  throwIfReplayStopped();
+  return new Promise<void>((resolve, reject) => {
+    execFile(getAdbCommand(), ['-s', deviceId, 'shell', 'input', 'keyevent', String(Math.round(keyCode))], { timeout: 10000, signal: replayContext.getStore()?.signal }, (error, _stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
@@ -288,12 +304,15 @@ async function appiumRequest<T>(
   init?: RequestInit,
   options?: { ignoreAbort?: boolean; timeoutMs?: number },
 ) {
-  const requestUrl = `${appiumServerUrl()}${path}`;
   const context = replayContext.getStore();
+  const effectivePath = context?.sessionId
+    ? path.replace(/^\/session\/[^/]+/, `/session/${context.sessionId}`)
+    : path;
+  const requestUrl = `${appiumServerUrl()}${effectivePath}`;
   const method = init?.method || 'GET';
   const startedAt = Date.now();
   if (!options?.ignoreAbort) throwIfReplayStopped();
-  context?.appiumLog(`[Appium] 请求：${method} ${path}`);
+  context?.appiumLog(`[Appium] 请求：${method} ${effectivePath}`);
   let response: Response;
   let responseText: string;
   try {
@@ -305,15 +324,15 @@ async function appiumRequest<T>(
         'Content-Type': 'application/json',
         ...(init?.headers || {}),
       },
-    }, options?.timeoutMs ?? (path === '/session' && method === 'POST' ? 120000 : 30000));
+    }, options?.timeoutMs ?? (effectivePath === '/session' && method === 'POST' ? 120000 : 30000));
     response = result.response;
     responseText = result.text;
   } catch (error) {
     if (isReplayStopped(error) && !options?.ignoreAbort) {
-      context?.appiumLog(`[Appium] 取消：${method} ${path}`);
+      context?.appiumLog(`[Appium] 取消：${method} ${effectivePath}`);
       throw new ReplayStoppedError();
     }
-    context?.appiumLog(`[Appium] 异常：${method} ${path}（${errorDetail(error)}）`);
+    context?.appiumLog(`[Appium] 异常：${method} ${effectivePath}（${errorDetail(error)}）`);
     if (error instanceof AppiumRequestTimeoutError) throw error;
     if (isTimeoutError(error)) {
       throw new AppiumServiceError(`Appium 请求超时 ${requestUrl}，${errorDetail(error)}`);
@@ -321,7 +340,7 @@ async function appiumRequest<T>(
     throw new AppiumServiceError(`无法连接 Appium 服务 ${requestUrl}，${errorDetail(error)}`);
   }
 
-  context?.appiumLog(`[Appium] 响应：HTTP ${response.status} ${method} ${path}（${Date.now() - startedAt}ms）`);
+  context?.appiumLog(`[Appium] 响应：HTTP ${response.status} ${method} ${effectivePath}（${Date.now() - startedAt}ms）`);
   const payload = (() => {
     try {
       return responseText ? JSON.parse(responseText) : {};
@@ -342,9 +361,13 @@ async function appiumRequest<T>(
       responseText ? `原始响应：\n${responseText}` : '',
     ].filter(Boolean).join('\n');
     const ErrorType = ['no such element', 'stale element reference'].includes(payload.value?.error || payload.error || '') ? Error : AppiumServiceError;
-    throw new ErrorType(`Appium ${method} ${path} 失败（HTTP ${response.status}）：\n${detail || '未返回错误详情'}`);
+    throw new ErrorType(`Appium ${method} ${effectivePath} 失败（HTTP ${response.status}）：\n${detail || '未返回错误详情'}`);
   }
   return payload;
+}
+
+function appiumNodeRequest<T>(path: string, init?: RequestInit) {
+  return appiumRequest<T>(path, init, { timeoutMs: DEFAULT_NODE_TIMEOUT_MS });
 }
 
 function replayFrameSelector(step: AppiumRecordedStepRecord) {
@@ -421,8 +444,8 @@ async function createSession(deviceId: string) {
           'appium:udid': deviceId,
           'appium:autoLaunch': false,
           'appium:noReset': true,
-          // 实时画面、动画和频繁无障碍事件可能让 UiAutomator2 长时间等不到界面空闲。
-          // 节点已有显式等待，因此这里只保留很短的空闲窗口，避免点击已生效后请求仍占住命令队列。
+          // 实时画面、动画和频繁无障碍事件可能让 UiAutomator2 始终等不到界面空闲。
+          // 节点已有显式等待，因此关闭驱动内部空闲等待，避免元素查询和点击确认占住命令队列。
           'appium:settings': { waitForIdleTimeout: UIAUTOMATOR_IDLE_TIMEOUT_MS },
           // 托管进程由 finally 释放；外部服务保留回收期限，避免创建请求取消后遗留永久会话。
           'appium:newCommandTimeout': usesManagedAppiumServer() ? 0 : 60,
@@ -446,6 +469,40 @@ async function resetUiAutomator2(deviceId: string) {
   await adbText(deviceId, ['shell', 'am', 'force-stop', 'io.appium.uiautomator2.server']);
   await adbText(deviceId, ['shell', 'am', 'force-stop', 'io.appium.uiautomator2.server.test']);
   await wait(800);
+}
+
+function adbHierarchyText(command: string, args: string[]) {
+  return new Promise<string>((resolve, reject) => {
+    execFile(command, args, {
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: DEFAULT_NODE_TIMEOUT_MS,
+      signal: replayContext.getStore()?.signal,
+    }, (error, stdout, stderr) => {
+      if (error) reject(new Error(stderr || error.message));
+      else resolve(stdout);
+    });
+  });
+}
+
+async function recoverOptionalLookup(deviceId: string, sessionId: string, step: AppiumRecordedStepRecord) {
+  const context = replayContext.getStore();
+  context?.appiumLog(`[Appium] ${step.label} 查询超时，正在重建 UiAutomator2 会话并通过 ADB 组件树判断`);
+  await resetUiAutomator2(deviceId);
+  await appiumRequest(`/session/${sessionId}`, { method: 'DELETE' }, { ignoreAbort: true, timeoutMs: 1000 })
+    .catch(error => context?.appiumLog(`[Appium] 旧会话释放未及时返回：${errorDetail(error)}`));
+
+  let bounds: ReturnType<typeof findHierarchyBounds>;
+  try {
+    const xml = await readFreshWindowHierarchy(deviceId, getAdbCommand(), adbHierarchyText);
+    bounds = findHierarchyBounds(xml, [step.selector, ...(step.selectorChain || [])].filter(Boolean) as NonNullable<AppiumRecordedStepRecord['selector']>[]);
+  } catch (error) {
+    context?.appiumLog(`[ADB] 可选元素组件树检查失败，按未出现处理：${errorDetail(error)}`);
+  }
+
+  const replacementSessionId = await createSession(deviceId);
+  if (context) context.sessionId = replacementSessionId;
+  context?.appiumLog(`[Appium] UiAutomator2 会话已恢复：${replacementSessionId}`);
+  return bounds;
 }
 
 function toAppiumUsing(selector: NonNullable<AppiumRecordedStepRecord['selector']>) {
@@ -481,37 +538,39 @@ async function findElement(sessionId: string, step: AppiumRecordedStepRecord, ti
 async function findElementWithinDeadline(sessionId: string, step: AppiumRecordedStepRecord) {
   if (!step.selector) throw new Error(`${step.label} 缺少 selector`);
   const attempts: string[] = [];
+  let requestAttempted = false;
+  let lastError: unknown;
 
   if (step.contextSelector) {
     try {
       attempts.push(`context ${step.contextSelector.strategy} ${step.contextSelector.value || ''} -> ${step.selector.strategy} ${step.selector.value || ''}`);
+      requestAttempted = true;
       const parentId = await findElementBySelector(sessionId, step.contextSelector);
+      if (remainingElementDeadlineMs() < MIN_ELEMENT_ATTEMPT_BUDGET_MS) throw new Error('元素定位时间已用完');
       return await findElementBySelector(sessionId, step.selector, parentId);
     } catch (error) {
       throwIfReplayStopped(error);
+      lastError = error;
       // Continue with the fallback chain below.
     }
   }
 
   // 唯一原生定位优先；非唯一元素仍保留父级与备用 XPath 的精确匹配。
   const preferPrimary = step.selector.unique === true && ['id', 'accessibilityId'].includes(step.selector.strategy);
-  for (const selector of [...(preferPrimary ? [step.selector] : []), ...(step.selectorChain || [])]) {
+  const selectors = [...(preferPrimary ? [step.selector] : []), ...(step.selectorChain || []), ...(!preferPrimary ? [step.selector] : [])]
+    .filter((selector, index, list) => list.findIndex(item => item.strategy === selector.strategy && item.value === selector.value) === index);
+  for (const selector of selectors) {
+    if (requestAttempted && remainingElementDeadlineMs() < MIN_ELEMENT_ATTEMPT_BUDGET_MS) break;
     try {
       attempts.push(`${selector.strategy} ${selector.value || ''}`);
+      requestAttempted = true;
       return await findElementBySelector(sessionId, selector);
     } catch (error) {
       throwIfReplayStopped(error);
-      // Continue.
+      lastError = error;
     }
   }
-
-  try {
-    attempts.push(`${step.selector.strategy} ${step.selector.value || ''}`);
-    return await findElementBySelector(sessionId, step.selector);
-  } catch (error) {
-    throwIfReplayStopped(error);
-    throw new Error(`${step.label} 未找到元素；尝试过：${attempts.filter(Boolean).join('；') || '-'}；${errorDetail(error)}`);
-  }
+  throw new Error(`${step.label} 未找到元素；尝试过：${attempts.filter(Boolean).join('；') || '-'}；${errorDetail(lastError)}`);
 }
 
 // 图像判断不能使用通用定位的“第一个匹配”及坐标回退，父级和子级均须唯一。
@@ -519,7 +578,7 @@ async function imageCheckRegion(sessionId: string, step: AppiumRecordedStepRecor
   async function unique(selector: AppiumRecordedStepRecord['selector'], parent?: string) {
     if (!selector || selector.strategy === 'bounds') throw new Error('缺少可唯一定位的组件信息');
     const path = parent ? `/session/${sessionId}/element/${parent}/elements` : `/session/${sessionId}/elements`;
-    const payload = await appiumRequest<AppiumValueResponse<Array<Record<string, string>>>>(path, {
+    const payload = await appiumNodeRequest<AppiumValueResponse<Array<Record<string, string>>>>(path, {
       method: 'POST', body: JSON.stringify(toAppiumUsing(selector)),
     });
     if (payload.value?.length !== 1) throw new Error(`目标组件匹配 ${payload.value?.length || 0} 个，请限定父级或条目文字`);
@@ -529,13 +588,22 @@ async function imageCheckRegion(sessionId: string, step: AppiumRecordedStepRecor
   }
   const parent = step.contextSelector ? await unique(step.contextSelector) : undefined;
   const id = await unique(step.selector, parent);
-  const rect = await appiumRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${id}/rect`);
+  const rect = await appiumNodeRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${id}/rect`);
   if (!rect.value) throw new Error('无法读取组件实时区域');
   return rect.value;
 }
 
+function hasUsableFallbackCoordinates(step: AppiumRecordedStepRecord): step is AppiumRecordedStepRecord & {
+  fallback: { strategy: 'bounds'; centerX: number; centerY: number };
+} {
+  return step.fallback?.strategy === 'bounds'
+    && Number.isFinite(step.fallback.centerX)
+    && Number.isFinite(step.fallback.centerY)
+    && (Number(step.fallback.centerX) !== 0 || Number(step.fallback.centerY) !== 0);
+}
+
 async function tapFallback(deviceId: string, step: AppiumRecordedStepRecord) {
-  if (step.fallback?.strategy !== 'bounds' || !Number.isFinite(step.fallback.centerX) || !Number.isFinite(step.fallback.centerY)) {
+  if (!hasUsableFallbackCoordinates(step)) {
     throw new Error(`${step.label} 没有可用点击坐标`);
   }
   await adbTap(deviceId, Number(step.fallback.centerX), Number(step.fallback.centerY));
@@ -548,7 +616,7 @@ async function tapLocatedElement(
   step?: AppiumRecordedStepRecord,
 ) {
   try {
-    const payload = await appiumRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${elementId}/rect`);
+    const payload = await appiumNodeRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${elementId}/rect`);
     const rect = payload.value;
     if (rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0) {
       await adbTap(deviceId, rect.x + rect.width / 2, rect.y + rect.height / 2);
@@ -566,17 +634,50 @@ async function tapLocatedElement(
   throw new Error('无法读取目标元素的实时点击区域');
 }
 
+async function longPressLocatedElement(
+  sessionId: string,
+  deviceId: string,
+  elementId: string,
+  step: AppiumRecordedStepRecord,
+  duration: number,
+) {
+  try {
+    const payload = await appiumNodeRequest<AppiumValueResponse<VisualChangeRegion>>(`/session/${sessionId}/element/${elementId}/rect`);
+    const rect = payload.value;
+    if (rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0) {
+      const x = rect.x + rect.width / 2;
+      const y = rect.y + rect.height / 2;
+      await adbSwipe(deviceId, { startX: x, startY: y, endX: x, endY: y, duration });
+      return;
+    }
+  } catch (error) {
+    throwIfReplayStopped(error);
+    if (isStaleElementError(error)) throw error;
+  }
+  if (!hasUsableFallbackCoordinates(step)) {
+    throw new Error('无法读取目标元素的实时长按区域');
+  }
+  const x = Number(step.fallback.centerX);
+  const y = Number(step.fallback.centerY);
+  await adbSwipe(deviceId, { startX: x, startY: y, endX: x, endY: y, duration });
+}
+
 async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord) {
   const startedAt = Date.now();
   const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
   let lastError: unknown;
-  while (Date.now() - startedAt <= timeoutMs) {
+  let attempted = false;
+  while (true) {
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0 || (attempted && remaining < MIN_ELEMENT_ATTEMPT_BUDGET_MS)) break;
+    attempted = true;
     try {
-      return await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
+      return await findElement(sessionId, step, remaining);
     } catch (error) {
       throwIfReplayStopped(error);
       lastError = error;
-      await wait(500);
+      const pauseMs = Math.min(500, timeoutMs - (Date.now() - startedAt));
+      if (pauseMs > 0) await wait(pauseMs);
     }
   }
   throw new ConditionTimeoutError(`${step.label} 等待元素超时（${timeoutMs}ms）：${errorDetail(lastError)}`);
@@ -585,28 +686,50 @@ async function waitForElement(sessionId: string, step: AppiumRecordedStepRecord)
 async function findOptionalElement(sessionId: string, step: AppiumRecordedStepRecord) {
   const startedAt = Date.now();
   const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
-  while (Date.now() - startedAt <= timeoutMs) {
+  let attempted = false;
+  while (true) {
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0 || (attempted && remaining < MIN_ELEMENT_ATTEMPT_BUDGET_MS)) return '';
+    attempted = true;
     try {
-      return await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
+      return await findElement(sessionId, step, remaining);
     } catch (error) {
       throwIfReplayStopped(error);
-      await wait(250);
+      const pauseMs = Math.min(250, timeoutMs - (Date.now() - startedAt));
+      if (pauseMs > 0) await wait(pauseMs);
     }
   }
-  return '';
+}
+
+async function findOptionalElementWithRecovery(
+  sessionId: string,
+  deviceId: string,
+  step: AppiumRecordedStepRecord,
+) {
+  try {
+    return { elementId: await findOptionalElement(sessionId, step), recovered: false as const };
+  } catch (error) {
+    if (!(error instanceof AppiumRequestTimeoutError)) throw error;
+    return { bounds: await recoverOptionalLookup(deviceId, sessionId, step), recovered: true as const };
+  }
 }
 
 async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRecord) {
   const startedAt = Date.now();
   const timeoutMs = step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS;
-  while (Date.now() - startedAt <= timeoutMs) {
+  let attempted = false;
+  while (true) {
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0 || (attempted && remaining < MIN_ELEMENT_ATTEMPT_BUDGET_MS)) break;
+    attempted = true;
     try {
-      await findElement(sessionId, step, Math.max(1, timeoutMs - (Date.now() - startedAt)));
+      await findElement(sessionId, step, remaining);
     } catch (error) {
       throwIfReplayStopped(error);
       return;
     }
-    await wait(500);
+    const pauseMs = Math.min(500, timeoutMs - (Date.now() - startedAt));
+    if (pauseMs > 0) await wait(pauseMs);
   }
   throw new ConditionTimeoutError(`${step.label} 等待消失超时`);
 }
@@ -814,7 +937,7 @@ async function runStep(
     if (!scope) throw new Error('变量作用域未初始化');
     const elementId = await findElement(sessionId, step);
     const endpoint = config.attribute === 'text' ? 'text' : `attribute/${encodeURIComponent(config.attribute)}`;
-    const payload = await appiumRequest<AppiumValueResponse<unknown>>(`/session/${sessionId}/element/${elementId}/${endpoint}`);
+    const payload = await appiumNodeRequest<AppiumValueResponse<unknown>>(`/session/${sessionId}/element/${elementId}/${endpoint}`);
     if (payload.value === null || payload.value === undefined) throw new Error(`组件不存在属性：${config.attribute}`);
     scope.set({ name: config.name, value: String(payload.value), sensitive: config.sensitive }, true);
     return `已提取变量：${config.name}`;
@@ -830,10 +953,7 @@ async function runStep(
   }
 
   if (step.type === 'key') {
-    await appiumRequest(`/session/${sessionId}/appium/device/press_keycode`, {
-      method: 'POST',
-      body: JSON.stringify({ keycode: step.keyCode || 4 }),
-    });
+    await adbKey(deviceId, step.keyCode || 4);
     return;
   }
 
@@ -893,11 +1013,26 @@ async function runStep(
     if (error) throw new Error(`${step.label}：${error}`);
     const duration = step.timeoutMs ?? 800;
     if (longPressMode(step) === 'element') {
-      const elementId = await findElement(sessionId, step);
-      await appiumRequest(`/session/${sessionId}/execute/sync`, {
-        method: 'POST',
-        body: JSON.stringify({ script: 'mobile: longClickGesture', args: [{ elementId, duration }] }),
-      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const elementId = await findElement(sessionId, step);
+          await longPressLocatedElement(sessionId, deviceId, elementId, step, duration);
+          return `已长按元素 ${duration}ms`;
+        } catch (error) {
+          throwIfReplayStopped(error);
+          if (attempt === 0 && isStaleElementError(error)) {
+            await wait(300);
+            continue;
+          }
+          if (isStaleElementError(error) && hasUsableFallbackCoordinates(step)) {
+            const x = Number(step.fallback.centerX);
+            const y = Number(step.fallback.centerY);
+            await adbSwipe(deviceId, { startX: x, startY: y, endX: x, endY: y, duration });
+            return `实时元素已失效，已按录制坐标长按 ${duration}ms`;
+          }
+          throw error;
+        }
+      }
       return `已长按元素 ${duration}ms`;
     }
     const x = Number(step.fallback!.centerX);
@@ -909,7 +1044,7 @@ async function runStep(
   if (step.type === 'pinch') {
     if (!step.pinch) throw new Error(`${step.label} 缺少缩放参数`);
     const size = Math.round(Math.min(500, Math.max(120, step.pinch.centerX, step.pinch.centerY)));
-    await appiumRequest(`/session/${sessionId}/execute/sync`, {
+    await appiumNodeRequest(`/session/${sessionId}/execute/sync`, {
       method: 'POST',
       body: JSON.stringify({
         script: step.pinch.direction === 'out' ? 'mobile: pinchOpenGesture' : 'mobile: pinchCloseGesture',
@@ -931,16 +1066,22 @@ async function runStep(
   }
 
   if (step.type === 'tapIfExists') {
-    const elementId = await findOptionalElement(sessionId, step);
-    if (!elementId) return '未出现，已跳过';
-    await tapLocatedElement(sessionId, deviceId, elementId, step);
+    const lookup = await findOptionalElementWithRecovery(sessionId, deviceId, step);
+    if (lookup.recovered) {
+      if (!lookup.bounds) return '自动化会话已恢复，ADB 组件树未发现目标，已跳过';
+      await adbTap(deviceId, lookup.bounds.centerX, lookup.bounds.centerY);
+      return '自动化会话已恢复，ADB 组件树发现目标并已点击';
+    }
+    if (!lookup.elementId) return '未出现，已跳过';
+    await tapLocatedElement(sessionId, deviceId, lookup.elementId, step);
     return '已出现，已点击';
   }
 
   if (step.type === 'inputIfExists') {
-    const elementId = await findOptionalElement(sessionId, step);
-    if (!elementId) return '未出现，已跳过';
-    await appiumRequest(`/session/${sessionId}/element/${elementId}/value`, {
+    const lookup = await findOptionalElementWithRecovery(sessionId, deviceId, step);
+    if (lookup.recovered) return lookup.bounds ? '自动化会话已恢复，目标存在但无法安全输入，已跳过' : '自动化会话已恢复，目标未出现，已跳过';
+    if (!lookup.elementId) return '未出现，已跳过';
+    await appiumNodeRequest(`/session/${sessionId}/element/${lookup.elementId}/value`, {
       method: 'POST',
       body: JSON.stringify({ text: step.value || '', value: [...(step.value || '')] }),
     });
@@ -948,9 +1089,10 @@ async function runStep(
   }
 
   if (step.type === 'clearIfExists') {
-    const elementId = await findOptionalElement(sessionId, step);
-    if (!elementId) return '未出现，已跳过';
-    await appiumRequest(`/session/${sessionId}/element/${elementId}/clear`, {
+    const lookup = await findOptionalElementWithRecovery(sessionId, deviceId, step);
+    if (lookup.recovered) return lookup.bounds ? '自动化会话已恢复，目标存在但无法安全清空，已跳过' : '自动化会话已恢复，目标未出现，已跳过';
+    if (!lookup.elementId) return '未出现，已跳过';
+    await appiumNodeRequest(`/session/${sessionId}/element/${lookup.elementId}/clear`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
@@ -958,13 +1100,11 @@ async function runStep(
   }
 
   if (step.type === 'backIfExists') {
-    const elementId = await findOptionalElement(sessionId, step);
-    if (!elementId) return '未出现，已跳过';
-    await appiumRequest(`/session/${sessionId}/appium/device/press_keycode`, {
-      method: 'POST',
-      body: JSON.stringify({ keycode: 4 }),
-    });
-    return '已出现，已返回';
+    const lookup = await findOptionalElementWithRecovery(sessionId, deviceId, step);
+    if (lookup.recovered && !lookup.bounds) return '自动化会话已恢复，目标未出现，已跳过';
+    if (!lookup.recovered && !lookup.elementId) return '未出现，已跳过';
+    await adbKey(deviceId, 4);
+    return lookup.recovered ? '自动化会话已恢复，ADB 组件树发现目标并已返回' : '已出现，已返回';
   }
 
   if (step.type === 'waitFor' || step.type === 'assertExists') {
@@ -974,7 +1114,7 @@ async function runStep(
 
   if (step.type === 'assertText') {
     const elementId = await findElement(sessionId, step);
-    const payload = await appiumRequest<AppiumValueResponse<string>>(`/session/${sessionId}/element/${elementId}/text`);
+    const payload = await appiumNodeRequest<AppiumValueResponse<string>>(`/session/${sessionId}/element/${elementId}/text`);
     const actual = payload.value || '';
     if (!actual.includes(step.value || '')) throw new Error(`${step.label} 不匹配，实际文本：${actual || '-'}`);
     return;
@@ -1003,7 +1143,7 @@ async function runStep(
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const elementId = await findElement(sessionId, step);
-        await appiumRequest(`/session/${sessionId}/element/${elementId}/value`, {
+        await appiumNodeRequest(`/session/${sessionId}/element/${elementId}/value`, {
           method: 'POST',
           body: JSON.stringify({ text: step.value || '', value: [...(step.value || '')] }),
         });
@@ -1021,7 +1161,7 @@ async function runStep(
 
   if (step.type === 'clearInput') {
     const elementId = await findElement(sessionId, step);
-    await appiumRequest(`/session/${sessionId}/element/${elementId}/clear`, {
+    await appiumNodeRequest(`/session/${sessionId}/element/${elementId}/clear`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
@@ -1032,7 +1172,7 @@ async function readNativeControlState(sessionId: string, step: AppiumRecordedSte
   if (!isNativeStateCondition(step)) throw new Error('不是原生控件状态判断节点');
   const elementId = await waitForElement(sessionId, step);
   const attribute = async (name: string) => (
-    await appiumRequest<AppiumValueResponse<unknown>>(`/session/${sessionId}/element/${elementId}/attribute/${name}`)
+    await appiumNodeRequest<AppiumValueResponse<unknown>>(`/session/${sessionId}/element/${elementId}/attribute/${name}`)
   ).value;
   const className = await attribute('className');
   if (!matchesNativeControl(step.type, className)) {
@@ -1051,20 +1191,34 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
   if (step.type === 'loop') {
     if (step.loop?.exitWhen === 'never') return false;
     const selector = toAppiumUsing(step.selector!);
-    const payload = await appiumRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
-      method: 'POST', body: JSON.stringify(selector),
-    });
+    const payload = await withElementDeadline(step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS, () => (
+      appiumNodeRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
+        method: 'POST', body: JSON.stringify(selector),
+      })
+    ));
     if (!Array.isArray(payload.value)) throw new Error('循环退出条件查询返回了无效结果');
     return step.loop?.exitWhen === 'exists' ? payload.value.length > 0 : payload.value.length === 0;
   }
   if (step.type === 'textClick') {
     const selector = textClickSelector(step);
-    const deadline = Date.now() + Math.max(0, step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS);
+    const timeoutMs = Math.max(0, step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS);
+    const deadline = Date.now() + timeoutMs;
+    let attempted = false;
+    const timeoutResult = () => {
+      if (step.timeoutMs === 0) return false;
+      throw new ConditionTimeoutError(`文字点击等待匹配超时（${timeoutMs}ms）`);
+    };
     // 查询空结果才是未匹配；通信错误、重复匹配和点击失败走现有异常处理。
     do {
-      const payload = await appiumRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
-        method: 'POST', body: JSON.stringify(selector),
-      });
+      const remaining = deadline - Date.now();
+      if (attempted && (remaining <= 0 || remaining < MIN_ELEMENT_ATTEMPT_BUDGET_MS)) return timeoutResult();
+      attempted = true;
+      const requestBudget = timeoutMs === 0 ? DEFAULT_NODE_TIMEOUT_MS : remaining;
+      const payload = await withElementDeadline(requestBudget, () => (
+        appiumNodeRequest<AppiumValueResponse<Record<string, string>[]>>(`/session/${sessionId}/elements`, {
+          method: 'POST', body: JSON.stringify(selector),
+        })
+      ));
       if (!Array.isArray(payload.value)) throw new Error('文字点击查询返回了无效结果');
       if (payload.value.length > 1) throw new Error(`匹配到 ${payload.value.length} 个文字元素，请使用更精确的文字`);
       if (payload.value.length === 1) {
@@ -1074,10 +1228,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
         await tapLocatedElement(sessionId, deviceId, id);
         return true;
       }
-      if (Date.now() >= deadline) {
-        if (step.timeoutMs === 0) return false;
-        throw new ConditionTimeoutError(`文字点击等待匹配超时（${step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS}ms）`);
-      }
+      if (timeoutMs === 0 || Date.now() >= deadline) return timeoutResult();
       await wait(Math.max(0, Math.min(500, deadline - Date.now())));
     } while (true);
   }
@@ -1094,7 +1245,7 @@ async function evaluateCondition(sessionId: string, deviceId: string, step: Appi
     }
     if (step.type === 'assertText' || (step.type === 'assertExists' && step.value)) {
       const elementId = await waitForElement(sessionId, step);
-      const payload = await appiumRequest<AppiumValueResponse<string>>(`/session/${sessionId}/element/${elementId}/text`);
+      const payload = await appiumNodeRequest<AppiumValueResponse<string>>(`/session/${sessionId}/element/${elementId}/text`);
       const actualText = payload.value || '';
       const expectedText = step.value || '';
       return step.flow?.textMatch === 'exact'
@@ -1574,6 +1725,7 @@ export async function replayAppiumScript(
     visualCaptureNodes: new Set([script, ...scripts.values()].flatMap(item => item.steps.flatMap(step =>
       step.visualChange ? [step.id, step.visualChange.startStepId || '', step.visualChange.endStepId || ''] : []))),
     signal,
+    sessionId: '',
     appiumLog: (line) => { if (!scope.privacy.enabled) lines.push(line); },
     serverUrl: configuredAppiumServerUrl(),
     deviceId: targetDeviceId,
@@ -1625,6 +1777,7 @@ export async function replayAppiumScript(
         await resetUiAutomator2(targetDeviceId);
         sessionId = await createSession(targetDeviceId);
       }
+      context.sessionId = sessionId;
       if (!managedAppium) {
         const heartbeatAbort = new AbortController();
         let heartbeatTask: Promise<unknown> | undefined;

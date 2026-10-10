@@ -19,6 +19,7 @@ import {
   linkedScriptSnapshot,
   getAppiumRecordedScript,
   importAppiumRecordedScript,
+  importAppiumRecordedScripts,
   listAppiumRecordedScripts,
   saveAppiumRecordedScript,
   type AppiumRecordedStepRecord,
@@ -322,7 +323,20 @@ export async function handleAppiumRecorderRequest(
     if (pathname === '/api/appium-recorder/scripts/import' && req.method === 'POST') {
       const parsed = await readBody<{
         schemaVersion?: number;
+        files?: Array<{
+          schemaVersion?: number;
+          script?: {
+            id?: string;
+            name?: string;
+            appPackage?: string;
+            appActivity?: string;
+            deviceId?: string;
+            steps?: AppiumRecordedStepRecord[];
+            variables?: TestVariable[];
+          };
+        }>;
         script?: {
+          id?: string;
           name?: string;
           appPackage?: string;
           appActivity?: string;
@@ -331,22 +345,31 @@ export async function handleAppiumRecorderRequest(
           variables?: TestVariable[];
         };
       }>(req);
-      const imported = parsed.script;
-      if (!imported || typeof imported !== 'object') throw new Error('导入文件缺少 script 数据');
-      if (!Array.isArray(imported.steps)) throw new Error('导入文件的 steps 格式无效');
-      const invalidStep = imported.steps.some((step) => (
-        !step || typeof step !== 'object' || typeof step.id !== 'string' || typeof step.type !== 'string'
-      ));
-      if (invalidStep) throw new Error('导入文件包含无效节点');
-      const script = importAppiumRecordedScript({
-        name: imported.name || '',
-        appPackage: imported.appPackage || '',
-        appActivity: imported.appActivity || '',
-        deviceId: imported.deviceId || '',
-        steps: imported.steps,
-        variables: imported.variables,
+      const files = Array.isArray(parsed.files) ? parsed.files : [parsed];
+      if (!files.length) throw new Error('没有可导入的脚本文件');
+      const imports = files.map((file, index) => {
+        const imported = file.script;
+        const prefix = files.length > 1 ? `第 ${index + 1} 个导入文件` : '导入文件';
+        if (!imported || typeof imported !== 'object') throw new Error(`${prefix}缺少 script 数据`);
+        if (!Array.isArray(imported.steps)) throw new Error(`${prefix}的 steps 格式无效`);
+        const invalidStep = imported.steps.some((step) => (
+          !step || typeof step !== 'object' || typeof step.id !== 'string' || typeof step.type !== 'string'
+        ));
+        if (invalidStep) throw new Error(`${prefix}包含无效节点`);
+        return {
+          sourceId: imported.id || '',
+          name: imported.name || '',
+          appPackage: imported.appPackage || '',
+          appActivity: imported.appActivity || '',
+          deviceId: imported.deviceId || '',
+          steps: imported.steps,
+          variables: imported.variables,
+        };
       });
-      sendJson(res, { script });
+      const scripts = files.length === 1
+        ? [importAppiumRecordedScript(imports[0])]
+        : importAppiumRecordedScripts(imports);
+      sendJson(res, { script: scripts[0], scripts });
       return true;
     }
 

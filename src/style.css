@@ -1243,10 +1243,11 @@ select {
   max-height: 260px;
   margin: 0;
   padding: 12px;
-  border: 1px solid var(--ui-border);
+  border: 1px solid #3c3c3c;
   border-radius: 6px;
-  background: #fff;
-  color: #475569;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
   line-height: 1.6;
   overflow: auto;
@@ -1282,23 +1283,14 @@ select {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding: 16px 20px 0;
-}
-
-.appium-replay-dialog > .el-dialog__header {
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--ui-border);
-}
-
-.appium-replay-dialog > .el-dialog__footer {
-  padding: 12px 20px 18px;
+  padding: 20px;
 }
 
 .appium-replay-dialog .appium-replay-output {
-  border-color: #263244;
-  background: #101722;
-  color: #d7e0ea;
-  scrollbar-color: #526174 #101722;
+  border-color: #3c3c3c;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  scrollbar-color: #424242 #1e1e1e;
 }
 
 .appium-replay-dialog .appium-replay-output::-webkit-scrollbar {
@@ -1307,13 +1299,22 @@ select {
 }
 
 .appium-replay-dialog .appium-replay-output::-webkit-scrollbar-track {
-  background: #101722;
+  background: #1e1e1e;
 }
 
 .appium-replay-dialog .appium-replay-output::-webkit-scrollbar-thumb {
-  border: 2px solid #101722;
+  border: 2px solid #1e1e1e;
   border-radius: 6px;
-  background: #526174;
+  background: #424242;
+}
+
+.appium-replay-dialog .appium-replay-output::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+.appium-replay-output::selection {
+  background: #264f78;
+  color: #ffffff;
 }
 
 .appium-replay-fab {
@@ -1854,13 +1855,6 @@ select {
 .code-dialog__body {
   height: min(68vh, 720px);
   max-height: min(68vh, 720px);
-}
-
-.code-dialog__toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 12px;
 }
 
 .code-dialog__editor .el-textarea__inner {
@@ -2619,7 +2613,7 @@ select {
 
 @media (max-width: 520px) {
   .appium-replay-dialog.el-dialog {
-    min-width: calc(100vw - 24px);
+    min-width: calc(100vw - 32px);
   }
 
   .appium-replay-fab {
@@ -2873,13 +2867,16 @@ select {
 
 .appium-flow-step-shell {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   width: 340px;
 }
 
 .appium-flow-step-card {
+  grid-area: 1 / 1;
   width: 340px;
   min-height: 78px;
-  padding: 10px 96px 10px 14px;
+  padding: 10px 14px;
   border: 1px solid #dfe8f3;
   border-radius: 8px;
   background: #fff;
@@ -2887,6 +2884,10 @@ select {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.appium-flow-step-shell:has(> .appium-flow-step-card__actions) > .appium-flow-step-card {
+  padding-bottom: 44px;
 }
 
 .appium-flow-step-shell--readonly .appium-flow-step-card {
@@ -2956,9 +2957,11 @@ select {
 }
 
 .appium-flow-step-card__actions {
-  position: absolute;
-  top: 11px;
-  right: 10px;
+  grid-area: 1 / 1;
+  position: relative;
+  align-self: end;
+  justify-self: end;
+  margin: 0 10px 10px;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -2972,6 +2975,7 @@ select {
 }
 
 .appium-flow-step-editor {
+  grid-area: 2 / 1;
   width: 340px;
   margin-top: 8px;
   border-color: #dfe8f3;
@@ -3242,6 +3246,10 @@ body {
 }
 
 .el-dialog {
+  --el-dialog-padding-primary: 0;
+  padding: 0;
+  margin-bottom: 24px;
+  max-width: calc(100vw - 32px);
   overflow: hidden;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius);
@@ -3249,14 +3257,32 @@ body {
 }
 
 .el-dialog__header {
-  padding: 18px 20px 14px;
+  margin-right: 0;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--ui-border);
+}
+
+.el-dialog__header.show-close {
+  padding-right: 64px;
+}
+
+.el-dialog__headerbtn {
+  top: 8px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--ui-radius-control);
+}
+
+.el-dialog__headerbtn:hover {
+  background: #eff6ff;
 }
 
 .el-dialog__title {
   color: var(--ui-text);
   font-size: 16px;
   font-weight: 650;
+  line-height: 24px;
 }
 
 .el-dialog__body {
@@ -3264,7 +3290,9 @@ body {
 }
 
 .el-dialog__footer {
-  padding: 12px 20px 18px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--ui-border);
+  background: #f8fafc;
 }
 
 .el-message-box {
@@ -3440,11 +3468,54 @@ body {
 
 .code-block,
 .terminal-block,
-.generator-code-editor .el-textarea__inner,
-.code-dialog__editor .el-textarea__inner {
+.generator-code-editor .el-textarea__inner {
   background: #f8fafc;
   color: #334155;
   border: 1px solid var(--ui-border);
+}
+
+.code-dialog__body,
+.code-dialog__editor .el-textarea__inner {
+  box-sizing: border-box;
+  border: 1px solid #3c3c3c;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  scrollbar-color: #424242 #1e1e1e;
+}
+
+.code-dialog__body {
+  white-space: pre;
+}
+
+.code-dialog__body::-webkit-scrollbar,
+.code-dialog__editor .el-textarea__inner::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.code-dialog__body::-webkit-scrollbar-track,
+.code-dialog__editor .el-textarea__inner::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+.code-dialog__body::-webkit-scrollbar-thumb,
+.code-dialog__editor .el-textarea__inner::-webkit-scrollbar-thumb {
+  border: 2px solid #1e1e1e;
+  border-radius: 6px;
+  background: #424242;
+}
+
+.code-dialog__body::-webkit-scrollbar-thumb:hover,
+.code-dialog__editor .el-textarea__inner::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+.code-dialog__body::selection,
+.code-dialog__body code::selection,
+.code-dialog__editor .el-textarea__inner::selection {
+  background: #264f78;
+  color: #fff;
 }
 
 .automation-layout,
@@ -3567,9 +3638,14 @@ body {
 
 .appium-replay-output--dialog {
   border-radius: var(--ui-radius-control);
-  background: #f8fafc;
-  color: #334155;
-  border: 1px solid var(--ui-border);
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #3c3c3c;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    inset 0 4px 12px rgb(0 0 0 / 32%),
+    0 4px 10px rgb(15 23 42 / 12%),
+    0 18px 30px -20px rgb(15 23 42 / 45%);
 }
 
 .el-button.recorder-panel-tool {
@@ -3600,23 +3676,12 @@ body {
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
 }
 
-.appium-flow-dialog .el-dialog__header {
-  flex: none;
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--ui-border);
-}
-
-.appium-flow-dialog .el-dialog__title {
-  font-size: 16px;
-  font-weight: 650;
-}
-
 .appium-flow-dialog .el-dialog__body {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 16px 20px 20px;
+  padding: 20px;
 }
 
 .appium-flow-dialog__toolbar { flex: none; }
@@ -3629,8 +3694,26 @@ body {
   min-height: 0;
 }
 
-.appium-flow-dialog .el-dialog__footer {
-  padding: 16px 0 0;
+.appium-flow-dialog .appium-flow-canvas--dialog.appium-flow-canvas--vue,
+.appium-linked-script-preview-dialog .appium-linked-script-preview-canvas.appium-flow-canvas--vue {
+  border-color: rgb(100 116 139 / 32%);
+  box-shadow:
+    0 3px 7px rgb(15 23 42 / 9%),
+    0 18px 34px -20px rgb(15 23 42 / 38%);
+}
+
+.appium-flow-dialog .appium-flow-canvas--dialog.appium-flow-canvas--vue::after,
+.appium-linked-script-preview-dialog .appium-linked-script-preview-canvas.appium-flow-canvas--vue::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 4px 10px rgb(15 23 42 / 12%),
+    inset 0 1px 2px rgb(15 23 42 / 10%),
+    inset 0 -2px 3px rgb(255 255 255 / 82%);
 }
 
 .appium-recorded-steps-panel .el-button,
@@ -3900,6 +3983,19 @@ button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2p
 .layout .generator-code-block, .layout .execution-log, .layout .execution-process,
 .layout .appium-flow-editor, .layout .device-preview {
   box-shadow: var(--ui-shadow-inset);
+}
+.layout .appium-flow-canvas--vue:not(.appium-flow-canvas--dialog) {
+  border-color: rgb(100 116 139 / 25%);
+  box-shadow: 0 2px 4px rgb(15 23 42 / 6%), 0 10px 24px -12px rgb(15 23 42 / 20%);
+}
+.layout .appium-flow-canvas--vue:not(.appium-flow-canvas--dialog)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 3px 8px rgb(15 23 42 / 10%), inset 0 1px 2px rgb(15 23 42 / 8%), inset 0 -2px 3px rgb(255 255 255 / 75%);
 }
 .layout .app-preset-row, .layout .script-row {
   background-image: linear-gradient(180deg, #fff, #f8fafc);

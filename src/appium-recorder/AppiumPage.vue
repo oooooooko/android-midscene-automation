@@ -26,7 +26,7 @@ import {
   downloadAppiumScript,
   getAppiumScripts,
   getAppiumTree,
-  importAppiumScript,
+  importAppiumScripts,
   launchAppiumDeviceApp,
   replayAppiumScript,
   saveAppiumScript,
@@ -2053,23 +2053,67 @@ async function downloadScript(script: AppiumRecordedScript) {
 }
 
 function chooseScriptImportFile() {
+  if (importingScript.value) return;
   scriptImportInput.value?.click();
 }
 
 async function importScriptFile(event: Event) {
   const input = event.currentTarget as HTMLInputElement;
-  const file = input.files?.[0];
+  const files = Array.from(input.files || []);
   input.value = '';
-  if (!file) return;
+  if (!files.length) return;
   importingScript.value = true;
+
+  const importedScripts: AppiumRecordedScript[] = [];
+  const failedFiles: Array<{ name: string; reason: string }> = [];
   try {
-    const payload = JSON.parse(await file.text()) as unknown;
-    const result = await importAppiumScript(payload);
-    await loadScripts();
-    loadScript(result.script);
-    ElMessage.success(`脚本「${result.script.name}」已导入`);
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '导入脚本失败');
+    const parsedFiles: Array<{ name: string; payload: unknown }> = [];
+    for (const file of files) {
+      try {
+        const payload = JSON.parse(await file.text()) as unknown;
+        parsedFiles.push({ name: file.name, payload });
+      } catch (error) {
+        failedFiles.push({
+          name: file.name,
+          reason: error instanceof Error ? error.message : '文件格式无效',
+        });
+      }
+    }
+
+    if (parsedFiles.length) {
+      try {
+        const result = await importAppiumScripts(parsedFiles.map(item => item.payload));
+        importedScripts.push(...result.scripts);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : '导入失败';
+        failedFiles.push(...parsedFiles.map(file => ({ name: file.name, reason })));
+      }
+    }
+
+    if (importedScripts.length) {
+      try {
+        await loadScripts();
+      } catch (error) {
+        ElMessage.warning(`脚本已导入，但刷新列表失败：${error instanceof Error ? error.message : '未知错误'}`);
+        return;
+      }
+    }
+
+    if (!failedFiles.length) {
+      ElMessage.success(files.length === 1
+        ? `脚本「${importedScripts[0].name}」已导入`
+        : `已成功导入 ${importedScripts.length} 个脚本`);
+      return;
+    }
+
+    const failedSummary = failedFiles
+      .map(({ name, reason }) => `${name}（${reason}）`)
+      .join('；');
+    if (importedScripts.length) {
+      ElMessage.warning(`已导入 ${importedScripts.length} 个脚本，${failedFiles.length} 个失败：${failedSummary}`);
+    } else {
+      ElMessage.error(`导入失败：${failedSummary}`);
+    }
   } finally {
     importingScript.value = false;
   }
@@ -2374,7 +2418,7 @@ watch(
           <el-tab-pane label="脚本列表" name="scripts">
             <div class="appium-script-list">
               <div class="appium-script-list__toolbar">
-                <el-tooltip content="导入脚本" placement="top" :show-after="200"><span class="appium-script-icon">
+                <el-tooltip content="导入脚本（支持多选）" placement="top" :show-after="200"><span class="appium-script-icon">
                   <el-button size="small" :icon="Upload" aria-label="导入脚本" :loading="importingScript" @click="chooseScriptImportFile" />
                 </span></el-tooltip>
                 <input
@@ -2382,6 +2426,7 @@ watch(
                   class="appium-script-list__file-input"
                   type="file"
                   accept="application/json,.json"
+                  multiple
                   @change="importScriptFile"
                 >
               </div>
@@ -2520,7 +2565,8 @@ watch(
     <el-dialog
       v-model="linkedScriptDialogVisible"
       title="连接脚本"
-      width="520px"
+      width="640px"
+      class="appium-linked-script-dialog"
       align-center
       @closed="closeLinkedScriptDialog"
     >
