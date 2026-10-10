@@ -1,4 +1,5 @@
 import { getTestAnalytics } from './analytics';
+import { getArtemisStatus, getArtemisVersion } from './artemis';
 import { readBody, readRawBody, requestErrorStatus } from './request-body';
 import { canManageConfig, publicConfig, resolveSavedModelKey } from './config-access';
 import { resolveReportSummary } from '../src/appium-recorder/report-summary';
@@ -615,6 +616,17 @@ export function createApiMiddleware() {
     const requestUrl = new URL(req.url || '/', 'http://localhost');
     const pathname = requestUrl.pathname;
     const allowLocalDevice = isLocalRequest(req);
+    if (['/api/artemis/status', '/api/artemis/version'].includes(pathname) && req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      if (!canManageConfig(req)) {
+        res.statusCode = 403;
+        res.end(JSON.stringify({ message: 'Artemis 集成仅允许在本机页面访问' }));
+      } else {
+        res.end(JSON.stringify(await (pathname.endsWith('/version') ? getArtemisVersion() : getArtemisStatus())));
+      }
+      return;
+    }
     if ((pathname === '/api/config' || pathname.startsWith('/api/config/') || pathname === '/api/test-model') && !canManageConfig(req)) {
       res.statusCode = 403;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue';
-import { InfoFilled, QuestionFilled, Tools, Refresh, Monitor, Cpu, Cellphone } from '@element-plus/icons-vue';
-import { getAppiumVersion } from '../../api';
+import { InfoFilled, QuestionFilled, Tools, Refresh, Cpu, Cellphone } from '@element-plus/icons-vue';
+import { getAppiumVersion, getArtemisVersion } from '../../api';
 import type { AppiumVersionInfo } from '../../types';
 import changelog from '../../../CHANGELOG.md?raw';
 import faq from '../../../FAQ.md?raw';
@@ -11,11 +11,13 @@ import operationGuide from '../../../USAGE.md?raw';
 import packageText from '../../../package.json?raw';
 import MarkdownDocument from './MarkdownDocument.vue';
 
-type PackageInfo = { version?: string; dependencies?: Record<string, string> };
+type PackageInfo = { dependencies?: Record<string, string> };
 type OperationSection = { id: string; title: string; content: string };
 
 const props = defineProps<{ active: boolean }>();
 const appiumVersion = shallowRef<AppiumVersionInfo | null>(null);
+const artemisVersion = shallowRef<Awaited<ReturnType<typeof getArtemisVersion>> | null>(null);
+const artemisVersionError = shallowRef('');
 const loadingVersion = shallowRef(false);
 const versionError = shallowRef('');
 let checkedAt = 0;
@@ -24,11 +26,20 @@ async function refreshVersion(force = true) {
   if (loadingVersion.value) return;
   loadingVersion.value = true;
   versionError.value = '';
+  artemisVersionError.value = '';
   try {
-    appiumVersion.value = await getAppiumVersion();
-    checkedAt = Date.now();
-  } catch {
-    versionError.value = '无法读取版本信息，请检查后端连接后刷新';
+    const [appium, artemis] = await Promise.allSettled([getAppiumVersion(), getArtemisVersion()]);
+    if (appium.status === 'fulfilled') appiumVersion.value = appium.value;
+    else {
+      appiumVersion.value = null;
+      versionError.value = '无法读取 Appium 版本，请检查后端连接后刷新';
+    }
+    if (artemis.status === 'fulfilled') artemisVersion.value = artemis.value;
+    else {
+      artemisVersion.value = null;
+      artemisVersionError.value = '无法读取 Artemis 版本，请检查后端连接后刷新';
+    }
+    if (appium.status === 'fulfilled' && artemis.status === 'fulfilled') checkedAt = Date.now();
   } finally {
     loadingVersion.value = false;
   }
@@ -42,23 +53,26 @@ const operationType = shallowRef<OperationType>('midscene');
 const activeOperation = shallowRef('');
 const packageInfo = JSON.parse(packageText) as PackageInfo;
 const dependencyVersion = (name: string) => packageInfo.dependencies?.[name]?.match(/(\d+\.\d+\.\d+)/)?.[1] ?? '未知';
-const appVersion = packageInfo.version ?? '未知';
 const midsceneVersion = dependencyVersion('@midscene/core');
 
 const versions = computed(() => [
-  { name: '应用版本', version: `v${appVersion}`, description: '移动自动化控制台', icon: Monitor },
-  { name: 'Midscene', version: `v${midsceneVersion}`, description: 'AI 驱动的界面理解与自动化', icon: Cpu },
+  { name: 'Midscene', version: `v${midsceneVersion}`, status: '当前项目依赖版本', icon: Cpu,
+    description: '通过视觉模型理解界面，用自然语言完成操作、数据提取与断言，减少对固定元素定位的依赖。',
+    scenarios: ['自然语言编写测试步骤', '界面内容识别与智能断言', '快速验证 Android 操作流程'],
+    integration: '本项目保留脚本生成与自动化功能，已停止日常维护，建议使用官方版本。',
+    url: 'https://midscenejs.com/zh/' },
   { name: 'Appium', version: appiumVersion.value?.version ? `v${appiumVersion.value.version}` : loadingVersion.value ? '检测中…' : '未获取',
-    description: loadingVersion.value ? '正在读取当前环境版本' : versionError.value || appiumVersion.value?.message || '等待检测', icon: Cellphone },
-]);
-
-const technologies = computed(() => [
-  { name: 'Vue', version: dependencyVersion('vue'), description: '界面与交互框架' },
-  { name: 'Element Plus', version: dependencyVersion('element-plus'), description: '界面组件库' },
-  { name: 'Vue Flow', version: dependencyVersion('@vue-flow/core'), description: 'Appium 流程画布' },
-  { name: 'OpenCV.js', version: dependencyVersion('@techstark/opencv-js'), description: '本地图像检测' },
-  { name: 'Vite', version: dependencyVersion('vite'), description: '开发与构建工具' },
-  { name: 'TypeScript', version: dependencyVersion('typescript'), description: '类型与工程开发语言' },
+    status: loadingVersion.value ? '正在读取当前环境版本' : versionError.value || appiumVersion.value?.message || '等待检测', icon: Cellphone,
+    description: '基于 WebDriver 协议和平台驱动的开源 UI 自动化框架，可通过元素定位和明确的操作步骤执行测试。',
+    scenarios: ['固定步骤的重复回归测试', '需要精确定位与流程控制的测试', '长期维护、重复执行的测试脚本'],
+    integration: '本项目提供 Android 录制、流程编排、脚本回放与执行报告。',
+    url: 'https://appium.io/' },
+  { name: 'Artemis', version: artemisVersion.value?.version ? `v${artemisVersion.value.version}` : loadingVersion.value ? '检测中…' : '未获取',
+    status: loadingVersion.value ? '正在读取本地源码版本' : artemisVersionError.value || artemisVersion.value?.message || '等待检测', icon: Cpu,
+    description: '面向 Android 的 AI 自动化工具，根据自然语言任务规划并执行操作，支持跨应用工作流和执行日志记录。',
+    scenarios: ['用任务目标描述端到端流程', '跨应用操作与探索性任务', '与 AI 编程助手配合验证移动应用'],
+    integration: '本项目嵌入独立控制台，模型、设备及任务在 Artemis 中单独配置。',
+    url: 'https://github.com/google/artemis' },
 ]);
 
 const extractOperationSections = (startHeading: string, endHeading: string) => {
@@ -114,16 +128,18 @@ const switchOperationType = (value: OperationType) => {
             <article v-for="item in versions" :key="item.name" class="help-center__version-card">
               <div class="help-center__version-label"><el-icon><component :is="item.icon" /></el-icon><span>{{ item.name }}</span></div>
               <strong>{{ item.version }}</strong>
-              <p>{{ item.description }}</p>
+              <p class="help-center__version-status">{{ item.status }}</p>
+              <div class="help-center__framework-details">
+                <h3>框架简介</h3>
+                <p>{{ item.description }}</p>
+                <h3>适合场景</h3>
+                <ul><li v-for="scenario in item.scenarios" :key="scenario">{{ scenario }}</li></ul>
+                <p class="help-center__integration">{{ item.integration }}</p>
+              </div>
+              <a class="help-center__framework-link" :href="item.url" target="_blank" rel="noopener noreferrer" :aria-label="`${item.name} 官方文档（新窗口打开）`">官方文档 ↗</a>
             </article>
           </div>
-          <h3 class="help-center__section-title">技术栈</h3>
-          <div class="help-center__technology-grid">
-            <div v-for="item in technologies" :key="item.name" class="help-center__technology">
-              <div><strong>{{ item.name }}</strong><el-tag size="small" effect="plain">{{ item.version }}</el-tag></div>
-              <p>{{ item.description }}</p>
-            </div>
-          </div>
+
         </div>
       </el-tab-pane>
       <el-tab-pane name="guide">
@@ -161,16 +177,20 @@ const switchOperationType = (value: OperationType) => {
 .help-center__version-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .help-center__version-heading h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .help-center__versions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.help-center__version-card { min-width: 0; padding: 20px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface); }
+.help-center__version-card { display: flex; flex-direction: column; min-width: 0; padding: 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); }
 .help-center__version-label { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; color: var(--ui-text-secondary); font-size: 14px; }
-.help-center__version-label .el-icon { padding: 8px; box-sizing: content-box; border-radius: 8px; background: var(--el-color-primary-light-9); color: var(--ui-primary); font-size: 18px; }
+.help-center__version-label .el-icon { padding: 8px; box-sizing: content-box; border-radius: var(--ui-radius-control); background: var(--el-color-primary-light-9); color: var(--ui-primary); font-size: 18px; }
 .help-center__version-card strong { display: block; color: var(--ui-text); font-size: 28px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .help-center__version-card p { margin: 10px 0 0; color: var(--ui-text-secondary); font-size: 12px; line-height: 1.6; }
-.help-center__section-title { margin: 24px 0 12px; color: var(--ui-text); font-size: 17px; }
-.help-center__technology-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.help-center__technology { padding: 14px 16px; border: 1px solid var(--ui-border); border-radius: 9px; background: #fff; }
-.help-center__technology > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.help-center__technology p { margin: 6px 0 0; color: var(--ui-text-secondary); font-size: 13px; }
+.help-center__version-card .help-center__version-status { min-height: 38px; color: var(--ui-text-muted); overflow-wrap: anywhere; }
+.help-center__framework-details { flex: 1; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--ui-border); }
+.help-center__framework-details h3 { margin: 0; color: var(--ui-text); font-size: 13px; font-weight: 600; }
+.help-center__framework-details h3:not(:first-child) { margin-top: 18px; }
+.help-center__framework-details ul { margin: 8px 0 0; padding-left: 18px; color: var(--ui-text-secondary); font-size: 12px; line-height: 1.8; }
+.help-center__version-card .help-center__integration { margin-top: 16px; padding: 10px 12px; border-radius: var(--ui-radius-control); background: var(--ui-bg-soft); }
+.help-center__framework-link { align-self: flex-start; margin-top: 16px; color: var(--ui-primary); font-size: 12px; text-decoration: none; }
+.help-center__framework-link:hover { text-decoration: underline; }
+.help-center__framework-link:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 3px; border-radius: 2px; }
 .help-center__operations { padding: 18px 6px 18px 2px; }
 .help-center__operation-types { margin-bottom: 16px; }
 .help-center__operation-menu { border-top: 1px solid var(--ui-border); }
@@ -179,7 +199,6 @@ const switchOperationType = (value: OperationType) => {
 .help-center__operation-menu :deep(.el-collapse-item__wrap) { border-right: 1px solid var(--ui-border); border-left: 1px solid var(--ui-border); }
 .help-center__operation-menu :deep(.el-collapse-item__content) { padding: 4px 18px 18px; }
 @media (max-width: 760px) {
-  .help-center__versions,
-  .help-center__technology-grid { grid-template-columns: 1fr; }
+  .help-center__versions { grid-template-columns: 1fr; }
 }
 </style>

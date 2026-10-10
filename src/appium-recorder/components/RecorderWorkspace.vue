@@ -114,19 +114,19 @@ defineExpose({ showTree, showPreview });
 <style scoped>
 .recorder-workspace { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 8px; }
 .recorder-workspace__toolbar { display: flex; align-items: center; flex: none; gap: 8px; }
-.recorder-workspace__tools { display: flex; }
-.recorder-workspace__tools .el-button { width: 24px; height: 24px; min-height: 24px; padding: 0; font-size: 12px; border-radius: 4px; }
+.recorder-workspace__tools { display: flex; gap: 6px; }
+.recorder-workspace__tools .el-button { width: 24px; height: 24px; min-height: 24px; padding: 0; font-size: 12px; border-radius: 50%; }
 .recorder-workspace__panels { display: grid; position: relative; flex: 1; min-height: 0; }
 .recorder-workspace__panel, .recorder-workspace__main { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .recorder-workspace__panel :deep(> .el-card), .recorder-workspace__main :deep(> .el-card) { flex: 1; min-width: 0; min-height: 0; }
 .recorder-workspace__panel :deep(.el-card__header) { padding: 12px 46px 12px 12px; min-height: 56px; }
 .recorder-workspace__panel :deep(.el-card__body) { padding: 10px; }
 .recorder-workspace__collapse { position: absolute; right: 9px; top: 13px; }
-.recorder-workspace__rail { display: flex; flex-direction: column; align-items: center; gap: 12px; border: 1px solid #dce3e8; border-radius: 4px; background: #fff; color: #475569; padding: 14px 4px; cursor: pointer; }
+.recorder-workspace__rail { display: flex; flex-direction: column; align-items: center; gap: 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-control); background: var(--ui-surface); color: #475569; padding: 14px 4px; cursor: pointer; }
 .recorder-workspace__rail span { writing-mode: vertical-rl; font-size: 13px; }
 .recorder-workspace__separator { cursor: col-resize; touch-action: none; user-select: none; }
 .recorder-workspace__separator:hover, .recorder-workspace__separator:focus-visible { background: #b3d8ff; outline: none; }
 .recorder-workspace__separator.is-disabled { pointer-events: none; }
-.recorder-workspace__panel--drawer { position: absolute; inset: 0 auto 0 0; width: min(340px, 100%); z-index: 22; background: #fff; box-shadow: 3px 0 16px #0002; }
+.recorder-workspace__panel--drawer { position: absolute; inset: 0 auto 0 0; width: min(340px, 100%); z-index: 22; background: var(--ui-surface); box-shadow: var(--ui-shadow-popover); }
 .recorder-workspace__backdrop { position: absolute; inset: 0; border: 0; background: #0003; z-index: 21; }
 </style>

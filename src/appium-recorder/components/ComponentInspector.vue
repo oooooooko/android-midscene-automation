@@ -27,7 +27,7 @@ defineEmits<{ refresh: []; select: [node: AppiumNode] }>();
 .component-inspector :deep(.appium-tree-container) { flex: 1; min-height: 0; }
 .component-inspector :deep(.appium-node-summary) { flex: none; }
 .panel-header { font-size: 14px; gap: 4px; }
-.component-inspector__activity { flex: none; display: flex; min-width: 0; gap: 6px; padding-top: 8px; border-top: 1px solid #e4e7ed; font-size: 12px; color: #606266; }
+.component-inspector__activity { flex: none; display: flex; min-width: 0; gap: 6px; padding-top: 8px; border-top: 1px solid var(--ui-border); font-size: 12px; color: var(--ui-text-secondary); }
 .component-inspector__activity > span { flex-shrink: 0; }
 .component-inspector__activity code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

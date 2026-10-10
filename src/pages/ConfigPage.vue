@@ -128,35 +128,34 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 <style scoped>
 .config-tabs {
   display: flex;
-  width: 100%;
-  max-width: 100%;
+  width: fit-content;
+  max-width: calc(100% - 48px);
   flex-wrap: wrap;
-  gap: 28px;
-  margin: 0;
-  padding: 0 28px;
-  border: 0;
-  border-bottom: 1px solid var(--ui-border);
-  border-radius: 0;
-  background: var(--ui-surface);
+  gap: 4px;
+  margin: 20px 24px 0;
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: 24px;
+  background: var(--ui-bg-soft);
+  box-shadow: var(--ui-shadow-card);
 }
 .config-tabs .subnav__item {
-  min-height: 46px;
-  padding: 10px 2px;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  font-size: 14px;
+  min-height: 34px;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: var(--ui-radius-pill);
+  font-size: 13px;
 }
 .config-tabs .subnav__item--active {
-  border-bottom-color: var(--ui-primary);
-  background: transparent;
+  background: var(--ui-surface);
   color: var(--ui-primary);
-  box-shadow: none;
+  box-shadow: var(--ui-shadow-card);
 }
 .config-page > [role="tabpanel"] { padding: 24px; }
-:deep(.config-module-card > .el-card__header) { padding: 18px 24px; font-size: 16px; font-weight: 500; }
+:deep(.config-module-card > .el-card__header) { padding: 18px 24px; font-size: 16px; font-weight: 600; }
 :deep(.config-module-card > .el-card__body) { padding: 24px; background: var(--ui-surface); }
 :deep(.el-form-item) { margin-bottom: 22px; }
-:deep(.el-form-item__label) { margin-bottom: 8px; font-size: 14px; }
+:deep(.el-form-item__label) { margin-bottom: 8px; font-size: 13px; }
 :deep(.el-input__wrapper), :deep(.el-select__wrapper) { min-height: 36px; }
 :deep(.config-grid) { margin-bottom: 0; gap: 24px; }
 @media (max-width: 1000px) {

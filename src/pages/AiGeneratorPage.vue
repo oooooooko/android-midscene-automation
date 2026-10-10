@@ -241,7 +241,7 @@ const handlePromptFileChange = async (event: Event) => {
   height: auto;
   min-height: 64px;
   padding: 11px 12px;
-  border-radius: 6px;
+  border-radius: var(--ui-radius-control);
   line-height: 1.35;
   white-space: normal;
 }

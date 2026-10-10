@@ -39,6 +39,34 @@ Appium 方案完全不依赖大模型，不需要填写 Base URL、API Key、Mod
 
 ## 环境要求
 
+### Artemis 控制台集成（可选）
+
+菜单中的 **Artemis** 在主内容区嵌入独立的 Artemis 控制台，支持切换菜单后保留页面状态。首次连接和“重新连接”都会检查服务；未启动或未允许嵌入时显示操作提示。
+
+1. Artemis 源码独立放在项目根目录的 `artemis-main/`，或通过 `ARTEMIS_PROJECT_DIR` 指定源码绝对路径。`artemis-main/` 源码随主项目的 Git / npm 包分发。本地 `config/artemis.jsonc`、`.env`、依赖环境和运行数据不提交、不打包；首次启动会从公开的 `config/artemis.example.jsonc` 生成本地配置，已有配置不会被覆盖。
+2. 安装 `uv`，准备 Python 3.12+、Node.js 22.22.3+（22 LTS）、ADB 和设备；Artemis 前端首次启动时会自动安装依赖并构建。
+3. 在项目根目录运行 `npm run dev`，或使用 `npx android-midscene-automation`，会同时启动主项目与 Artemis；首次会同步 Python 依赖并按需构建 Artemis 前端。启动完成后点击 **Artemis**。API Key、模型和设备在 Artemis 自身的配置中设置，不会自动复用 Midscene 的模型配置。
+
+检测到 Artemis 已运行时会复用该服务；按 Ctrl+C 会停止本次启动的服务，不会停止之前已运行的 Artemis。缺少源码或 Artemis 启动失败时会输出提示，主项目仍可使用。仍可通过 `npm run artemis` 单独启动 Artemis。主项目端口被占用时会明确报错，可通过 `npm run dev -- --port 5174` 指定其他端口，并自动为新启动的 Artemis 配置对应的嵌入来源。
+
+在 Artemis 的“系统设置 → 自定义配置”中点击“编辑 JSONC”，可直接修改并保存当前使用的 `artemis.jsonc`；支持注释和原有排版，保存前校验 JSONC、模型与智能体配置。文件已被其他操作修改时会阻止覆盖，保存失败时保留草稿。“取消编辑”放弃本次修改并重新加载文件。模型配置用于新任务，运行中的任务保持当前设置；API Key 和接口地址仍在 Artemis 的 `.env` 中配置。
+
+修改配置文件或 `.env` 后，点击自定义配置中的“刷新配置”，会重新校验 JSONC 并加载模型密钥和 Base URL，更新“已配置 / 未设置”状态，无需重启服务。刷新只检查本地配置，不调用模型 API 验证密钥；正在编辑草稿时按钮禁用，校验失败时保留当前已加载设置。
+
+专用启动入口仅绑定 `127.0.0.1:8000`，通过 CSP 允许 `localhost` / `127.0.0.1` 的 `5173`、`4173` 端口嵌入，并保留 Artemis 原有的 Host / Origin 校验。原来的 `artemis ui` 默认禁止 iframe；若已启动，需要先停止原服务再执行 `npm run artemis`。终端按 Ctrl+C 停止服务。
+
+可选环境变量：
+
+| 变量 | 用途 |
+| --- | --- |
+| `ARTEMIS_PROJECT_DIR` | Artemis 源码目录，传给 `npm run dev` 或 `npm run artemis` |
+| `ARTEMIS_PORT` | Artemis 服务端口，默认 `8000` |
+| `ARTEMIS_EMBED_ORIGINS` | 允许嵌入的完整来源地址，逗号分隔；主项目使用其他端口时需设置，不接受通配符 |
+| `ARTEMIS_URL` | 主项目后端连接的 Artemis 地址，默认 `http://127.0.0.1:8000`，传给 `npm run dev` 或 `npm run preview` |
+| `ARTEMIS_AUTO_START` | 设置为 `0` 时，`npm run dev` 仅启动主项目；默认自动启动 Artemis |
+
+当前集成面向本机使用。Artemis 与 Midscene/Appium 的任务队列、设备锁和结果各自独立，请不要同时控制同一台设备。
+
 - Node.js 18+
 - npm
 - Android SDK / ADB，移动端自动化测试需要
@@ -1381,6 +1409,13 @@ Linux: ~/.local/share/android-midscene-automation
 4. 回放期间组件树自动刷新会暂停，回放完成后会自动恢复。
 
 # 项目更新记录
+
+## v1.1.0
+- [Artemis]修复自定义模型返回 `<think>` 思考标签导致 Hopper 等节点 JSON 解析失败的问题：非 Google 模型的 Pydantic 结构化输出接入统一清理、提取和校验流程，显式提供 JSON Schema，格式错误时限次要求模型纠正。
+- [Artemis]修复 Flash 步骤摘要和历史压缩仍直接创建 Gemini 客户端的问题：非 Google 模型统一使用配置中的 summarizer 节点及其备用模型；模型初始化错误不再静默切换到 Gemini。
+- [Artemis]修复 Artemis 使用 MiniMax、GLM 等非 Google 默认模型时，辅助检查节点仍强制调用 Gemini 并因缺少密钥导致任务启动失败的问题；支持这些节点继承默认模型或使用显式配置。
+- [Artemis]集成 Google Artemis。
+- [Midscene]Midscene 集成已停止日常维护，现有功能仍保留。
 
 ## v0.2.4
 - Midscene Android、Android Playground、Core、Playground、Shared 和 Web 模块统一升级至 1.14.0。

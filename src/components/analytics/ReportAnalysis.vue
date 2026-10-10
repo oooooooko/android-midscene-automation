@@ -57,7 +57,7 @@ const date = (value: string) => value && Number.isFinite(Date.parse(value)) ? ne
 </template>
 
 <style scoped>
-.report-analysis { padding: 20px; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); min-width: 0; }
+.report-analysis { padding: 20px; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); box-shadow: var(--ui-shadow-card); min-width: 0; }
 .report-analysis__heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 h2 { margin: 0; font-size: 17px; font-weight: 600; }
 p { margin: 8px 0 0; color: var(--ui-text-secondary); font-size: 12px; }

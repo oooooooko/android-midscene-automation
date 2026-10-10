@@ -145,16 +145,16 @@ function ringStyle(entries: { value: number; color: string }[]) {
 <style scoped>
 .analysis-charts { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .analysis-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
-.analysis-chart-card { padding: 22px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); min-width: 0; }
+.analysis-chart-card { padding: 22px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); box-shadow: var(--ui-shadow-card); min-width: 0; }
 h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .metric-card__value { display: flex; justify-content: space-between; align-items: center; margin: 24px 0; }
 .metric-card__value > strong { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .metric-card__value .el-icon { width: 44px; height: 44px; border-radius: 12px; font-size: 24px; }
 .metric-card p { margin: 0; color: var(--ui-text-secondary); font-size: 12px; }
 .chart-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.trend-tabs { display: flex; padding: 4px; border-radius: 6px; background: var(--ui-bg); }
+.trend-tabs { display: flex; padding: 4px; border-radius: var(--ui-radius-pill); background: var(--ui-bg-soft); }
 .trend-tabs button, .trend-legend button { cursor: pointer; border: 0; background: transparent; color: var(--ui-text-secondary); font-size: 13px; padding: 6px 12px; }
-.trend-tabs button.active { background: var(--ui-surface); color: var(--ui-text); border-radius: 4px; box-shadow: 0 1px 3px #00000012; }
+.trend-tabs button.active { background: var(--ui-surface); color: var(--ui-text); border-radius: var(--ui-radius-pill); box-shadow: 0 1px 3px #00000012; }
 .trend-legend { display: flex; gap: 8px; }
 .trend-legend button { display: flex; align-items: center; gap: 8px; }
 .trend-legend .muted { opacity: .4; }
@@ -163,7 +163,7 @@ i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: no
 .trend-chart-scroll { overflow-x: auto; }
 .trend-chart { display: block; width: 100%; min-width: 600px; margin-top: 8px; }
 .trend-chart text { fill: var(--ui-text-secondary); font-size: 12px; }
-.trend-chart:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2px; border-radius: 4px; }
+.trend-chart:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2px; border-radius: var(--ui-radius-control); }
 .analysis-distributions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
 .distribution-card__body { display: flex; align-items: center; flex-direction: column; gap: 22px; padding-top: 24px; }
 .donut { display: grid; place-items: center; width: 176px; aspect-ratio: 1; border-radius: 50%; }

@@ -2658,7 +2658,7 @@ watch(
 :deep(.appium-recorder-card--workbench > .el-card__body) { overflow: hidden; }
 :deep(.appium-workbench-tabs > .el-tabs__content) { overflow: hidden; }
 :deep(.appium-workbench-tabs .el-tab-pane) { height: 100%; overflow: auto; }
-.appium-workbench { height: 100%; box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: 12px; }
+.appium-workbench { height: 100%; box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); gap: 12px; overflow: hidden; padding: 8px 16px 16px; }
 .appium-workbench__flow { display: flex; flex-direction: column; min-height: 0; }
 .appium-workbench__flow h3 { margin-bottom: 6px; }
 .appium-workbench__flow :deep(.appium-recorded-steps-panel) { display: flex; flex-direction: column; flex: 1; min-height: 0; }

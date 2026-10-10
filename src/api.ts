@@ -48,6 +48,11 @@ export async function getAppiumVersion() {
   return readJson<AppiumVersionInfo>(response);
 }
 
+export async function getArtemisVersion() {
+  const response = await fetch(`${APP_BASE}/api/artemis/version`, { signal: AbortSignal.timeout(8000) });
+  return readJson<{ version: string; message: string }>(response);
+}
+
 // 读取已保存的脚本列表，自动化测试页面左侧脚本列表使用。
 export async function getScripts() {
   const response = await fetch(`${APP_BASE}/api/scripts`);

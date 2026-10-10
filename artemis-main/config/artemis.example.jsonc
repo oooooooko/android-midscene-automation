@@ -1,0 +1,12 @@
+{
+  // Public defaults only. Put API keys and endpoint URLs in .env.
+  // The launcher copies this template to artemis.jsonc only if it is missing.
+  "default": {
+    "provider": "google",
+    "model": "gemini-2.5-flash",
+    "fallback": {
+      "provider": "google",
+      "model": "gemini-2.0-flash"
+    }
+  }
+}

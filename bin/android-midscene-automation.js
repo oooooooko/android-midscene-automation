@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const require = createRequire(import.meta.url);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const viteRoot = path.dirname(require.resolve('vite/package.json'));
-const viteBin = path.join(viteRoot, 'bin', 'vite.js');
 const args = process.argv.slice(2);
 const userRoot = process.cwd();
 const githubUrl = 'https://github.com/oooooooko/android-midscene-automation';
@@ -90,7 +86,7 @@ console.log(`\nGitHub 源码 / 二次修改：${githubUrl}`);
 console.log(`问题反馈 / 功能建议：${githubUrl}/issues\n`);
 console.log(`本地数据目录：${dataRoot}\n`);
 
-const child = spawn(process.execPath, [viteBin, ...args], {
+const child = spawn(process.execPath, [path.join(packageRoot, 'bin/start-dev.mjs'), ...args], {
   cwd: packageRoot,
   env: {
     ...process.env,

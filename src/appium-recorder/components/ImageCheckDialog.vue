@@ -155,17 +155,17 @@ async function upload(event: Event) {
 .image-check-dialog .el-select { flex: 1; }
 .image-check-dialog .el-input-number { width: 100%; }
 .image-check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
-.image-check-help { margin-left: 8px; color: #606266; }
+.image-check-help { margin-left: 8px; color: var(--ui-text-secondary); }
 .image-check-grid .el-form-item__label { display: flex; align-items: center; min-height: 20px; }
 .image-check-threshold-label { display: inline-flex; align-items: center; gap: 4px; }
 .image-check-dialog .el-button.image-check-threshold-button { flex: 0 0 20px; width: 20px; height: 20px; min-height: 20px; padding: 0; font-size: 14px; }
 .image-check-threshold-help { max-width: min(300px, calc(100vw - 40px)); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .image-check-strict-warning { margin-top: 6px; }
 .image-check-template { display: grid; gap: 6px; margin-bottom: 16px; min-width: 0; }
-.image-check-size { color: #606266; font-size: 12px; }
+.image-check-size { color: var(--ui-text-secondary); font-size: 12px; }
 .image-check-region-warning { margin-bottom: 16px; }
 .image-check-template .el-image, .image-check-empty { height: 96px; width: 100%; background: #eff5f3; border: 1px solid #d5dfdb; border-radius: 4px; }
-.image-check-empty { display: grid; place-items: center; color: #606266; }
+.image-check-empty { display: grid; place-items: center; color: var(--ui-text-secondary); }
 @media (max-width: 480px) {
   .image-check-grid { grid-template-columns: minmax(0, 1fr); }
 }

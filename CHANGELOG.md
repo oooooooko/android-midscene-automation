@@ -1,4 +1,11 @@
 # 更新记录
+## v1.1.0
+- [Artemis]修复自定义模型返回 `<think>` 思考标签导致 Hopper 等节点 JSON 解析失败的问题：非 Google 模型的 Pydantic 结构化输出接入统一清理、提取和校验流程，显式提供 JSON Schema，格式错误时限次要求模型纠正。
+- [Artemis]修复 Flash 步骤摘要和历史压缩仍直接创建 Gemini 客户端的问题：非 Google 模型统一使用配置中的 summarizer 节点及其备用模型；模型初始化错误不再静默切换到 Gemini。
+- [Artemis]修复 Artemis 使用 MiniMax、GLM 等非 Google 默认模型时，辅助检查节点仍强制调用 Gemini 并因缺少密钥导致任务启动失败的问题；支持这些节点继承默认模型或使用显式配置。
+- [Artemis]集成 Google Artemis。
+- [Midscene]Midscene 集成已停止日常维护，现有功能仍保留。
+
 ## v0.2.4
 - Midscene Android、Android Playground、Core、Playground、Shared 和 Web 模块统一升级至 1.14.0。
 - 修复 Midscene 测试脚本生成过程中切换“AI 生成 / 自定义步骤编排”会清空生成状态和结果的问题；生成任务继续在后台执行，模式切换后保留已生成步骤与代码。

@@ -49,12 +49,12 @@ function move(direction: number) {
 .flow-node-search__navigation > span:first-child { margin-right: auto; font-size: 12px; }
 .flow-node-search__navigation .el-button { width: 26px; height: 26px; min-height: 26px; padding: 0; }
 .flow-node-search__results { max-height: min(320px, 45vh); overflow: auto; }
-.flow-node-search__result { display: flex; flex-direction: column; text-align: left; gap: 4px; width: 100%; border: 0; border-bottom: 1px solid #e4e7ed; padding: 10px 8px; background: #fff; color: #303133; cursor: pointer; overflow-wrap: anywhere; }
+.flow-node-search__result { display: flex; flex-direction: column; text-align: left; gap: 4px; width: 100%; border: 0; border-bottom: 1px solid var(--ui-border); padding: 10px 8px; background: #fff; color: var(--ui-text); cursor: pointer; overflow-wrap: anywhere; }
 .flow-node-search__result[aria-current="true"] { background: #e6f4ff; }
 .flow-node-search__result:hover { background: #f0f7fc; }
 .flow-node-search__result strong { font-size: 13px; }
-.flow-node-search__result span, .flow-node-search__result small { font-size: 12px; color: #606266; }
-.flow-node-search__empty { padding: 16px 0; text-align: center; color: #606266; }
+.flow-node-search__result span, .flow-node-search__result small { font-size: 12px; color: var(--ui-text-secondary); }
+.flow-node-search__empty { padding: 16px 0; text-align: center; color: var(--ui-text-secondary); }
 </style>
 
 <style>

@@ -11,6 +11,6 @@ export default defineConfig({
     url: 'http://127.0.0.1:4175',
     reuseExistingServer: false,
     timeout: 60_000,
-    env: { ANDROID_MIDSCENE_DATA_ROOT: resolve('.tmp/e2e-data') },
+    env: { ANDROID_MIDSCENE_DATA_ROOT: resolve('.tmp/e2e-data'), ARTEMIS_AUTO_START: '0' },
   },
 });

@@ -1,5 +1,5 @@
 :root {
-  background: #f5f7fa;
+  background: #f8f9fa;
   font-family:
     "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
   line-height: 1.5;
@@ -126,7 +126,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--ui-border);
 }
 
 .layout-header__actions {
@@ -264,7 +264,7 @@ select {
   height: 100%;
   min-height: 0;
   overflow: auto;
-  scrollbar-color: #c0c4cc transparent;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 .appium-tree .el-tree {
@@ -308,7 +308,7 @@ select {
 
 .appium-tree::-webkit-scrollbar-thumb {
   border-radius: 4px;
-  background: #c0c4cc;
+  background: #cbd5e1;
 }
 
 .appium-tree-panel {
@@ -324,15 +324,15 @@ select {
   align-items: start;
   gap: 12px;
   padding: 12px 0 0;
-  border-top: 1px solid #e4e7ed;
-  color: #606266;
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-text-secondary);
   font-size: 13px;
 }
 
 .appium-current-activity code {
   display: -webkit-box;
   overflow: hidden;
-  color: #303133;
+  color: var(--ui-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -343,7 +343,7 @@ select {
 
 .appium-node-detail__title {
   margin-bottom: 12px;
-  color: #303133;
+  color: var(--ui-text);
   font-weight: 700;
 }
 
@@ -376,7 +376,7 @@ select {
   gap: 8px;
   align-items: center;
   padding: 10px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
 }
 
 .appium-script-list__main {
@@ -394,7 +394,7 @@ select {
 }
 
 .appium-script-list__main strong {
-  color: #303133;
+  color: var(--ui-text);
   font-size: 13px;
 }
 
@@ -454,7 +454,7 @@ select {
   overflow-x: hidden;
   overflow-y: auto;
   padding-right: 4px;
-  scrollbar-color: #c0c4cc transparent;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 .appium-recorded-steps::-webkit-scrollbar {
@@ -467,7 +467,7 @@ select {
 
 .appium-recorded-steps::-webkit-scrollbar-thumb {
   border-radius: 3px;
-  background: #c0c4cc;
+  background: #cbd5e1;
 }
 
 .appium-step-item {
@@ -482,7 +482,7 @@ select {
   gap: 8px;
   align-items: center;
   padding: 8px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 6px;
   background: #fff;
   min-height: var(--appium-step-row-height);
@@ -562,8 +562,8 @@ select {
 }
 
 .appium-step-insert-delay:hover {
-  border-color: #409eff;
-  color: #409eff;
+  border-color: var(--ui-primary);
+  color: var(--ui-primary);
   background: #f5f9ff;
 }
 
@@ -595,7 +595,7 @@ select {
   height: 460px;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   background:
     radial-gradient(circle at 1px 1px, #e7edf6 1px, transparent 0) 0 0 / 18px 18px,
@@ -635,7 +635,7 @@ select {
   height: 72vh;
   overflow: auto;
   padding: 12px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   background:
     radial-gradient(circle at 1px 1px, #e7edf6 1px, transparent 0) 0 0 / 18px 18px,
@@ -711,10 +711,10 @@ select {
   width: 38px;
   height: 30px;
   padding: 0 6px;
-  border: 1px solid #409eff;
+  border: 1px solid var(--ui-primary);
   border-radius: 8px;
   background: #ecf5ff;
-  color: #337ecc;
+  color: var(--ui-primary-active);
   font-size: 12px;
   font-weight: 700;
 }
@@ -759,7 +759,7 @@ select {
   border: 1px solid #d8e0ea;
   border-radius: 8px;
   background: #fff;
-  color: #303133;
+  color: var(--ui-text);
   text-align: left;
   cursor: pointer;
 }
@@ -799,7 +799,7 @@ select {
 
 .appium-flow-node--expanded {
   box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.12);
-  border-color: #409eff;
+  border-color: var(--ui-primary);
 }
 
 .appium-flow-node--copying {
@@ -807,7 +807,7 @@ select {
 }
 
 .appium-flow-node--selected {
-  border-color: #337ecc;
+  border-color: var(--ui-primary-active);
   box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.32);
   background: #d9ecff;
 }
@@ -836,7 +836,7 @@ select {
 
 .appium-flow-node__note {
   min-width: 0;
-  color: #303133;
+  color: var(--ui-text);
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -968,7 +968,7 @@ select {
   border: 1px solid #d8e0ea;
   border-radius: 999px;
   background: #fff;
-  color: #303133;
+  color: var(--ui-text);
   font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -1164,8 +1164,8 @@ select {
 }
 
 .appium-flow-insert:hover {
-  border-color: #409eff;
-  color: #409eff;
+  border-color: var(--ui-primary);
+  color: var(--ui-primary);
   background: #f5f9ff;
 }
 
@@ -1208,10 +1208,10 @@ select {
   box-sizing: border-box;
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 6px;
   background: #f7f8fa;
-  color: #606266;
+  color: var(--ui-text-secondary);
   font-family: inherit;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -1243,7 +1243,7 @@ select {
   max-height: 260px;
   margin: 0;
   padding: 12px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 6px;
   background: #fff;
   color: #475569;
@@ -1368,7 +1368,7 @@ select {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  color: #303133;
+  color: var(--ui-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
@@ -1393,7 +1393,7 @@ select {
 }
 
 .subnav__item--active {
-  border-color: #409eff;
+  border-color: var(--ui-primary);
 }
 
 .page-grid {
@@ -1420,11 +1420,11 @@ select {
 
 .generator-page--ai {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(260px, 1fr);
   gap: 16px;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
 }
 
 .generator-page--manual {
@@ -1626,13 +1626,13 @@ select {
   grid-template-columns: 100px minmax(0, 1fr);
   gap: 12px;
   padding-top: 12px;
-  color: #606266;
+  color: var(--ui-text-secondary);
   font-size: 13px;
   line-height: 1.6;
 }
 
 .method-guide__row strong {
-  color: #303133;
+  color: var(--ui-text);
 }
 
 .method-guide__text {
@@ -1739,7 +1739,7 @@ select {
 }
 
 .step-item__index {
-  color: #606266;
+  color: var(--ui-text-secondary);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1883,7 +1883,7 @@ select {
   width: 100%;
   min-height: 48px;
   padding: 12px;
-  border: 1px dashed #dcdfe6;
+  border: 1px dashed var(--ui-border-strong);
   border-radius: 6px;
   background: #f8fafc;
   color: #909399;
@@ -2025,7 +2025,7 @@ select {
 }
 
 .script-row__main strong {
-  color: #303133;
+  color: var(--ui-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2169,7 +2169,9 @@ select {
 
 .device-preview--image {
   border-radius: 8px;
-  background: #111827;
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid var(--ui-border);
 }
 
 .device-preview__interactive {
@@ -2258,7 +2260,7 @@ select {
   display: grid;
   place-items: center;
   height: 100%;
-  color: #606266;
+  color: var(--ui-text-secondary);
   text-align: center;
   padding: 24px;
 }
@@ -2271,7 +2273,7 @@ select {
 
 .device-preview__meta {
   margin: 0 0 8px;
-  color: #303133;
+  color: var(--ui-text);
   font-weight: 600;
 }
 
@@ -2283,7 +2285,7 @@ select {
   height: 100%;
   min-height: 0;
   padding: 12px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 6px;
   background: #f8fafc;
 }
@@ -2322,7 +2324,7 @@ select {
 
 .run-result__header strong,
 .execution-output__header strong {
-  color: #303133;
+  color: var(--ui-text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -2484,7 +2486,7 @@ select {
   max-height: none;
   overflow: auto;
   padding: 12px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--ui-border);
   border-radius: 6px;
   background: #f8fafc;
 }
@@ -2652,7 +2654,7 @@ select {
   overflow: hidden;
   border: 1px solid #e6edf5;
   border-radius: 12px;
-  background: var(--flow-background, #d4e8dd);
+  background: var(--flow-background, #f8fafc);
 }
 
 .appium-flow-canvas--dialog.appium-flow-canvas--vue {
@@ -2664,8 +2666,8 @@ select {
   width: 100%;
   height: 100%;
   background:
-    radial-gradient(circle at 1px 1px, #aecfbd 1px, transparent 0) 0 0 / 22px 22px,
-    var(--flow-background, #d4e8dd);
+    radial-gradient(circle at 1px 1px, #cbd5e1 1px, transparent 0) 0 0 / 22px 22px,
+    var(--flow-background, #f8fafc);
 }
 
 .appium-vue-flow .vue-flow__pane {
@@ -2698,7 +2700,7 @@ select {
 
 .appium-vue-flow .vue-flow__edge-path,
 .appium-vue-flow .vue-flow__connection-path {
-  stroke: var(--appium-flow-line-color, #719985);
+  stroke: var(--appium-flow-line-color, #94a3b8);
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -2988,48 +2990,76 @@ select {
   font-size: 12px;
 }
 
+/* Artemis visual language shared by every host page and Element Plus control. */
 :root {
-  --ui-primary: #006be6;
-  --ui-primary-hover: #3389eb;
-  --ui-primary-active: #0056b8;
-  --ui-success: #52c41a;
-  --ui-warning: #faad14;
-  --ui-danger: #ff4d4f;
-  --ui-text: #303133;
-  --ui-text-secondary: #6b7280;
-  --ui-text-muted: #9ca3af;
-  --ui-border: #e4e4e7;
-  --ui-border-strong: #dcdfe6;
-  --ui-bg: #f2f3f5;
-  --ui-bg-soft: #fafafa;
-  --ui-surface: #fff;
-  --ui-radius: 12px;
-  --ui-radius-control: 6px;
-  --ui-shadow-popover: 0 8px 24px rgba(15, 23, 42, 0.1);
+  --ui-primary: #1a73e8;
+  --ui-primary-hover: #1557b0;
+  --ui-primary-active: #174ea6;
+  --ui-success: #059669;
+  --ui-warning: #d97706;
+  --ui-danger: #dc2626;
+  --ui-text: #0f172a;
+  --ui-text-secondary: #475569;
+  --ui-text-muted: #64748b;
+  --ui-border: #e2e8f0;
+  --ui-border-strong: #cbd5e1;
+  --ui-bg: #f8f9fa;
+  --ui-bg-soft: #f1f5f9;
+  --ui-surface: #ffffff;
+  --ui-radius: 20px;
+  --ui-radius-control: 12px;
+  --ui-radius-pill: 999px;
+  --ui-shadow-card: inset 0 1px 0 rgb(255 255 255 / 95%), 0 2px 4px rgb(15 23 42 / 5%), 0 10px 24px -8px rgb(15 23 42 / 14%);
+  --ui-shadow-control: inset 0 1px 0 rgb(255 255 255 / 90%), 0 2px 3px rgb(15 23 42 / 7%), 0 4px 8px -3px rgb(15 23 42 / 10%);
+  --ui-shadow-inset: inset 0 2px 4px rgb(15 23 42 / 5%), 0 1px 0 rgb(255 255 255 / 90%);
+  --ui-shadow-primary: inset 0 1px 0 rgb(255 255 255 / 25%), 0 2px 3px rgb(26 115 232 / 18%), 0 6px 12px -3px rgb(26 115 232 / 28%);
+  --ui-shadow-popover: inset 0 1px 0 rgb(255 255 255 / 95%), 0 4px 10px rgb(15 23 42 / 8%), 0 18px 40px -8px rgb(15 23 42 / 20%);
+  --ui-font: 'Google Sans Text', 'Google Sans', 'Inter', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 
+  --el-font-family: var(--ui-font);
   --el-color-primary: var(--ui-primary);
-  --el-color-primary-light-3: #4d97ee;
-  --el-color-primary-light-5: #80b5f3;
-  --el-color-primary-light-7: #b3d3f8;
-  --el-color-primary-light-8: #cce1fa;
-  --el-color-primary-light-9: #e6f0fd;
+  --el-color-primary-light-3: #5f9aee;
+  --el-color-primary-light-5: #8cb9f4;
+  --el-color-primary-light-7: #bfdbfe;
+  --el-color-primary-light-8: #dbeafe;
+  --el-color-primary-light-9: #eff6ff;
   --el-color-primary-dark-2: var(--ui-primary-active);
   --el-color-success: var(--ui-success);
+  --el-color-success-light-3: #50b69b;
+  --el-color-success-light-5: #82ceba;
+  --el-color-success-light-7: #a7f3d0;
+  --el-color-success-light-8: #d1fae5;
+  --el-color-success-light-9: #ecfdf5;
+  --el-color-success-dark-2: #047857;
   --el-color-warning: var(--ui-warning);
+  --el-color-warning-light-3: #e5a050;
+  --el-color-warning-light-5: #f2c082;
+  --el-color-warning-light-7: #fde68a;
+  --el-color-warning-light-8: #fef3c7;
+  --el-color-warning-light-9: #fffbeb;
+  --el-color-warning-dark-2: #b45309;
   --el-color-danger: var(--ui-danger);
+  --el-color-danger-light-3: #e86b6b;
+  --el-color-danger-light-5: #f39b9b;
+  --el-color-danger-light-7: #fecaca;
+  --el-color-danger-light-8: #fee2e2;
+  --el-color-danger-light-9: #fef2f2;
+  --el-color-danger-dark-2: #b91c1c;
   --el-text-color-primary: var(--ui-text);
-  --el-text-color-regular: #4b5563;
+  --el-text-color-regular: var(--ui-text-secondary);
   --el-text-color-secondary: var(--ui-text-secondary);
-  --el-text-color-placeholder: var(--ui-text-muted);
+  --el-text-color-placeholder: #94a3b8;
   --el-border-color: var(--ui-border-strong);
   --el-border-color-light: var(--ui-border);
-  --el-border-color-lighter: #edf0f3;
-  --el-fill-color-light: #f6f8fb;
-  --el-fill-color-lighter: #fafbfc;
+  --el-border-color-lighter: #f1f5f9;
+  --el-fill-color-light: var(--ui-bg-soft);
+  --el-fill-color-lighter: #f8fafc;
   --el-bg-color-page: var(--ui-bg);
   --el-border-radius-base: var(--ui-radius-control);
-  --el-border-radius-small: 4px;
+  --el-border-radius-small: 8px;
   --el-box-shadow-light: var(--ui-shadow-popover);
+  font-family: var(--ui-font);
   color: var(--ui-text);
 }
 
@@ -3040,8 +3070,8 @@ body {
 }
 
 ::selection {
-  background: #e1eaff;
-  color: #006be6;
+  background: #e8f0fe;
+  color: var(--ui-primary);
 }
 
 .layout {
@@ -3051,7 +3081,7 @@ body {
 
 .layout-sidebar {
   border-right: 1px solid var(--ui-border);
-  background: #fff;
+  background: rgb(255 255 255 / 78%);
 }
 
 .layout-sidebar__top {
@@ -3067,8 +3097,8 @@ body {
   flex: none;
   width: 32px;
   height: 32px;
-  background: linear-gradient(135deg, #9775fa, #5178f5 55%, #20c4e7);
-  box-shadow: none;
+  background: var(--ui-primary);
+  box-shadow: 0 2px 8px rgb(26 115 232 / 18%);
   color: #fff;
   font-size: 20px;
 }
@@ -3076,7 +3106,7 @@ body {
 .layout-menu.el-menu {
   --el-menu-bg-color: #fff;
   --el-menu-text-color: #4b5563;
-  --el-menu-hover-bg-color: #f4f4f5;
+  --el-menu-hover-bg-color: #f1f5f9;
   --el-menu-active-color: var(--ui-primary);
   padding: 10px 8px;
 }
@@ -3085,12 +3115,12 @@ body {
 .layout-menu .el-sub-menu__title {
   height: 44px;
   margin: 2px 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius-pill);
   line-height: 44px;
 }
 
 .layout-menu .el-menu-item.is-active {
-  background: #e1eaff;
+  background: #e8f0fe;
   box-shadow: none;
   font-weight: 600;
 }
@@ -3166,7 +3196,7 @@ body {
   letter-spacing: 0;
 }
 
-.el-button:not(.is-circle) {
+.el-button:not(.is-circle):not(.el-button--small) {
   min-height: 32px;
   padding-right: 14px;
   padding-left: 14px;
@@ -3202,7 +3232,7 @@ body {
 .el-input__wrapper:hover,
 .el-select__wrapper:hover,
 .el-textarea__inner:hover {
-  box-shadow: 0 0 0 1px #80b5f3 inset;
+  box-shadow: 0 0 0 1px #bfdbfe inset;
 }
 
 .el-form-item__label {
@@ -3282,15 +3312,15 @@ body {
   width: fit-content;
   padding: 4px;
   border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius);
-  background: #eef1f5;
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-bg-soft);
 }
 
 .subnav__item {
   min-height: 32px;
   padding: 6px 14px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--ui-radius-pill);
   background: transparent;
   color: var(--ui-text-secondary);
   font-size: 13px;
@@ -3303,7 +3333,7 @@ body {
 
 .subnav__item--active {
   border: 0;
-  background: #e1eaff;
+  background: #e8f0fe;
   color: var(--ui-primary);
   box-shadow: none;
 }
@@ -3373,8 +3403,8 @@ body {
 }
 
 .model-usage-chart__record:not(.model-usage-chart__record--head):hover {
-  border-color: #b3d3f8;
-  background: #f0f6ff;
+  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 
 .model-usage-chart__record--head {
@@ -3391,13 +3421,13 @@ body {
 
 .app-preset-row:hover,
 .script-row:hover {
-  border-color: #b3d3f8;
-  background: #f0f6ff;
+  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 
 .method-guide {
   border-color: #cce1fa;
-  background: #f0f6ff;
+  background: #eff6ff;
 }
 
 .method-guide__summary {
@@ -3412,7 +3442,9 @@ body {
 .terminal-block,
 .generator-code-editor .el-textarea__inner,
 .code-dialog__editor .el-textarea__inner {
-  background: #111827;
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid var(--ui-border);
 }
 
 .automation-layout,
@@ -3421,8 +3453,8 @@ body {
 }
 
 .script-row--active {
-  border-color: #80b5f3;
-  background: #e1eaff;
+  border-color: #bfdbfe;
+  background: #e8f0fe;
 }
 
 .execution-output {
@@ -3433,7 +3465,9 @@ body {
 
 .execution-log__output {
   border-radius: var(--ui-radius-control);
-  background: #111827;
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid var(--ui-border);
 }
 
 .device-preview {
@@ -3467,8 +3501,9 @@ body {
 }
 
 .appium-workbench-tabs > .el-tabs__header {
-  padding: 0 18px;
-  background: #fbfcfe;
+  flex: none;
+  padding: 16px 16px 8px;
+  background: var(--ui-surface);
 }
 
 .appium-workbench {
@@ -3488,12 +3523,12 @@ body {
 }
 
 .appium-tree .el-tree-node__content:hover {
-  background: #f0f6ff;
+  background: #eff6ff;
 }
 
 .appium-tree .el-tree-node.is-current > .el-tree-node__content {
-  background: #e1eaff;
-  color: #006be6;
+  background: #e8f0fe;
+  color: var(--ui-primary);
 }
 
 .appium-current-activity {
@@ -3517,13 +3552,13 @@ body {
 }
 
 .appium-script-list__item:hover {
-  border-color: #b3d3f8;
-  background: #f0f6ff;
+  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 
 .appium-script-list__item--active {
-  border-color: #80b5f3;
-  background: #e1eaff;
+  border-color: #bfdbfe;
+  background: #e8f0fe;
 }
 
 .appium-replay-fab .el-button {
@@ -3532,14 +3567,16 @@ body {
 
 .appium-replay-output--dialog {
   border-radius: var(--ui-radius-control);
-  background: #111827;
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid var(--ui-border);
 }
 
 .el-button.recorder-panel-tool {
-  --el-button-text-color: #606266;
-  --el-button-border-color: #dcdfe6;
+  --el-button-text-color: var(--ui-text-secondary);
+  --el-button-border-color: var(--ui-border-strong);
   --el-button-disabled-text-color: #a8abb2;
-  --el-button-disabled-border-color: #e4e7ed;
+  --el-button-disabled-border-color: var(--ui-border);
   width: 30px;
   min-width: 30px;
   height: 32px;
@@ -3604,7 +3641,7 @@ body {
 
 .appium-recorded-steps-panel .el-form-item__label,
 .appium-flow-dialog .el-form-item__label {
-  color: #606266;
+  color: var(--ui-text-secondary);
   font-size: 14px;
   font-weight: 400;
 }
@@ -3647,15 +3684,16 @@ body {
 
 .layout-collapse.el-button { width: 32px; padding: 0; font-size: 18px; }
 
-.layout-page-tabs { display: flex; align-items: flex-end; gap: 4px; padding: 4px 16px 0; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); overflow-x: auto; }
+.layout-page-tabs { display: flex; align-items: center; gap: 6px; padding: 8px 20px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); overflow-x: auto; }
 
-.layout-page-tab { display: inline-flex; flex: none; align-items: center; height: 35px; border: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--ui-text); font-size: 13px; cursor: pointer; }
+.layout-page-tab { display: inline-flex; flex: none; align-items: center; height: 35px; border: 0; border-radius: var(--ui-radius-pill); background: transparent; color: var(--ui-text); font-size: 13px; cursor: pointer; }
 
 .layout-page-tab:hover { background: var(--ui-bg); }
 
-.layout-page-tab.is-active { color: var(--ui-primary); background: #e1eaff; }
+.layout-page-tab.is-active { color: var(--ui-primary); background: #e8f0fe; }
 
 .page-body.page-body--config { padding: 0; overflow: hidden; scrollbar-gutter: auto; }
+.page-body.page-body--artemis { padding: 0; overflow: hidden; scrollbar-gutter: auto; }
 
 button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2px; }
 
@@ -3669,7 +3707,7 @@ button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2p
 
 .appium-header-actions { height: auto; flex-wrap: wrap; gap: 8px; }
 
-.layout-page-tabs { flex: none; min-height: 40px; }
+.layout-page-tabs { flex: none; min-height: 52px; }
 
 .layout-page-tab { padding: 0 6px 0 0; gap: 0; }
 
@@ -3677,7 +3715,7 @@ button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2p
 
 .layout-page-tab__select { gap: 8px; padding: 0 10px 0 14px; height: 100%; font: inherit; }
 
-.layout-page-tab__close { width: 24px; height: 24px; border-radius: 4px; }
+.layout-page-tab__close { width: 24px; height: 24px; border-radius: 50%; }
 
 .layout-page-tab__close:hover:not(:disabled) { background: var(--el-color-primary-light-8); }
 
@@ -3696,4 +3734,185 @@ button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2p
   .layout-sidebar__brand { font-size: 16px; }
   .layout-header__breadcrumb { display: none; }
   .appium-header-actions__script { width: 170px; }
+}
+
+/* Soft surfaces and pill controls match the embedded Artemis application. */
+.layout {
+  background: radial-gradient(ellipse at 55% 0, rgb(232 240 254 / 45%), transparent 55%), var(--ui-bg);
+}
+.layout-header { background: rgb(255 255 255 / 76%); }
+.layout-page-tabs { background: rgb(255 255 255 / 60%); }
+.layout-page-tab.is-active {
+  background: var(--ui-primary);
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(26 115 232 / 20%);
+}
+.layout-page-tab.is-active .layout-page-tab__close:hover:not(:disabled) { background: rgb(255 255 255 / 20%); }
+.el-card, .el-card.is-never-shadow { box-shadow: var(--ui-shadow-card); }
+.el-card__header { background: transparent; }
+.el-button:not(.is-circle) { border-radius: var(--ui-radius-pill); }
+.el-button:not(.is-text):not(.is-link):not(.is-disabled):hover { box-shadow: 0 2px 6px rgb(15 23 42 / 6%); }
+.el-button--primary:not(.is-disabled):not(.is-plain):not(.is-text):not(.is-link) {
+  box-shadow: 0 2px 8px rgb(26 115 232 / 15%);
+}
+.el-tag { border-radius: var(--ui-radius-pill); }
+.el-input__wrapper, .el-select__wrapper, .el-textarea__inner { background: var(--ui-surface); }
+.el-table { --el-table-header-bg-color: #f8fafc; --el-table-row-hover-bg-color: #eff6ff; }
+.el-table th.el-table__cell { color: var(--ui-text-secondary); font-weight: 600; }
+.el-tabs__nav-wrap::after { background-color: var(--ui-border); }
+.subnav__item--active { background: var(--ui-surface); box-shadow: var(--ui-shadow-card); }
+.appium-flow-node, .appium-flow-branch-step, .appium-flow-step-card, .appium-flow-start-card {
+  border-radius: var(--ui-radius-control);
+  box-shadow: var(--ui-shadow-card);
+}
+.appium-flow-editor, .appium-flow-dialog-canvas, .appium-flow-canvas { border-radius: var(--ui-radius); }
+.device-preview--empty { background: #f8fafc; }
+.el-button.recorder-panel-tool { border-radius: 50%; }
+@media (prefers-reduced-motion: reduce) {
+  .layout-menu .el-menu-item, .layout-page-tab, .el-button { transition: none; }
+}
+
+/* Internal page tabs use the same segmented navigation as Artemis. */
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__nav {
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-bg-soft);
+}
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__item {
+  height: 32px;
+  padding: 0 14px;
+  margin: 0 2px;
+  border-radius: var(--ui-radius-pill);
+  font-size: 13px;
+}
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__item.is-active {
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-card);
+}
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__active-bar,
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__nav-wrap::after {
+  display: none;
+}
+
+/* Keep action gaps predictable instead of combining flex gaps with library margins. */
+:is(.layout-header__actions, .appium-header-actions, .panel-header__actions,
+    .prompt-template-actions, .appium-section-title__actions, .recorder-workspace__tools)
+  > .el-button + .el-button { margin-left: 0; }
+.layout-sidebar__brand { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.layout-menu .el-sub-menu .el-menu-item { padding-right: 16px !important; }
+@media (max-width: 1000px) {
+  .layout-sidebar__brand span { display: none; }
+}
+
+/* Long editors and reports scroll inside the dialog, keeping actions reachable. */
+.el-dialog {
+  --el-dialog-margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
+}
+.el-dialog > .el-dialog__header,
+.el-dialog > .el-dialog__footer { flex: none; }
+.el-dialog > .el-dialog__body { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* One depth scale for raised surfaces, recessed fields and tactile controls. */
+.layout-sidebar {
+  background: linear-gradient(120deg, #fff, #f8fafc);
+  box-shadow: 4px 0 18px -10px rgb(15 23 42 / 18%);
+  z-index: 1;
+}
+.layout-header { box-shadow: 0 2px 6px -3px rgb(15 23 42 / 12%); }
+.layout-sidebar__logo, .layout-page-tab.is-active {
+  background: linear-gradient(180deg, #3588f3, var(--ui-primary));
+  box-shadow: var(--ui-shadow-primary);
+}
+.layout-menu .el-menu-item.is-active {
+  background: linear-gradient(180deg, #f3f7ff, #e8f0fe);
+  box-shadow: var(--ui-shadow-control);
+}
+.layout .el-card, .layout .help-center-page, .layout .help-center__version-card {
+  box-shadow: var(--ui-shadow-card);
+}
+.el-card__header {
+  background: linear-gradient(180deg, #fff, #f8fafc);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 90%);
+}
+:is(.layout, .el-dialog, .el-message-box) .el-button:not(.is-text):not(.is-link):not(.is-disabled) {
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 16%), rgb(15 23 42 / 3%));
+  box-shadow: var(--ui-shadow-control);
+  transition: box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+:is(.layout, .el-dialog, .el-message-box) .el-button--primary:not(.is-disabled):not(.is-plain):not(.is-text):not(.is-link) {
+  box-shadow: var(--ui-shadow-primary);
+}
+:is(.layout, .el-dialog, .el-message-box) .el-button:not(.is-text):not(.is-link):not(.is-disabled):hover {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 70%), 0 3px 6px rgb(26 115 232 / 12%), 0 6px 12px -4px rgb(15 23 42 / 16%);
+}
+:is(.layout, .el-dialog, .el-message-box) .el-button:not(.is-text):not(.is-link):not(.is-disabled):active {
+  box-shadow: inset 0 2px 4px rgb(15 23 42 / 16%);
+}
+.el-input .el-input__wrapper, .el-select .el-select__wrapper, .el-textarea .el-textarea__inner {
+  background: linear-gradient(180deg, #f8fafc, #fff 12px);
+  box-shadow: inset 0 0 0 1px var(--ui-border-strong), var(--ui-shadow-inset);
+  transition: box-shadow 160ms ease;
+}
+.el-input .el-input__wrapper:hover, .el-select .el-select__wrapper:hover, .el-textarea .el-textarea__inner:hover {
+  box-shadow: inset 0 0 0 1px #94b9ea, var(--ui-shadow-inset);
+}
+.el-input .el-input__wrapper.is-focus, .el-select .el-select__wrapper.is-focused, .el-textarea .el-textarea__inner:focus {
+  box-shadow: inset 0 0 0 1px var(--ui-primary), 0 0 0 3px rgb(26 115 232 / 12%);
+}
+.el-input.is-disabled .el-input__wrapper, .el-select .el-select__wrapper.is-disabled, .el-textarea.is-disabled .el-textarea__inner {
+  background: var(--el-disabled-bg-color);
+  box-shadow: inset 0 0 0 1px var(--ui-border);
+}
+.layout .subnav, .layout .trend-tabs,
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__nav {
+  box-shadow: var(--ui-shadow-inset);
+}
+.layout .subnav__item--active, .layout .trend-tabs button.active,
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__item.is-active,
+.el-radio-group .el-radio-button.is-active .el-radio-button__inner {
+  box-shadow: var(--ui-shadow-control);
+}
+.el-dialog, .el-message-box, .el-popper.is-light { box-shadow: var(--ui-shadow-popover); }
+.el-dialog__header, .el-message-box__header { background: linear-gradient(180deg, #fff, #f8fafc); }
+.el-table {
+  border-radius: var(--ui-radius-control);
+  box-shadow: 0 0 0 1px var(--ui-border), 0 3px 8px -4px rgb(15 23 42 / 12%);
+}
+.el-table th.el-table__cell { background: linear-gradient(180deg, #f8fafc, #eef2f6); }
+.el-tag, .el-checkbox__inner, .el-radio__inner, .el-switch__core {
+  box-shadow: inset 0 1px 2px rgb(15 23 42 / 8%), 0 1px 0 rgb(255 255 255 / 90%);
+}
+.el-switch__action, .el-slider__button,
+.layout .metric-card__value .el-icon, .layout .help-center__version-label .el-icon,
+.appium-flow-start-card__icon, .execution-step__index { box-shadow: var(--ui-shadow-control); }
+.layout .appium-flow-step-card, .layout .appium-flow-start-card,
+.layout .execution-step__body { box-shadow: var(--ui-shadow-card); }
+.layout .appium-flow-step-card:hover {
+  box-shadow: inset 0 1px 0 #fff, 0 3px 6px rgb(26 115 232 / 10%), 0 10px 20px -6px rgb(26 115 232 / 20%);
+}
+.layout .appium-flow-step-shell--selected .appium-flow-step-card {
+  box-shadow: 0 0 0 3px rgb(26 115 232 / 18%), var(--ui-shadow-card);
+}
+.layout .generator-code-block, .layout .execution-log, .layout .execution-process,
+.layout .appium-flow-editor, .layout .device-preview {
+  box-shadow: var(--ui-shadow-inset);
+}
+.layout .app-preset-row, .layout .script-row {
+  background-image: linear-gradient(180deg, #fff, #f8fafc);
+  box-shadow: var(--ui-shadow-control);
+}
+.layout .device-action-button:not(:disabled) {
+  border-radius: var(--ui-radius-control);
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 80%), rgb(241 245 249 / 60%));
+  box-shadow: var(--ui-shadow-control);
+}
+.layout .device-action-button:not(:disabled):active { box-shadow: var(--ui-shadow-inset); }
+@media (prefers-reduced-motion: reduce) {
+  :is(.layout, .el-dialog, .el-message-box) .el-button,
+  .el-input .el-input__wrapper, .el-select .el-select__wrapper,
+  .el-textarea .el-textarea__inner { transition: none; }
 }

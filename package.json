@@ -1,6 +1,6 @@
 {
   "name": "android-midscene-automation",
-  "version": "0.2.4",
+  "version": "1.1.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oooooooko/android-midscene-automation.git"
@@ -14,6 +14,7 @@
     "android-midscene-automation": "bin/android-midscene-automation.js"
   },
   "files": [
+    "artemis-main",
     "bin",
     "index.html",
     "remote-agent",
@@ -29,7 +30,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "artemis": "node bin/start-artemis.mjs",
+    "dev": "node bin/start-dev.mjs",
     "prepack": "node bin/sync-readme-docs.mjs",
     "remote-agent": "tsx remote-agent/index.ts",
     "build": "vue-tsc -b && vite build",

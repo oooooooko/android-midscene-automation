@@ -36,9 +36,11 @@ import { useDevicePreview } from './composables/use-device-preview';
 import { useScriptExecution } from './composables/use-script-execution';
 import { useInitialResource } from './composables/use-initial-resource';
 import AppSidebar from './components/AppSidebar.vue';
+import MidsceneMaintenanceNotice from './components/MidsceneMaintenanceNotice.vue';
 const AnalysisPage = defineAsyncComponent(() => import('./pages/AnalysisPage.vue'));
 const AutomationPage = defineAsyncComponent(() => import('./pages/AutomationPage.vue'));
 const AppiumPage = defineAsyncComponent(() => import('./appium-recorder/AppiumPage.vue'));
+const ArtemisPage = defineAsyncComponent(() => import('./pages/ArtemisPage.vue'));
 const ConfigPage = defineAsyncComponent(() => import('./pages/ConfigPage.vue'));
 const GeneratorPage = defineAsyncComponent(() => import('./pages/GeneratorPage.vue'));
 const HelpCenter = defineAsyncComponent(() => import('./components/help/HelpCenter.vue'));
@@ -50,7 +52,7 @@ import type {
 } from './types';
 
 const ACTIVE_MENU_STORAGE_KEY = 'android-midscene-automation:active-menu';
-const menuKeys: MenuKey[] = ['analysis', 'generator', 'automation', 'config', 'appium', 'about'];
+const menuKeys: MenuKey[] = ['appium', 'artemis', 'generator', 'automation', 'analysis', 'config', 'about'];
 const storedMenu = window.localStorage.getItem(ACTIVE_MENU_STORAGE_KEY) as MenuKey | null;
 const activeMenu = ref<MenuKey>(storedMenu && menuKeys.includes(storedMenu) ? storedMenu : 'generator');
 const activeGeneratorMode = ref<GeneratorMode>('ai');
@@ -120,10 +122,11 @@ async function closeMenu(key: MenuKey) {
 
 const sidebarCollapsed = shallowRef(false);
 const menuItems = [
-  { key: 'analysis', label: '分析页', icon: DataAnalysis },
+  { key: 'appium', label: 'Appium', icon: Monitor },
+  { key: 'artemis', label: 'Artemis', icon: Monitor },
   { key: 'generator', label: '测试脚本生成', icon: Operation },
   { key: 'automation', label: '自动化测试', icon: Monitor },
-  { key: 'appium', label: 'Appium', icon: Monitor },
+  { key: 'analysis', label: '分析页', icon: DataAnalysis },
   { key: 'config', label: '参数配置', icon: Setting },
   { key: 'about', label: '关于', icon: InfoFilled },
 ] as const;
@@ -875,6 +878,7 @@ onUnmounted(() => {
         </div>
       </nav>
 
+      <MidsceneMaintenanceNotice v-if="activeMenu === 'generator' || activeMenu === 'automation'" />
       <div v-if="connectionError" class="connection-status" role="status">
         <span>{{ connectionError }}</span><el-button link type="primary" :loading="reconnecting" @click="reconnect">重新连接</el-button>
       </div>
@@ -885,12 +889,12 @@ onUnmounted(() => {
       <main
         class="page-body"
         :class="{
-          'page-body--fixed': activeMenu === 'generator' && activeGeneratorMode === 'ai',
           'page-body--appium': activeMenu === 'appium',
           'page-body--config': activeMenu === 'config',
+          'page-body--artemis': activeMenu === 'artemis',
         }"
       >
-        <el-alert v-if="activeMenu !== 'appium' && activeMenu !== 'config' && activeMenu !== 'about' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
+        <el-alert v-if="activeMenu !== 'appium' && activeMenu !== 'artemis' && activeMenu !== 'config' && activeMenu !== 'about' && errorMessage" type="error" :closable="false" show-icon class="page-alert">
           <template #title>{{ errorMessage }}</template>
         </el-alert>
 
@@ -1006,6 +1010,7 @@ onUnmounted(() => {
         />
 
         <HelpCenter v-if="visitedMenus.has('about')" v-show="activeMenu === 'about'" :active="activeMenu === 'about'" />
+        <ArtemisPage v-if="visitedMenus.has('artemis')" v-show="activeMenu === 'artemis'" :active="activeMenu === 'artemis'" />
       </main>
     </div>
 

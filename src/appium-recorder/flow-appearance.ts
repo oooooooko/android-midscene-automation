@@ -1,10 +1,10 @@
 import type { InjectionKey, Ref } from 'vue';
 
-export const DEFAULT_FLOW_BACKGROUND = '#d4e8dd';
-export const FLOW_BACKGROUND_PRESETS = ['#d4e8dd', '#d5e6f5', '#e4dcf2', '#f2dedc', '#d5eae9', '#e8e4cc'];
+export const DEFAULT_FLOW_BACKGROUND = '#f8fafc';
+export const FLOW_BACKGROUND_PRESETS = ['#f8fafc', '#d4e8dd', '#d5e6f5', '#e4dcf2', '#f2dedc', '#d5eae9', '#e8e4cc'];
 export const flowBackgroundKey: InjectionKey<Readonly<Ref<string>>> = Symbol('flowBackground');
-export const DEFAULT_FLOW_LINE_COLOR = '#719985';
-export const FLOW_LINE_COLOR_PRESETS = ['#719985', '#4b83c4', '#8b6bb1', '#c78a46', '#7b8794', '#374151'];
+export const DEFAULT_FLOW_LINE_COLOR = '#94a3b8';
+export const FLOW_LINE_COLOR_PRESETS = ['#94a3b8', '#719985', '#4b83c4', '#8b6bb1', '#c78a46', '#7b8794', '#374151'];
 export const flowLineColorKey: InjectionKey<Readonly<Ref<string>>> = Symbol('flowLineColor');
 
 export function isHexColor(value: unknown): value is string {

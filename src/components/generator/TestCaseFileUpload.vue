@@ -81,7 +81,7 @@ const handleFileChange = (event: Event) => {
   gap: 4px;
   min-width: 0;
   max-width: 132px;
-  color: #606266;
+  color: var(--ui-text-secondary);
   font-size: 12px;
 }
 
