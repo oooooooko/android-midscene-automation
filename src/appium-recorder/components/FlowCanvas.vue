@@ -65,6 +65,8 @@ let internalsFrame = 0;
 let resetViewFrame = 0;
 let pendingResetView = false;
 let searchFrame = 0;
+let focusFrame = 0;
+let focusedNodeId = '';
 watch(() => [props.searchFocusToken, props.searchTargetId, props.searchActive, paneReady.value], async () => {
   if (searchFrame) cancelAnimationFrame(searchFrame);
   if (!props.searchActive || !props.searchTargetId || !paneReady.value) return;
@@ -107,7 +109,35 @@ function handleNodeResize(payload: { id: string; height: number }) {
     [payload.id]: height,
   };
   void nextTick(scheduleNodeInternalsUpdate);
+  if (payload.id === focusedNodeId) void nextTick(() => scheduleNodeFocus(payload.id));
   if (props.readonly) void nextTick(() => scheduleResetView());
+}
+
+function scheduleNodeFocus(nodeId: string) {
+  if (!paneReady.value || !nodeId) return;
+  if (focusFrame) window.cancelAnimationFrame(focusFrame);
+  focusFrame = window.requestAnimationFrame(() => {
+    updateNodeInternals([nodeId]);
+    focusFrame = window.requestAnimationFrame(() => {
+      focusFrame = 0;
+      if (focusedNodeId !== nodeId) return;
+      const node = findNode(nodeId);
+      if (!node) return;
+      const zoom = Math.min(1.8, Math.max(1.2, viewport.value.zoom));
+      void setCenter(
+        node.position.x + node.dimensions.width / 2,
+        node.position.y + node.dimensions.height / 2,
+        { zoom, duration: 260 },
+      );
+    });
+  });
+}
+
+function handleNodeClick(index: number) {
+  const step = props.steps[index];
+  if (step) focusedNodeId = `step:${step.id}`;
+  emit('nodeClick', index);
+  if (focusedNodeId) void nextTick(() => scheduleNodeFocus(focusedNodeId));
 }
 
 function scheduleNodeInternalsUpdate() {
@@ -165,12 +195,20 @@ watch(graph, () => {
   void nextTick(scheduleNodeInternalsUpdate);
 });
 
+watch(() => props.expandedStepIndex, () => {
+  if (focusedNodeId) void nextTick(() => scheduleNodeFocus(focusedNodeId));
+});
+
 watch(() => props.resetViewToken, () => {
+  focusedNodeId = '';
+  if (focusFrame) window.cancelAnimationFrame(focusFrame);
+  focusFrame = 0;
   void nextTick(scheduleResetView);
 });
 
 onBeforeUnmount(() => {
   if (searchFrame) cancelAnimationFrame(searchFrame);
+  if (focusFrame) cancelAnimationFrame(focusFrame);
   if (internalsFrame) window.cancelAnimationFrame(internalsFrame);
   if (resetViewFrame) window.cancelAnimationFrame(resetViewFrame);
   pendingResetView = false;
@@ -225,7 +263,7 @@ function handleInsert(payload: {
           :data="data"
           :readonly="props.readonly"
           :search-highlighted="nodeId === `step:${searchTargetId}`"
-          @node-click="emit('nodeClick', $event)"
+          @node-click="handleNodeClick"
           @copy="emit('copy', [$event])"
           @remove="emit('remove', $event)"
           @edit-input="emit('editInput', $event)"

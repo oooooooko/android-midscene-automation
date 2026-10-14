@@ -744,6 +744,7 @@ async function saveScreenshot(deviceId: string) {
 
 type RunStepMeta = {
   onModelOutput?: (content: string) => void;
+  onAiAnalysisStart?: () => void;
   onAiProgress?: (message: string) => void;
   nodeNumber: number;
   scriptName: string;
@@ -927,7 +928,9 @@ async function runStep(
       onProgress: meta.onAiProgress,
       onObservationFrame: frame => captureReplayFrame(sessionId, step, meta.nodeNumber, meta.scriptName || '', 'observation', `观察第 ${frame.index} 帧 · ${frame.elapsedMs}ms`, frame.imageBase64),
       timeoutMs: step.timeoutMs, aiTimeoutEnabled: step.aiTimeoutEnabled === true,
-      signal: replayContext.getStore()?.signal, onModelOutput: meta.onModelOutput,
+      signal: replayContext.getStore()?.signal,
+      onAnalysisStart: meta.onAiAnalysisStart,
+      onModelOutput: meta.onModelOutput,
     });
     return `AI 识别回答：${recognition.reason}`;
   }
@@ -1388,6 +1391,7 @@ async function replayLinearSteps(
       continue;
     }
     await replayContext.getStore()?.selectVideoScript?.(stack.at(-1) || '', options.scriptName || '');
+    const nodeStartedAt = Date.now();
     lines.push(`[节点 ${index + 1}] 开始：${step.label}`);
     await captureReplayFrame(sessionId, step, index + 1, options.scriptName || '', 'before', '执行前');
     try {
@@ -1397,6 +1401,7 @@ async function replayLinearSteps(
       } else {
         const result = await runStep(sessionId, deviceId, step, {
           onAiProgress: message => lines.push(`[节点 ${index + 1}] AI 持续观察：${message}`),
+          onAiAnalysisStart: () => lines.push(`[节点 ${index + 1}] AI 识别内容开始：距进入当前节点 ${Date.now() - nodeStartedAt}ms`),
           onModelOutput: content => lines.push(`[节点 ${index + 1}] AI 识别模型输出：${content}`),
           nodeNumber: index + 1,
           scriptName: options.scriptName || '',
@@ -1450,6 +1455,7 @@ async function replayFlowSteps(
     await replayContext.getStore()?.selectVideoScript?.(stack.at(-1) || '', options.scriptName || '');
     visitedPath.push(step.label);
     const nodeKind = defaultFlowKind(step);
+    const nodeStartedAt = Date.now();
     lines.push(`[节点 ${index + 1}] 开始：${frameStep.label}`);
     await captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'before', '执行前');
 
@@ -1478,6 +1484,7 @@ async function replayFlowSteps(
           aiTimeoutEnabled: step.aiTimeoutEnabled === true, aiObservation: step.aiObservation,
           onProgress: message => lines.push(`[节点 ${index + 1}] AI 持续观察：${message}`),
           onObservationFrame: frame => captureReplayFrame(sessionId, frameStep, index + 1, options.scriptName || '', 'observation', `观察第 ${frame.index} 帧 · ${frame.elapsedMs}ms`, frame.imageBase64),
+          onAnalysisStart: () => lines.push(`[节点 ${index + 1}] AI 识别内容开始：距进入当前节点 ${Date.now() - nodeStartedAt}ms`),
           onModelOutput: (content) => lines.push(`[节点 ${index + 1}] AI 识别模型输出：${content}`),
           signal: replayContext.getStore()?.signal,
           imageBase64: beforeFrame?.nodeId === step.id && beforeFrame.phase === 'before' ? beforeFrame.imageBase64 : undefined,
@@ -1576,6 +1583,7 @@ async function replayFlowSteps(
       } else {
         const result = await runStep(sessionId, deviceId, step, {
           onAiProgress: message => lines.push(`[节点 ${index + 1}] AI 持续观察：${message}`),
+          onAiAnalysisStart: () => lines.push(`[节点 ${index + 1}] AI 识别内容开始：距进入当前节点 ${Date.now() - nodeStartedAt}ms`),
           onModelOutput: content => lines.push(`[节点 ${index + 1}] AI 识别模型输出：${content}`),
           nodeNumber: index + 1,
           scriptName: options.scriptName || '',

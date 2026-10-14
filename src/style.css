@@ -834,6 +834,14 @@ select {
   overflow-wrap: anywhere;
 }
 
+.appium-flow-node__meta--clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .appium-flow-node__note {
   min-width: 0;
   color: var(--ui-text);
@@ -1109,11 +1117,11 @@ select {
 }
 
 .appium-flow-editor__grid--swipe {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .appium-flow-editor__grid--visual {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .appium-swipe-message-box {
@@ -3296,9 +3304,79 @@ body {
 }
 
 .el-message-box {
+  --el-messagebox-padding-primary: 0;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius);
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+
+.el-message-box__header {
+  box-sizing: border-box;
+  min-height: 56px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.el-message-box__header.show-close {
+  padding-right: 64px;
+}
+
+.el-message-box__headerbtn {
+  top: 8px;
+  right: 12px;
+  border-radius: var(--ui-radius-control);
+}
+
+.el-message-box__headerbtn:hover {
+  background: #eff6ff;
+}
+
+.el-message-box__title {
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 24px;
+}
+
+.el-message-box__content {
+  display: grid;
+  align-content: center;
+  box-sizing: border-box;
+  min-height: 88px;
+  padding: 18px 24px;
+}
+
+.el-message-box__container {
+  justify-content: center;
+  width: 100%;
+}
+
+.el-message-box__message {
+  text-align: center;
+}
+
+.el-message-box__input {
+  width: 100%;
+  padding-top: 14px;
+}
+
+.el-message-box__btns {
+  gap: 10px;
+  min-height: 68px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--ui-border);
+  background: #f8fafc;
+}
+
+.el-message-box__btns .el-button + .el-button {
+  margin-left: 0;
+}
+
+@media (max-width: 520px) {
+  .el-message-box__content { padding: 16px 18px; }
+  .el-message-box__btns { padding: 12px 16px; }
 }
 
 .el-tabs__item {
@@ -3955,9 +4033,84 @@ button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -2p
   box-shadow: var(--ui-shadow-inset);
 }
 .layout .subnav__item--active, .layout .trend-tabs button.active,
-.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__item.is-active,
-.el-radio-group .el-radio-button.is-active .el-radio-button__inner {
+.el-tabs:not(.el-tabs--card):not(.el-tabs--border-card) > .el-tabs__header .el-tabs__item.is-active {
   box-shadow: var(--ui-shadow-control);
+}
+
+.el-radio-group:has(.el-radio-button) {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px;
+  border: 1px solid #dbe3ee;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff, #f8fafc);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 95%), 0 4px 12px -4px rgb(15 23 42 / 20%);
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 0 !important;
+  border-radius: 11px !important;
+  background: transparent;
+  box-shadow: none !important;
+  color: var(--ui-text-secondary);
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: normal;
+  text-align: center;
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button:not(.is-active):not(.is-disabled) .el-radio-button__inner:hover {
+  background: #f1f5f9;
+  color: var(--ui-primary);
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button.is-active .el-radio-button__inner {
+  background: linear-gradient(180deg, #438cf5, #2574e8);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%), 0 4px 12px rgb(37 116 232 / 34%) !important;
+  color: #fff;
+  font-weight: 600;
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button.is-active:not(.is-disabled) .el-radio-button__inner:active {
+  box-shadow: inset 0 2px 5px rgb(15 23 42 / 20%) !important;
+  transform: translateY(1px);
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button.is-disabled .el-radio-button__inner {
+  background: transparent;
+  color: var(--el-disabled-text-color);
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button.is-active.is-disabled .el-radio-button__inner {
+  background: #dbeafe;
+  color: #64748b;
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button__original-radio:focus-visible + .el-radio-button__inner {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 1px;
+}
+
+.el-radio-group:has(.el-radio-button) .el-radio-button--small .el-radio-button__inner {
+  min-height: 27px;
+  padding: 4px 9px;
+  font-size: 12px;
 }
 .el-dialog, .el-message-box, .el-popper.is-light { box-shadow: var(--ui-shadow-popover); }
 .el-dialog__header, .el-message-box__header { background: linear-gradient(180deg, #fff, #f8fafc); }

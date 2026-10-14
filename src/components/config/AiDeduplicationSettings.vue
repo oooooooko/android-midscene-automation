@@ -56,5 +56,4 @@ function patch(value: Partial<AiDeduplicationConfig>) {
 .ai-dedup-explanation { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--ui-border); color: var(--el-text-color-regular); font-size: 13px; line-height: 1.7; }
 .ai-dedup-explanation h4 { margin: 0 0 8px; color: var(--el-text-color-primary); font-size: 13px; }
 .ai-dedup-explanation p { margin: 6px 0; }
-.ai-dedup-settings :deep(.el-radio-group) { gap: 4px 0; }
 </style>

@@ -118,7 +118,12 @@ const openModelConfigGuide = () => {
               />
             </el-form-item>
             <el-form-item label="API Key">
-              <el-input v-model="configForm.midscene.model.apiKey" placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换" show-password />
+              <el-input
+                v-model="configForm.midscene.model.apiKey"
+                type="password"
+                placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换"
+                show-password
+              />
             </el-form-item>
           </template>
           <template v-else>
@@ -181,7 +186,12 @@ const openModelConfigGuide = () => {
             <el-input v-model="configForm.scriptOptimizer.model.baseUrl" />
           </el-form-item>
           <el-form-item label="API Key">
-            <el-input v-model="configForm.scriptOptimizer.model.apiKey" placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换" show-password />
+            <el-input
+              v-model="configForm.scriptOptimizer.model.apiKey"
+              type="password"
+              placeholder="已保存的 Key 显示为掩码，可输入新 Key 替换"
+              show-password
+            />
           </el-form-item>
           <el-form-item label="Model Name">
             <el-input v-model="configForm.scriptOptimizer.model.name" />

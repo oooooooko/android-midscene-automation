@@ -19,7 +19,9 @@ Modular entrypoint for full trace inspection, step replay, and task execution ma
 
 import argparse
 import asyncio
+import copy
 from contextlib import asynccontextmanager
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -452,6 +454,35 @@ class ArtemisUvicornServer(uvicorn.Server):
         super().handle_exit(sig, frame)
 
 
+class QuietProbeAccessFilter(logging.Filter):
+    """Hide successful high-frequency probe requests from Uvicorn access logs."""
+
+    _quiet_paths = frozenset({"/api/status", "/api/system/readiness"})
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        method = str(args[1]).upper()
+        path = str(args[2]).partition("?")[0]
+        try:
+            status_code = int(args[4])
+        except (TypeError, ValueError):
+            return True
+        return not (method == "GET" and path in self._quiet_paths and status_code == 200)
+
+
+def _uvicorn_log_config() -> dict:
+    """Keep normal access logs while silencing successful background probes."""
+    config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    filter_name = "quiet_artemis_probes"
+    config.setdefault("filters", {})[filter_name] = {"()": QuietProbeAccessFilter}
+    access_handler = config.get("handlers", {}).get("access")
+    if access_handler is not None:
+        access_handler["filters"] = [*access_handler.get("filters", []), filter_name]
+    return config
+
+
 def run_ui_server(host: str, port: int, reload: bool = False) -> None:
     """Run the UI server with bounded, signal-aware graceful shutdown."""
     state.host = host
@@ -466,6 +497,7 @@ def run_ui_server(host: str, port: int, reload: bool = False) -> None:
                 port=port,
                 reload=True,
                 timeout_graceful_shutdown=5,
+                log_config=_uvicorn_log_config(),
             )
             return
 
@@ -474,6 +506,7 @@ def run_ui_server(host: str, port: int, reload: bool = False) -> None:
             host=host,
             port=port,
             timeout_graceful_shutdown=5,
+            log_config=_uvicorn_log_config(),
         )
         server = ArtemisUvicornServer(config)
         app.state.uvicorn_server = server

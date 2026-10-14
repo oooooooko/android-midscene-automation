@@ -298,7 +298,11 @@ function branchSplitPath() {
               >
                 <span class="appium-flow-node__body">
                   <span class="appium-flow-node__title"><span class="appium-flow-node-number">{{ item.index + 1 }}.</span> {{ item.step.label }}</span>
-                  <span class="appium-flow-node__meta">
+                  <span
+                    class="appium-flow-node__meta"
+                    :class="{ 'appium-flow-node__meta--clamped': item.step.type === 'aiRecognition' }"
+                    :title="item.step.type === 'aiRecognition' ? stepMeta(item.step) : undefined"
+                  >
                     {{ kindLabel(defaultKind(item.step)) }} · {{ typeLabel(item.step) }}
                     <template v-if="stepMeta(item.step)"> · {{ stepMeta(item.step) }}</template>
                   </span>

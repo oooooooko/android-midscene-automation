@@ -247,6 +247,10 @@ function resetMainFlowPosition() {
   mainResetViewToken.value += 1;
 }
 
+function resetDialogFlowPosition() {
+  dialogResetViewToken.value += 1;
+}
+
 watch(flowDialogVisible, (visible) => {
   if (!visible) return;
   void nextTick(() => {
@@ -395,6 +399,14 @@ function updateStep(index: number, step: AppiumRecordedStep) {
         </span></el-tooltip>
         <el-tooltip v-if="!copyMode" content="批量删除" placement="top" :show-after="200"><span class="flow-toolbar-icon">
           <el-button aria-label="批量删除" size="small" :icon="Delete" :disabled="!steps.length || mergeDisabled || removeDisabled" @click="startDeleteMode" />
+        </span></el-tooltip>
+        <el-tooltip content="还原位置" placement="top" :show-after="200"><span class="flow-toolbar-icon">
+          <el-button
+            aria-label="还原位置"
+            size="small"
+            :icon="Aim"
+            @click="resetDialogFlowPosition"
+          />
         </span></el-tooltip>
       </div>
       <FlowCanvas

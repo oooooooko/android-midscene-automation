@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import CoordinatePointPicker from './CoordinatePointPicker.vue';
 import type { AppiumRecordedStep, AppiumSelector } from '../types';
 import { normalizeVisualChangeConfig } from '../visual-change';
@@ -51,6 +51,16 @@ const invalidTapCoordinates = computed(() => (
   && Number(props.step.fallback?.centerX) === 0
   && Number(props.step.fallback?.centerY) === 0
 ));
+const editorSections = ref<string[]>([]);
+const selectorSummary = computed(() => {
+  const selector = props.step.selector;
+  if (!selector) return '未设置';
+  const value = selector.value?.trim() || '未填写';
+  return `${selector.strategy} · ${value}${props.step.contextSelector ? ' · 含父级' : ''}`;
+});
+const supportsTimeout = computed(() => ![
+  'delay', 'longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop', 'continueLoop', 'aiRecognition',
+].includes(props.step.type));
 
 function defaultKind(): FlowKind {
   return defaultFlowKind(props.step);
@@ -154,42 +164,12 @@ function patchSelector(patch: Partial<AppiumSelector>) {
 <template>
   <div class="appium-flow-editor">
     <el-form label-position="top" size="small">
-      <el-form-item label="节点名称">
-        <el-input
-          :model-value="step.label"
-          :disabled="disabled"
-          @update:model-value="patchStep({ label: String($event) })"
-        />
-      </el-form-item>
-      <el-form-item label="备注">
-        <el-input
-          :model-value="step.note || ''"
-          :disabled="disabled"
-          maxlength="100"
-          placeholder="例如：登录按钮、账号输入框"
-          @update:model-value="patchStep({ note: String($event) || undefined })"
-        />
-      </el-form-item>
-      <div>
-        <el-form-item v-if="step.type === 'aiRecognition'">
-          <el-checkbox :model-value="step.aiTimeoutEnabled === true" :disabled="disabled" @update:model-value="patchStep({ aiTimeoutEnabled: $event === true })">启用超时</el-checkbox>
-        </el-form-item>
-        <el-form-item v-if="!['longPress', 'stopApp', 'log', 'openGallery', 'endFlow', 'loop', 'breakLoop', 'continueLoop'].includes(step.type) && (step.type !== 'aiRecognition' || step.aiTimeoutEnabled === true)" :label="step.type === 'aiRecognition' && step.aiObservation ? '模型请求超时 ms' : '超时时间 ms'">
-          <el-input-number
-            :model-value="step.timeoutMs ?? (step.type === 'delay' ? 1000 : DEFAULT_NODE_TIMEOUT_MS)"
-            :disabled="disabled"
-            :min="0"
-            :max="999999"
-            :step="1000"
-            controls-position="right"
-            @update:model-value="patchTimeout($event)"
-          />
-        </el-form-item>
-        <BranchTimeoutSettings v-if="defaultKind() === 'condition' && (step.type !== 'aiRecognition' || step.aiTimeoutEnabled === true)" :step="step" :disabled="disabled" @update="patchStep({ timeoutBranch: $event })" />
-      </div>
       <LongPressSettings v-if="step.type === 'longPress'" :step="step" :disabled="disabled" @update="patchStep" />
       <el-form-item v-if="['waitActivity', 'launchApp', 'stopApp', 'clearAppData'].includes(step.type)" :label="step.type === 'waitActivity' ? '目标 Activity' : '目标 APP 包名'">
         <el-input :model-value="step.value || ''" :disabled="disabled" @update:model-value="patchStep({ value: String($event) })" />
+      </el-form-item>
+      <el-form-item v-if="step.type === 'delay'" label="延时时长 ms">
+        <el-input-number :model-value="step.timeoutMs ?? 1000" :disabled="disabled" :min="0" :max="999999" :step="1000" controls-position="right" @update:model-value="patchTimeout($event)" />
       </el-form-item>
       <template v-if="step.type === 'pinch'">
         <el-form-item label="缩放方向">
@@ -197,12 +177,14 @@ function patchSelector(patch: Partial<AppiumSelector>) {
             <el-option label="放大" value="out" /><el-option label="缩小" value="in" />
           </el-select>
         </el-form-item>
-        <el-form-item v-for="axis in (['centerX', 'centerY'] as const)" :key="axis" :label="axis === 'centerX' ? '中心 X' : '中心 Y'">
-          <el-input-number :model-value="step.pinch?.[axis] ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" @update:model-value="patchPinch({ [axis]: $event ?? 0 })" />
-        </el-form-item>
-        <el-form-item label="缩放比例">
-          <el-input-number :model-value="step.pinch?.percent ?? 0.5" :disabled="disabled" :min="0.01" :max="1" :step="0.05" controls-position="right" @update:model-value="patchPinch({ percent: $event ?? 0.5 })" />
-        </el-form-item>
+        <div class="appium-flow-editor__grid">
+          <el-form-item v-for="axis in (['centerX', 'centerY'] as const)" :key="axis" :label="axis === 'centerX' ? '中心 X' : '中心 Y'">
+            <el-input-number :model-value="step.pinch?.[axis] ?? 0" :disabled="disabled" :min="0" :max="99999" :precision="0" controls-position="right" @update:model-value="patchPinch({ [axis]: $event ?? 0 })" />
+          </el-form-item>
+          <el-form-item label="缩放比例">
+            <el-input-number :model-value="step.pinch?.percent ?? 0.5" :disabled="disabled" :min="0.01" :max="1" :step="0.05" controls-position="right" @update:model-value="patchPinch({ percent: $event ?? 0.5 })" />
+          </el-form-item>
+        </div>
       </template>
       <StageLogSettings v-if="step.type === 'log'" :step="step" :disabled="disabled" @update="patchStep" />
       <VariableExtractionSettings v-if="step.type === 'extractVariable'" :step="step" :disabled="disabled" @update="patchStep" />
@@ -210,7 +192,25 @@ function patchSelector(patch: Partial<AppiumSelector>) {
       <LoopSettings v-if="step.type === 'loop'" :step="step" :disabled="disabled" @update="patchStep" />
       <BreakLoopSettings v-if="step.type === 'breakLoop' || step.type === 'continueLoop'" :step="step" :steps="steps" :disabled="disabled" :mode="step.type === 'continueLoop' ? 'continue' : 'break'" @update="patchStep" />
       <TextClickSettings v-if="step.type === 'textClick'" :step="step" :disabled="disabled" @update="patchStep" />
-      <AiRecognitionSettings v-if="step.type === 'aiRecognition'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep" />
+      <AiRecognitionSettings v-if="step.type === 'aiRecognition'" :step="step" :steps="steps" :disabled="disabled" @update="patchStep">
+        <template #other>
+          <el-form-item label="节点名称">
+            <el-input :model-value="step.label" :disabled="disabled" @update:model-value="patchStep({ label: String($event) })" />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input :model-value="step.note || ''" :disabled="disabled" maxlength="100" placeholder="例如：播放画面检测" @update:model-value="patchStep({ note: String($event) || undefined })" />
+          </el-form-item>
+          <el-form-item>
+            <el-checkbox :model-value="step.aiTimeoutEnabled === true" :disabled="disabled" @update:model-value="patchStep({ aiTimeoutEnabled: $event === true })">启用超时</el-checkbox>
+          </el-form-item>
+          <template v-if="step.aiTimeoutEnabled === true">
+            <el-form-item :label="step.aiObservation ? '模型请求超时 ms' : '超时时间 ms'">
+              <el-input-number :model-value="step.timeoutMs ?? DEFAULT_NODE_TIMEOUT_MS" :disabled="disabled" :min="0" :max="999999" :step="1000" controls-position="right" @update:model-value="patchTimeout($event)" />
+            </el-form-item>
+            <BranchTimeoutSettings v-if="defaultKind() === 'condition'" :step="step" :disabled="disabled" @update="patchStep({ timeoutBranch: $event })" />
+          </template>
+        </template>
+      </AiRecognitionSettings>
       <el-form-item
         v-if="step.type === 'input' || step.type === 'inputIfExists' || step.type === 'assertText'"
         label="文本内容"
@@ -363,50 +363,39 @@ function patchSelector(patch: Partial<AppiumSelector>) {
           />
         </el-form-item>
       </div>
-      <div v-if="showSelector && step.selector" class="appium-flow-editor__grid">
-        <el-form-item label="Selector 类型">
-          <el-select
-            :model-value="step.selector.strategy"
-            :disabled="disabled"
-            @update:model-value="patchSelector({ strategy: $event as AppiumSelector['strategy'] })"
-          >
-            <el-option label="accessibility id" value="accessibilityId" />
-            <el-option label="id" value="id" />
-            <el-option label="android uiAutomator" value="androidUiAutomator" />
-            <el-option label="xpath" value="xpath" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Selector 值">
-          <el-input
-            :model-value="step.selector.value || ''"
-            :disabled="disabled"
-            @update:model-value="patchSelector({ value: String($event) })"
-          />
-        </el-form-item>
-      </div>
-      <div v-if="showSelector" class="appium-flow-editor__grid">
-        <el-form-item label="父级上下文类型">
-          <el-select
-            :model-value="step.contextSelector?.strategy || ''"
-            :disabled="disabled"
-            clearable
-            placeholder="不使用父级"
-            @update:model-value="patchStep({ contextSelector: $event ? { ...(step.contextSelector || { value: '' }), strategy: $event as AppiumSelector['strategy'] } : undefined })"
-          >
-            <el-option label="accessibility id" value="accessibilityId" />
-            <el-option label="id" value="id" />
-            <el-option label="android uiAutomator" value="androidUiAutomator" />
-            <el-option label="xpath" value="xpath" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="父级上下文值">
-          <el-input
-            :model-value="step.contextSelector?.value || ''"
-            :disabled="disabled || !step.contextSelector"
-            @update:model-value="patchStep({ contextSelector: { ...(step.contextSelector || { strategy: 'xpath' }), value: String($event) } })"
-          />
-        </el-form-item>
-      </div>
+      <el-collapse v-if="showSelector" v-model="editorSections" class="appium-flow-editor__groups">
+        <el-collapse-item name="selector">
+          <template #title>
+            <span class="appium-flow-editor__group-title"><strong>组件定位</strong><small>{{ selectorSummary }}</small></span>
+          </template>
+          <div v-if="step.selector" class="appium-flow-editor__grid">
+            <el-form-item label="Selector 类型">
+              <el-select :model-value="step.selector.strategy" :disabled="disabled" @update:model-value="patchSelector({ strategy: $event as AppiumSelector['strategy'] })">
+                <el-option label="accessibility id" value="accessibilityId" />
+                <el-option label="id" value="id" />
+                <el-option label="android uiAutomator" value="androidUiAutomator" />
+                <el-option label="xpath" value="xpath" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Selector 值">
+              <el-input :model-value="step.selector.value || ''" :disabled="disabled" @update:model-value="patchSelector({ value: String($event) })" />
+            </el-form-item>
+          </div>
+          <div class="appium-flow-editor__grid">
+            <el-form-item label="父级上下文类型">
+              <el-select :model-value="step.contextSelector?.strategy || ''" :disabled="disabled" clearable placeholder="不使用父级" @update:model-value="patchStep({ contextSelector: $event ? { ...(step.contextSelector || { value: '' }), strategy: $event as AppiumSelector['strategy'] } : undefined })">
+                <el-option label="accessibility id" value="accessibilityId" />
+                <el-option label="id" value="id" />
+                <el-option label="android uiAutomator" value="androidUiAutomator" />
+                <el-option label="xpath" value="xpath" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="父级上下文值">
+              <el-input :model-value="step.contextSelector?.value || ''" :disabled="disabled || !step.contextSelector" @update:model-value="patchStep({ contextSelector: { ...(step.contextSelector || { strategy: 'xpath' }), value: String($event) } })" />
+            </el-form-item>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
       <div v-if="defaultKind() === 'condition' && step.type !== 'loop' && !isBooleanCondition(step)" class="appium-flow-editor__grid">
         <el-form-item label="指定文本（可选）">
           <el-input
@@ -447,6 +436,23 @@ function patchSelector(patch: Partial<AppiumSelector>) {
         />
         <CoordinatePointPicker :disabled="disabled" @select="applyTapPoint" />
       </section>
+      <el-collapse v-if="step.type !== 'aiRecognition'" v-model="editorSections" class="appium-flow-editor__groups appium-flow-editor__groups--meta">
+        <el-collapse-item name="meta">
+          <template #title>
+            <span class="appium-flow-editor__group-title"><strong>节点信息与超时</strong><small>{{ step.label }}</small></span>
+          </template>
+          <el-form-item label="节点名称">
+            <el-input :model-value="step.label" :disabled="disabled" @update:model-value="patchStep({ label: String($event) })" />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input :model-value="step.note || ''" :disabled="disabled" maxlength="100" placeholder="例如：登录按钮、账号输入框" @update:model-value="patchStep({ note: String($event) || undefined })" />
+          </el-form-item>
+          <el-form-item v-if="supportsTimeout" label="超时时间 ms">
+            <el-input-number :model-value="step.timeoutMs ?? (step.type === 'delay' ? 1000 : DEFAULT_NODE_TIMEOUT_MS)" :disabled="disabled" :min="0" :max="999999" :step="1000" controls-position="right" @update:model-value="patchTimeout($event)" />
+          </el-form-item>
+          <BranchTimeoutSettings v-if="defaultKind() === 'condition' && supportsTimeout" :step="step" :disabled="disabled" @update="patchStep({ timeoutBranch: $event })" />
+        </el-collapse-item>
+      </el-collapse>
     </el-form>
   </div>
 </template>
@@ -460,6 +466,8 @@ function patchSelector(patch: Partial<AppiumSelector>) {
   border-top: 1px solid var(--el-border-color-lighter);
 }
 
+.appium-flow-editor :deep(.el-form-item) { margin-bottom: 10px; }
+
 .appium-flow-editor__fallback :deep(.el-form-item) {
   margin-bottom: 0;
 }
@@ -472,4 +480,25 @@ function patchSelector(patch: Partial<AppiumSelector>) {
   font-size: 13px;
   line-height: 20px;
 }
+
+.appium-flow-editor__groups {
+  overflow: hidden;
+  margin-top: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.appium-flow-editor__groups :deep(.el-collapse-item__header) {
+  height: 42px;
+  padding: 0 10px;
+  border-bottom: 0;
+  font-size: 12px;
+}
+
+.appium-flow-editor__groups :deep(.el-collapse-item__wrap) { border-bottom: 0; }
+.appium-flow-editor__groups :deep(.el-collapse-item__content) { padding: 8px 10px 2px; }
+.appium-flow-editor__group-title { display: flex; align-items: center; justify-content: space-between; min-width: 0; width: 100%; padding-right: 8px; gap: 8px; }
+.appium-flow-editor__group-title strong { flex: none; color: var(--ui-text); font-size: 12px; }
+.appium-flow-editor__group-title small { min-width: 0; overflow: hidden; color: var(--ui-text-muted); font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 </style>

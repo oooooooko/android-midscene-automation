@@ -13,16 +13,18 @@ function selector(patch: Partial<AppiumSelector>) {
 </script>
 
 <template>
-  <el-form-item label="循环方式">
-    <el-select :model-value="step.loop?.exitWhen || 'never'" :disabled="disabled" @update:model-value="patch({ exitWhen: $event })">
-      <el-option value="never" label="固定次数" />
-      <el-option value="exists" label="元素出现时退出" />
-      <el-option value="notExists" label="元素消失时退出" />
-    </el-select>
-  </el-form-item>
-  <el-form-item :label="step.loop?.exitWhen === 'never' ? '执行次数' : '最大执行次数'" required>
-    <el-input-number :model-value="step.loop?.maxIterations" :disabled="disabled" :min="1" :max="MAX_LOOP_ITERATIONS" :precision="0" controls-position="right" @update:model-value="patch({ maxIterations: Number($event) })" />
-  </el-form-item>
+  <div class="appium-flow-editor__grid">
+    <el-form-item label="循环方式">
+      <el-select :model-value="step.loop?.exitWhen || 'never'" :disabled="disabled" @update:model-value="patch({ exitWhen: $event })">
+        <el-option value="never" label="固定次数" />
+        <el-option value="exists" label="元素出现时退出" />
+        <el-option value="notExists" label="元素消失时退出" />
+      </el-select>
+    </el-form-item>
+    <el-form-item :label="step.loop?.exitWhen === 'never' ? '执行次数' : '最大执行次数'" required>
+      <el-input-number :model-value="step.loop?.maxIterations" :disabled="disabled" :min="1" :max="MAX_LOOP_ITERATIONS" :precision="0" controls-position="right" @update:model-value="patch({ maxIterations: Number($event) })" />
+    </el-form-item>
+  </div>
   <template v-if="step.loop?.exitWhen && step.loop.exitWhen !== 'never'">
     <el-form-item label="退出条件定位方式">
       <el-select :model-value="step.selector?.strategy || 'id'" :disabled="disabled" @update:model-value="selector({ strategy: $event })">

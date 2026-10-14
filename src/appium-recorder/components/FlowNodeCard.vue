@@ -181,7 +181,10 @@ watch(() => props.data, () => {
             </el-icon>
           </el-tooltip>
           <strong :title="`${data.index + 1}. ${data.title}`"><span class="appium-flow-node-number">{{ data.index + 1 }}.</span> {{ data.title }}</strong>
-          <small :title="data.meta">{{ data.meta }}</small>
+          <small
+            :class="{ 'appium-flow-step-card__meta--clamped': data.step.type === 'aiRecognition' }"
+            :title="data.meta"
+          >{{ data.meta }}</small>
           <em v-if="data.note" :title="data.note">{{ data.note }}</em>
         </span>
       </button>
@@ -274,4 +277,11 @@ watch(() => props.data, () => {
 .appium-flow-step-shell--delete-selected .appium-flow-step-card__content small { color: #fee2e2; }
 .appium-node-action-tooltip { display: inline-flex; }
 .appium-ai-model-warning { float: left; margin: 2px 6px 0 0; font-size: 16px; }
+.appium-flow-step-card__meta--clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
 </style>

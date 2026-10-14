@@ -14,6 +14,7 @@
 
 import asyncio
 from contextlib import suppress
+import logging
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,9 +23,38 @@ import uvicorn
 
 from apps.admin_console.core.state import state
 from apps.admin_console.routers.tasks import stream_events
-from apps.admin_console.server import ArtemisUvicornServer, app, on_shutdown
+from apps.admin_console.server import ArtemisUvicornServer, QuietProbeAccessFilter, app, on_shutdown
 
 WINDOWS_FORCE_SIGNAL = getattr(signal, "SIGBREAK", signal.SIGTERM)
+
+
+def _access_record(path: str, status_code: int = 200, method: str = "GET") -> logging.LogRecord:
+    return logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:12345", method, path, "1.1", status_code),
+        None,
+    )
+
+
+def test_successful_probe_access_logs_are_silenced():
+    access_filter = QuietProbeAccessFilter()
+
+    assert access_filter.filter(_access_record("/api/status")) is False
+    assert access_filter.filter(_access_record("/api/status?source=ui")) is False
+    assert access_filter.filter(_access_record("/api/system/readiness")) is False
+
+
+def test_probe_failures_and_other_access_logs_are_preserved():
+    access_filter = QuietProbeAccessFilter()
+
+    assert access_filter.filter(_access_record("/api/status", 500)) is True
+    assert access_filter.filter(_access_record("/api/system/readiness", 404)) is True
+    assert access_filter.filter(_access_record("/api/status", method="POST")) is True
+    assert access_filter.filter(_access_record("/api/tasks")) is True
 
 
 def _pending_queue_get_tasks():

@@ -55,6 +55,7 @@ export async function recognizeDeviceScreen(input: {
   onObservationFrame?: (frame: ObservationCapture) => Promise<void> | void;
   signal?: AbortSignal;
   imageBase64?: string;
+  onAnalysisStart?: () => void;
   onModelOutput?: (content: string) => void;
 }): Promise<AiRecognitionResult & { imageBase64: string }> {
   const prompt = validateAiRecognitionPrompt(input.prompt);
@@ -68,6 +69,7 @@ export async function recognizeDeviceScreen(input: {
   const timeoutMs = Number.isFinite(input.timeoutMs) && input.timeoutMs! > 0
     ? Math.min(300000, Math.max(1000, input.timeoutMs!)) : DEFAULT_NODE_TIMEOUT_MS;
   const captureSignal = input.signal || new AbortController().signal;
+  let analysisStartNotified = false;
   captureSignal.throwIfAborted();
   async function analyze(observation?: AiRecognitionResult['observation'], imageBase64 = '', requestSignal = captureSignal) {
     // 持续观察的采集窗口与模型请求分别计时，避免 3 秒请求超时截断 15 秒观察。
@@ -90,6 +92,10 @@ export async function recognizeDeviceScreen(input: {
             { type: 'image_url' as const, image_url: { url: frame.imageDataUrl, detail: 'high' as const } },
           ])
         : [{ type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}`, detail: 'high' } }];
+      if (!analysisStartNotified) {
+        analysisStartNotified = true;
+        input.onAnalysisStart?.();
+      }
       const response = await client.chat.completions.create({
         model: model.name,
         max_completion_tokens: 2048,
@@ -163,6 +169,9 @@ export async function validateAiBranchQuestion(value: unknown, signal?: AbortSig
 询问指定对象是否存在或指定状态是否成立，包括“有没有”“是否”“是不是”“了吗”“吗”等问法，都可以作为分支条件。广告弹窗、黑屏、按钮可用等视觉概念不要求用户额外定义像素或坐标。
 必须区分封闭判断与开放问题：“当前画面有没有广告弹窗”是指定对象的存在性判断，应返回 true；“当前画面是否有广告弹窗”“页面是不是黑屏”“登录按钮可用吗”也应返回 true。
 “当前画面有什么”“描述当前画面”“提取画面中的所有文字”需要列举、描述或提取内容，应返回 false。“有没有广告弹窗，如果有请列出全部广告内容”包含开放任务，也应返回 false。
+要求输出时长、时间点、数量、名称、文字内容、画面描述、失败原因、判断依据、列表、总结，或指定“XX秒”“HH:MM:SS”“播放失败”等自定义输出格式，也属于开放式输出；即使文本前半部分可以回答是/否，只要同时要求这些额外输出，仍返回 false。
+返回 false 时，reason 必须包含“开放式内容”和“修改建议”两部分：先逐项短引用用户文本中导致失败的具体要求，再说明应删除或如何改写，并给出一个保留原判断目标、可直接回答是/否的简短问题。不得只写“包含开放式任务”等笼统原因。
+示例 reason：“开放式内容：‘输出首次变化时长’、‘失败时简要说明依据’；修改建议：删除自定义输出要求，改为‘本次观察期间录像回放是否播放成功？’。”
 只返回 JSON：{"result":true或false,"reason":"简短中文原因"}。不要输出思考过程。` },
         { role: 'user', content: prompt },
       ],

@@ -277,9 +277,12 @@ function estimateTextLines(text: string | undefined, charsPerLine: number) {
   ), 0);
 }
 
-function estimateStepNodeHeight(label: { title: string; meta: string; note?: string }) {
+function estimateStepNodeHeight(label: { title: string; meta: string; note?: string }, maxMetaLines?: number) {
   const titleLines = estimateTextLines(label.title, 20);
-  const metaLines = estimateTextLines(label.meta, 24);
+  const estimatedMetaLines = estimateTextLines(label.meta, 24);
+  const metaLines = maxMetaLines == null
+    ? estimatedMetaLines
+    : Math.min(estimatedMetaLines, maxMetaLines);
   const noteLines = estimateTextLines(label.note, 24);
   const textHeight = titleLines * 19 + metaLines * 17 + noteLines * 17;
   return Math.max(FLOW_STEP_NODE_HEIGHT, 34 + textHeight);
@@ -424,7 +427,10 @@ export function buildFlowGraph(
     const label = options.labelStep(item.step);
     // 字数估算仅用于首次布局，不强制卡片高度；实际换行由浏览器决定。
     const cardMinHeight = FLOW_STEP_NODE_HEIGHT;
-    const estimatedCardHeight = estimateStepNodeHeight(label);
+    const estimatedCardHeight = estimateStepNodeHeight(
+      label,
+      item.step.type === 'aiRecognition' ? 3 : undefined,
+    );
     const estimatedNodeHeight = options.expandedStepIndex === item.index
       ? estimatedCardHeight + FLOW_EXPANDED_NODE_HEIGHT
       : estimatedCardHeight;
