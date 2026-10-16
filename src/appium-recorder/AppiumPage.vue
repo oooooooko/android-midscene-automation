@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, provide, reactive, shallowRef, watch } from 'vue';
-import { flowBackgroundKey, normalizeFlowBackground, flowLineColorKey, normalizeFlowLineColor } from './flow-appearance';
+import { computed, h, nextTick, onMounted, onUnmounted, provide, reactive, shallowRef, useTemplateRef, watch } from 'vue';
+import { flowBackgroundKey, normalizeFlowBackground, flowLineColorKey, normalizeFlowLineColor, flowLineStyleKey, normalizeFlowLineStyle, type FlowLineStyle } from './flow-appearance';
 import { useCoordinatePicker } from './coordinate-preview';
 import { DEFAULT_NODE_TIMEOUT_MS } from './node-timeout';
 import { aiPromptPresetsKey, DEFAULT_AI_PROMPT_PRESETS, type AiPromptPreset } from './ai-prompt-presets';
 import AiRecognitionPromptInput from './components/AiRecognitionPromptInput.vue';
 import { ElForm, ElFormItem, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus';
-import { ArrowDown, Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, Plus, Refresh, Upload, VideoPlay, View, Clock } from '@element-plus/icons-vue';
+import { ArrowDown, Check, CircleClose, CopyDocument, Delete, Document, Download, Edit, FolderOpened, Plus, Refresh, Upload, VideoPlay, View, Clock } from '@element-plus/icons-vue';
 import RunHistoryDialog from './RunHistoryDialog.vue';
 import type { AndroidDevice, AppPreset, DeviceAction } from '../types';
 import DevicePreviewPanel from '../components/device/DevicePreviewPanel.vue';
@@ -112,6 +112,7 @@ const props = defineProps<{
   reportSummary?: ReportSummaryConfig;
   flowBackgroundColor?: string;
   flowLineColor?: string;
+  flowLineStyle?: FlowLineStyle;
   active: boolean;
   appPresets: AppPreset[];
   deviceActions: readonly DeviceAction[];
@@ -138,6 +139,7 @@ const props = defineProps<{
 // provide/inject 随组件关系传递，放大弹窗 teleport 后也能使用同一颜色。
 provide(flowBackgroundKey, computed(() => normalizeFlowBackground(props.flowBackgroundColor)));
 provide(flowLineColorKey, computed(() => normalizeFlowLineColor(props.flowLineColor)));
+provide(flowLineStyleKey, computed(() => normalizeFlowLineStyle(props.flowLineStyle)));
 const availableAiPromptPresets = computed(() => props.aiPromptPresets ?? DEFAULT_AI_PROMPT_PRESETS);
 const availableReportTemplates = computed(() => [
   ...REPORT_SUMMARY_PROMPT_PRESETS,
@@ -150,6 +152,7 @@ const tree = shallowRef<AppiumNode | null>(null);
 const selectedNode = shallowRef<AppiumNode | null>(null);
 const scripts = shallowRef<AppiumRecordedScript[]>([]);
 const selectedScriptId = shallowRef('');
+const recordedStepsRef = useTemplateRef('recordedStepsRef');
 const newScriptDialogVisible = shallowRef(false);
 const newScriptRevision = shallowRef(0);
 const storedWorkbenchTab = window.localStorage.getItem(WORKBENCH_TAB_STORAGE_KEY);
@@ -1866,6 +1869,7 @@ function loadScript(script: AppiumRecordedScript) {
   }
   steps.value = normalizeLegacyNestedConditionBranches((script.steps || []).map(normalizeLegacyFlowScope));
   markDraftSaved();
+  void nextTick(() => recordedStepsRef.value?.resetMainFlowPosition());
 }
 
 function loadSelectedScript() {
@@ -2390,6 +2394,7 @@ watch(
 
               <section class="appium-workbench__section appium-workbench__flow">
                 <RecordedSteps
+                  ref="recordedStepsRef"
                   :key="newScriptRevision"
                   :ai-recognition-model-configured="aiRecognitionModelConfigured"
                   :steps="steps"
@@ -2448,7 +2453,7 @@ watch(
                       <el-button size="small" :icon="Clock" aria-label="历史结果对比" @click.stop="historyScript = { id: script.id, name: script.name }" />
                     </span></el-tooltip>
                     <el-tooltip content="加载" placement="top" :show-after="200"><span class="appium-script-icon">
-                      <el-button size="small" :icon="Document" aria-label="加载" @click.stop="loadScript(script)" />
+                      <el-button size="small" :icon="FolderOpened" aria-label="加载" @click.stop="loadScript(script)" />
                     </span></el-tooltip>
                     <el-tooltip content="修改脚本名称" placement="top" :show-after="200"><span class="appium-script-icon">
                     <el-button

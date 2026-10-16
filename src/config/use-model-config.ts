@@ -4,7 +4,7 @@ import { resolveReportSummary } from '../appium-recorder/report-summary';
 import { isAiRecognitionModelConfigured } from '../appium-recorder/ai-recognition';
 import { resolveAiDeduplication } from '../appium-recorder/ai-deduplication';
 import { resolveAiPromptPresets } from '../appium-recorder/ai-prompt-presets';
-import { normalizeFlowBackground, normalizeFlowLineColor } from '../appium-recorder/flow-appearance';
+import { normalizeFlowBackground, normalizeFlowLineColor, normalizeFlowLineStyle } from '../appium-recorder/flow-appearance';
 import { selectMidsceneModelProvider, type MidsceneModelProvider } from './midscene-model-presets';
 import { useAppiumAutoSave } from './use-appium-auto-save';
 import type { ConfigForm } from '../types';
@@ -76,6 +76,7 @@ export function useModelConfig() {
     configForm.appium.aiPromptPresets = resolveAiPromptPresets(payload.appium?.aiPromptPresets);
     configForm.appium.flowBackgroundColor = normalizeFlowBackground(payload.appium?.flowBackgroundColor);
     configForm.appium.flowLineColor = normalizeFlowLineColor(payload.appium?.flowLineColor);
+    configForm.appium.flowLineStyle = normalizeFlowLineStyle(payload.appium?.flowLineStyle);
     appiumAutoSave.initialize();
     ready.value = true;
     aiRecognitionModelConfigured.value = isAiRecognitionModelConfigured(configForm.appium.model);

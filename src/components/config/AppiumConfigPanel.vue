@@ -68,8 +68,8 @@ defineEmits<{
     </section>
 
     <section class="appium-config-section" aria-labelledby="appium-editor-title">
-      <header class="appium-section-heading"><div><h2 id="appium-editor-title">流程编辑器</h2><p>调整流程画布和连接线的显示颜色。</p></div></header>
-      <FlowAppearanceSettings v-model="configForm.appium.flowBackgroundColor" v-model:line-color="configForm.appium.flowLineColor" />
+      <header class="appium-section-heading"><div><h2 id="appium-editor-title">流程编辑器</h2><p>调整流程画布颜色、连接线颜色和曲直样式。</p></div></header>
+      <FlowAppearanceSettings v-model="configForm.appium.flowBackgroundColor" v-model:line-color="configForm.appium.flowLineColor" v-model:line-style="configForm.appium.flowLineStyle" />
     </section>
   </div>
 </template>

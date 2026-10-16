@@ -789,10 +789,10 @@ export function buildFlowGraph(
       const joinOwner = joins.get(target.id);
       if (joinOwner && target.id !== joinOwner) {
         const incoming = links.filter((edge) => edge.target === target.id).map((edge) => nodeById.get(edge.source)!).filter(Boolean);
-        const owner = nodeById.get(joinOwner);
-        if (owner && incoming.length) {
-          target.position.y = Math.round(Math.max(...incoming.map((node) => node.position.y + nodeHeight(node))) + FLOW_STANDARD_LINE_GAP * 2);
-          setCenterX(target, centerX(owner));
+        if (incoming.length) {
+          target.position.y = Math.round(Math.max(...incoming.map((node) => node.position.y + nodeHeight(node))) + FLOW_STANDARD_LINE_GAP * 4);
+          const incomingCenters = incoming.map(centerX);
+          setCenterX(target, (Math.min(...incomingCenters) + Math.max(...incomingCenters)) / 2);
         }
         return;
       }

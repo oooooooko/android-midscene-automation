@@ -994,6 +994,7 @@ onUnmounted(() => {
           :report-summary="configForm.appium.reportSummary"
           :flow-background-color="configForm.appium.flowBackgroundColor"
           :flow-line-color="configForm.appium.flowLineColor"
+          :flow-line-style="configForm.appium.flowLineStyle"
           :device-actions="deviceActions"
           :playground-available="playgroundAvailable"
           :playground-device-id="playgroundDeviceId"

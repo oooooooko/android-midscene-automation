@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { BaseEdge, type EdgeProps } from '@vue-flow/core';
+import { computed, inject } from 'vue';
+import { BaseEdge, getBezierPath, type EdgeProps } from '@vue-flow/core';
+import { flowLineStyleKey, normalizeFlowLineStyle } from '../flow-appearance';
 import type { FlowGraphNodeData } from '../flow-graph';
 
 const props = defineProps<EdgeProps>();
+const lineStyle = inject(flowLineStyleKey, computed(() => normalizeFlowLineStyle(undefined)));
 
 const targetData = computed(() => props.targetNode.data as FlowGraphNodeData | undefined);
 
@@ -22,6 +24,22 @@ function linePath(points: Point[]) {
 }
 
 const path = computed(() => {
+  if (lineStyle.value === 'curved') {
+    if (props.data?.merge && props.targetY > props.sourceY) {
+      // 先沿分支向下，仅在汇合点上方的留白内弯曲，避免斜穿相邻节点。
+      const bendY = Math.max(props.sourceY, props.targetY - 112);
+      const controlY = (bendY + props.targetY) / 2;
+      return [
+        `M ${props.sourceX} ${props.sourceY}`,
+        `L ${props.sourceX} ${bendY}`,
+        `C ${props.sourceX} ${controlY} ${props.targetX} ${controlY} ${props.targetX} ${props.targetY}`,
+      ].join(' ');
+    }
+    return getBezierPath({
+      sourceX: props.sourceX, sourceY: props.sourceY, sourcePosition: props.sourcePosition,
+      targetX: props.targetX, targetY: props.targetY, targetPosition: props.targetPosition,
+    })[0];
+  }
   const source = { x: props.sourceX, y: props.sourceY };
   const target = { x: props.targetX, y: props.targetY };
   const deltaX = target.x - source.x;

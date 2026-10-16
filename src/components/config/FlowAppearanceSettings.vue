@@ -2,16 +2,16 @@
 import { computed } from 'vue';
 import { RefreshLeft } from '@element-plus/icons-vue';
 import {
-  DEFAULT_FLOW_BACKGROUND, FLOW_BACKGROUND_PRESETS, normalizeFlowBackground,
+  DEFAULT_FLOW_BACKGROUND, FLOW_BACKGROUND_PRESETS, normalizeFlowBackground, normalizeFlowLineStyle, type FlowLineStyle,
   DEFAULT_FLOW_LINE_COLOR, FLOW_LINE_COLOR_PRESETS, normalizeFlowLineColor, isHexColor,
 } from '../../appium-recorder/flow-appearance';
 
-const props = defineProps<{ modelValue?: string; lineColor?: string }>();
-const emit = defineEmits<{ 'update:modelValue': [color: string]; 'update:lineColor': [color: string] }>();
+const props = defineProps<{ modelValue?: string; lineColor?: string; lineStyle?: FlowLineStyle }>();
+const emit = defineEmits<{ 'update:modelValue': [color: string]; 'update:lineColor': [color: string]; 'update:lineStyle': [style: FlowLineStyle] }>();
 const panels = computed(() => [
-  { key: 'background' as const, title: '流程背景色', color: props.modelValue ?? DEFAULT_FLOW_BACKGROUND,
+  { key: 'background' as const, title: '画布背景色', color: props.modelValue ?? DEFAULT_FLOW_BACKGROUND,
     fallback: DEFAULT_FLOW_BACKGROUND, presets: FLOW_BACKGROUND_PRESETS, normalize: normalizeFlowBackground,
-    inputLabel: '十六进制背景色', pickerLabel: '选择流程背景色', resetLabel: '恢复默认颜色', presetLabel: '选择颜色' },
+    inputLabel: '十六进制背景色', pickerLabel: '选择画布背景色', resetLabel: '恢复默认颜色', presetLabel: '选择颜色' },
   { key: 'line' as const, title: '连接线条颜色', color: props.lineColor ?? DEFAULT_FLOW_LINE_COLOR,
     fallback: DEFAULT_FLOW_LINE_COLOR, presets: FLOW_LINE_COLOR_PRESETS, normalize: normalizeFlowLineColor,
     inputLabel: '十六进制线条颜色', pickerLabel: '选择连接线条颜色', resetLabel: '恢复默认线条颜色', presetLabel: '选择线条颜色' },
@@ -29,6 +29,13 @@ function update(key: 'background' | 'line', color: string) {
       <section v-for="panel in panels" :key="panel.key" class="flow-appearance-section" :aria-label="panel.title">
         <h3>{{ panel.title }}</h3>
         <el-form label-position="top">
+          <el-form-item v-if="panel.key === 'line'" label="连接线条样式">
+            <el-radio-group :model-value="normalizeFlowLineStyle(lineStyle)" aria-label="连接线条样式"
+              @update:model-value="emit('update:lineStyle', normalizeFlowLineStyle($event))">
+              <el-radio-button value="straight">直线</el-radio-button>
+              <el-radio-button value="curved">曲线</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
           <el-form-item label="预选颜色">
             <div class="flow-color-presets">
               <button v-for="preset in panel.presets" :key="preset" type="button"

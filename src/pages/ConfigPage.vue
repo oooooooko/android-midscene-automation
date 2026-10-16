@@ -131,17 +131,17 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
   width: fit-content;
   max-width: calc(100% - 48px);
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
   margin: 20px 24px 0;
   padding: 4px;
   border: 1px solid var(--ui-border);
-  border-radius: 24px;
+  border-radius: var(--ui-radius-pill);
   background: var(--ui-bg-soft);
-  box-shadow: var(--ui-shadow-card);
+  box-shadow: var(--ui-shadow-inset);
 }
 .config-tabs .subnav__item {
-  min-height: 34px;
-  padding: 6px 16px;
+  min-height: 32px;
+  padding: 6px 14px;
   border: 0;
   border-radius: var(--ui-radius-pill);
   font-size: 13px;
@@ -149,7 +149,7 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 .config-tabs .subnav__item--active {
   background: var(--ui-surface);
   color: var(--ui-primary);
-  box-shadow: var(--ui-shadow-card);
+  box-shadow: var(--ui-shadow-control);
 }
 .config-page > [role="tabpanel"] { padding: 24px; }
 :deep(.config-module-card > .el-card__header) { padding: 18px 24px; font-size: 16px; font-weight: 600; }

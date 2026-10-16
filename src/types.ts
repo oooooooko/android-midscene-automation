@@ -21,7 +21,7 @@ export type GeneratorForm = {
 };
 
 export type ConfigForm = {
-  appium: { reportSummary?: ReportSummaryConfig; model: AiRecognitionModel; promptOptimizer?: { model: AiRecognitionModel }; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
+  appium: { reportSummary?: ReportSummaryConfig; model: AiRecognitionModel; promptOptimizer?: { model: AiRecognitionModel }; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; flowLineStyle?: 'straight' | 'curved'; screenshotReport?: boolean };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;

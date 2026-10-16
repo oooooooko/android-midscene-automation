@@ -247,6 +247,8 @@ function resetMainFlowPosition() {
   mainResetViewToken.value += 1;
 }
 
+defineExpose({ resetMainFlowPosition });
+
 function resetDialogFlowPosition() {
   dialogResetViewToken.value += 1;
 }

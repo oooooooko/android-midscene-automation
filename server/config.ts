@@ -1,7 +1,7 @@
 import { resolveReportSummary, type ReportSummaryConfig } from '../src/appium-recorder/report-summary';
 import type { AiPromptPreset } from '../src/appium-recorder/ai-prompt-presets';
 import fs from 'node:fs';
-import { isHexColor, normalizeFlowBackground, normalizeFlowLineColor } from '../src/appium-recorder/flow-appearance';
+import { isHexColor, normalizeFlowBackground, normalizeFlowLineColor, normalizeFlowLineStyle } from '../src/appium-recorder/flow-appearance';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
@@ -13,7 +13,7 @@ import { resolveAiDeduplication, type AiDeduplicationConfig } from '../src/appiu
 import type { MidsceneModelProvider } from '../src/config/midscene-model-presets';
 
 export type AppConfig = {
-  appium: { reportSummary?: ReportSummaryConfig; model: AiRecognitionModel; promptOptimizer?: { model: AiRecognitionModel }; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; screenshotReport?: boolean };
+  appium: { reportSummary?: ReportSummaryConfig; model: AiRecognitionModel; promptOptimizer?: { model: AiRecognitionModel }; aiPromptPresets?: AiPromptPreset[]; aiDeduplication?: AiDeduplicationConfig; flowBackgroundColor?: string; flowLineColor?: string; flowLineStyle?: 'straight' | 'curved'; screenshotReport?: boolean };
   runtime: {
     androidSdkPath: string;
     reportOutputPath: string;
@@ -100,6 +100,7 @@ function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConf
       screenshotReport: config?.appium?.screenshotReport === true,
       flowBackgroundColor: normalizeFlowBackground(config?.appium?.flowBackgroundColor),
       flowLineColor: normalizeFlowLineColor(config?.appium?.flowLineColor),
+      flowLineStyle: normalizeFlowLineStyle(config?.appium?.flowLineStyle),
       model: Object.fromEntries(['baseUrl', 'apiKey', 'name'].map((key) => {
         const value = config?.appium?.model?.[key as keyof AiRecognitionModel];
         return [key, typeof value === 'string' ? value.trim() : ''];
@@ -234,10 +235,13 @@ export function saveConfig(config: AppConfig) {
   try { resolveAiDeduplication(config.appium?.aiDeduplication); }
   catch (error) { throw new ConfigValidationError(error instanceof Error ? error.message : '截图去重配置无效'); }
   if (config.appium?.flowBackgroundColor !== undefined && !isHexColor(config.appium.flowBackgroundColor)) {
-    throw new ConfigValidationError('流程背景色必须是有效的十六进制颜色（#RGB 或 #RRGGBB）');
+    throw new ConfigValidationError('画布背景色必须是有效的十六进制颜色（#RGB 或 #RRGGBB）');
   }
   if (config.appium?.flowLineColor !== undefined && !isHexColor(config.appium.flowLineColor)) {
     throw new ConfigValidationError('连接线条颜色必须是有效的十六进制颜色（#RGB 或 #RRGGBB）');
+  }
+  if (config.appium?.flowLineStyle !== undefined && !['straight', 'curved'].includes(config.appium.flowLineStyle)) {
+    throw new ConfigValidationError('连接线条样式必须是直线或曲线');
   }
   const normalized = normalizeConfig(config);
   validateRuntimeConfig(normalized);
