@@ -333,7 +333,7 @@ async function appiumRequest<T>(
       throw new ReplayStoppedError();
     }
     context?.appiumLog(`[Appium] 异常：${method} ${effectivePath}（${errorDetail(error)}）`);
-    if (error instanceof AppiumRequestTimeoutError) throw error;
+    if (error instanceof AppiumRequestTimeoutError || error instanceof ConditionTimeoutError) throw error;
     if (isTimeoutError(error)) {
       throw new AppiumServiceError(`Appium 请求超时 ${requestUrl}，${errorDetail(error)}`);
     }
@@ -550,6 +550,7 @@ async function findElementWithinDeadline(sessionId: string, step: AppiumRecorded
       return await findElementBySelector(sessionId, step.selector, parentId);
     } catch (error) {
       throwIfReplayStopped(error);
+      if (error instanceof ConditionTimeoutError) throw error;
       lastError = error;
       // Continue with the fallback chain below.
     }
@@ -567,6 +568,7 @@ async function findElementWithinDeadline(sessionId: string, step: AppiumRecorded
       return await findElementBySelector(sessionId, selector);
     } catch (error) {
       throwIfReplayStopped(error);
+      if (error instanceof ConditionTimeoutError) throw error;
       lastError = error;
     }
   }
@@ -726,6 +728,7 @@ async function waitForElementGone(sessionId: string, step: AppiumRecordedStepRec
       await findElement(sessionId, step, remaining);
     } catch (error) {
       throwIfReplayStopped(error);
+      if (error instanceof ConditionTimeoutError) throw error;
       return;
     }
     const pauseMs = Math.min(500, timeoutMs - (Date.now() - startedAt));

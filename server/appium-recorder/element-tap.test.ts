@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -174,6 +175,66 @@ test('text matching does not start another Appium query at the node deadline', a
     });
     assert.equal(result.success, true, result.output);
     assert.equal(elementQueries, 1, 'the final 30ms must not start another Appium query');
+    assert.match(result.output, /判断超时，按配置进入右侧分支/);
+  } finally {
+    childProcess.execFile = original.execFile;
+    globalThis.fetch = original.fetch;
+    syncBuiltinESMExports();
+    for (const key of ['ANDROID_MIDSCENE_DATA_ROOT', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'APPIUM_SERVER_URL']) {
+      if (env[key] === undefined) delete process.env[key]; else process.env[key] = env[key];
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('missing element completes its last query and follows the timeout branch without reporting a service failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'text-deadline-'));
+  const env = { ...process.env };
+  const original = { execFile: childProcess.execFile, fetch: globalThis.fetch };
+  let elementQueries = 0;
+  try {
+    const sdk = join(root, 'sdk');
+    await mkdir(join(sdk, 'platform-tools'), { recursive: true });
+    await writeFile(join(sdk, 'platform-tools', 'adb'), '');
+    Object.assign(process.env, {
+      ANDROID_MIDSCENE_DATA_ROOT: root,
+      ANDROID_HOME: sdk,
+      ANDROID_SDK_ROOT: sdk,
+      APPIUM_SERVER_URL: 'http://external.invalid',
+    });
+    childProcess.execFile = ((_command, _args: string[], _options, callback) => {
+      queueMicrotask(() => callback(null, '', ''));
+      return {};
+    }) as typeof childProcess.execFile;
+    syncBuiltinESMExports();
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/session' && init?.method === 'POST') {
+        return Response.json({ value: { sessionId: 'deadline-session' } });
+      }
+      if (path === '/session/deadline-session/element') {
+        elementQueries += 1;
+        await delay(150, undefined, { signal: init?.signal ?? undefined });
+        return Response.json({ value: { error: 'no such element', message: 'not found' } }, { status: 404 });
+      }
+      return Response.json({ value: null });
+    };
+    const { replayAppiumScript } = await import('./appium-runner');
+    const script: AppiumRecordedScriptRecord = {
+      id: 'deadline', name: 'deadline', deviceId: 'fake-device', appPackage: '', appActivity: '', createdAt: '', updatedAt: '',
+      steps: [{
+        id: 'text', type: 'assertExists', label: '判断低功耗主页', timeoutMs: 100,
+        selector: { strategy: 'id', value: 'example:id/batterItem', unique: true },
+        timeoutBranch: 'no', flow: { nodeKind: 'condition', noTargetId: 'done' },
+      }, { id: 'done', type: 'noop', label: '继续执行' }],
+    };
+    const result = await replayAppiumScript(script, 'fake-device', undefined, undefined, {
+      screenshotReport: false,
+      reportSummaryEnabled: false,
+    });
+    assert.equal(result.success, true, result.output);
+    assert.doesNotMatch(result.output, /服务无响应/);
+    assert.equal(elementQueries, 1, 'no retry after the node deadline');
     assert.match(result.output, /判断超时，按配置进入右侧分支/);
   } finally {
     childProcess.execFile = original.execFile;
